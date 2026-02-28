@@ -1,0 +1,51 @@
+# Agent: Operator
+# ===============
+# Deploys, monitors, and maintains running systems.
+# Looks at RUNTIME — processes, logs, configs, health.
+
+id: operator
+name: "Operator"
+description: "Deployment and monitoring — processes, configs, incidents"
+
+vault_path: data/vaults/operator/
+context_file: data/vaults/operator/CONTEXT.md
+
+schedule:
+  - type: periodic
+    interval_minutes: 15
+    task: health_check
+  - type: periodic
+    interval_minutes: 1440
+    task: daily_status_report
+
+triggers:
+  - event: approved_for_execution
+    task: execute_deployment
+  - event: process_crash
+    task: incident_response
+
+inference_tier:
+  health_check: 1
+  daily_status_report: 1
+  execute_deployment: 2
+  incident_response: 2
+
+context_budget:
+  max_vault_files: 15
+  max_vault_tokens: 30000
+  always_include:
+    - CONTEXT.md
+    - knowledge/runbooks.md
+  prefer_recent: true
+
+boundaries:
+  can_do:
+    - Deploy approved configurations
+    - Monitor process health and logs
+    - Write incident reports
+    - Manage config files
+  cannot_do:
+    - Write or modify C++ code
+    - Evaluate trading strategy
+    - Analyze market structure
+    - Make capital allocation decisions

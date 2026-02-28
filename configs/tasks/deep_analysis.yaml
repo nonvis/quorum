@@ -1,0 +1,50 @@
+# Task: Deep Analysis
+# ===================
+# Daily comprehensive market review by Market Analyst.
+
+id: deep_analysis
+agent: market_analyst
+inference_tier: 2
+
+inputs:
+  - source: sqlite
+    query: "SELECT * FROM pool_metrics WHERE timestamp > strftime('%s', 'now') - 86400"
+    name: daily_metrics
+  - source: vault
+    path: knowledge/
+    name: all_knowledge
+  - source: vault
+    path: experiments/
+    name: recent_experiments
+
+outputs:
+  - type: vault_update
+    path: knowledge/
+    condition: always
+  - type: proposal
+    condition: strategic_opportunity_detected
+    requires_consensus_from:
+      - bot_analyst
+      - engineer
+
+prompt_template: |
+  You are the Market Analyst performing your daily deep analysis.
+  Review all available data and provide a comprehensive market assessment.
+
+  ## Your Knowledge Base
+  {all_knowledge}
+
+  ## Daily Metrics
+  {daily_metrics}
+
+  ## Recent Experiments
+  {recent_experiments}
+
+  ## Instructions
+  1. Assess overall market conditions for each active pool
+  2. Identify trends (volume, competition, spreads, fees)
+  3. Flag any risks or opportunities
+  4. Update knowledge files with new conclusions
+  5. Propose action if warranted
+
+  Provide thorough analysis. This runs once daily with a frontier model.

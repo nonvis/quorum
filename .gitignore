@@ -1,0 +1,52 @@
+# Build
+build/
+cmake-build-*/
+*.o
+*.a
+*.so
+*.dylib
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# C++ artifacts
+compile_commands.json
+.cache/
+.ccache/
+
+# Sui / Move
+quorum-contracts/build/
+quorum-contracts/.aptos/
+
+# TypeScript / Node
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+
+# Data (runtime)
+data/
+*.db
+*.db-wal
+*.db-shm
+/tmp/quorum.*
+
+# Secrets
+*.key
+*.pem
+*.p12
+wallet.yaml
+keystore/
+
+# OS
+Thumbs.db
+.Spotlight-V100
+.Trashes

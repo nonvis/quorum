@@ -1,0 +1,51 @@
+# Agent: Bot Analyst
+# ==================
+# Evaluates bot performance and optimizes parameters.
+# Looks INWARD — P&L, fill rates, parameter experiments.
+
+id: bot_analyst
+name: "Bot Analyst"
+description: "Internal performance analysis — P&L, parameters, experiments"
+
+vault_path: data/vaults/bot_analyst/
+context_file: data/vaults/bot_analyst/CONTEXT.md
+
+schedule:
+  - type: periodic
+    interval_minutes: 60
+    task: performance_review
+  - type: periodic
+    interval_minutes: 1440
+    task: daily_pnl_report
+
+triggers:
+  - event: dry_run_complete
+    task: analyze_results
+  - event: parameter_change_applied
+    task: impact_evaluation
+
+inference_tier:
+  performance_review: 1
+  daily_pnl_report: 2
+  analyze_results: 2
+  impact_evaluation: 2
+
+context_budget:
+  max_vault_files: 20
+  max_vault_tokens: 50000
+  always_include:
+    - CONTEXT.md
+    - knowledge/parameters.md
+  prefer_recent: true
+
+boundaries:
+  can_do:
+    - Analyze P&L and fill rate data
+    - Design parameter experiments
+    - Recommend spread/size/skew adjustments
+    - Compare results across pool instances
+  cannot_do:
+    - Write or modify C++ code
+    - Manage processes or deployments
+    - Analyze market structure
+    - Execute trades
