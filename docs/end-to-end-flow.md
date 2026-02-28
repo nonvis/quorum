@@ -639,3 +639,26 @@ Quorum continues operating locally. Decisions queue up:
 ```
 
 Local speed, on-chain truth. The local system is the source of speed; the chain is the source of truth.
+
+---
+
+## Failure Modes
+
+| Scenario | What Happens |
+|----------|-------------|
+| LLM API down | Daemon keeps running, agent invocations fail gracefully, retry on next schedule tick |
+| Sui RPC down | Proposals track locally in SQLite, on-chain sync queues until reconnection |
+| Walrus unreachable | Vault writes to local files, Walrus sync retries in background |
+| Bad proposal approved | Human override via CLI (`proposal reject --override`), underlying system kill switches independent of Quorum |
+| Agent producing garbage | Operator pauses daemon, reviews CONTEXT.md, adjusts instructions, resumes |
+| Consensus deadlock | 3-round limit → automatic human escalation |
+
+---
+
+## Open Design Questions
+
+1. **Notification system:** How does the operator learn about human-gated proposals? Dashboard polling? Push notification? Telegram/Slack bot?
+2. **Multi-operator:** Can multiple humans share approval authority? Threshold approval (2 of 3)?
+3. **Agent hot-reload:** Can CONTEXT.md changes take effect without daemon restart?
+4. **Vault conflict resolution:** If operator manually edits a vault file that an agent also updates, who wins?
+5. **Proposal dependencies:** Can proposal B declare "only execute after proposal A succeeds"?

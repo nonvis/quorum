@@ -222,3 +222,44 @@ This evaluation is stored:
 - On Sui (hash + metadata) — for verifiability
 
 Over time, each agent builds a **track record**: what fraction of its predictions were directionally correct, how far off the magnitude was, which types of proposals it's best at. This data is on-chain and verifiable by anyone.
+
+---
+
+## Agent Knowledge Growth
+
+Agents start empty and become valuable over time:
+
+```
+Week 1:  CONTEXT.md only (identity, no experience)
+         Output quality: low — generic, cautious
+         Vault: ~2 files
+
+Week 4:  CONTEXT.md + 10-15 knowledge files
+         Output quality: moderate — domain-aware, references history
+         Vault: ~15 files, 5 evaluated proposals
+
+Week 12: CONTEXT.md + 30-50 knowledge files
+         Output quality: high — pattern-aware, calibrated predictions
+         Vault: ~50 files, 20+ evaluated proposals
+         Track record: ~80% directional accuracy
+```
+
+The vault is the agent's institutional memory. An agent with a rich vault produces dramatically better output than a fresh agent, even with the same CONTEXT.md and the same model.
+
+---
+
+## Agent Quality Levers
+
+What the operator can tune to improve agent output:
+
+| Lever | Where | Effect |
+|-------|-------|--------|
+| CONTEXT.md clarity | Vault | Better role adherence, sharper boundaries |
+| Context budget | Agent YAML | More knowledge loaded per invocation |
+| Inference tier | Agent YAML | Frontier model for complex tasks |
+| always_include list | Agent YAML | Critical knowledge never dropped |
+| Seed knowledge | Vault files | Faster cold-start calibration |
+| Task prompt template | Task YAML | Better structured output |
+| Review strictness | Reviewer CONTEXT.md | Higher quality proposals through tougher review |
+
+**Key insight:** CONTEXT.md is the most impactful file in the system — more impactful than any code change.

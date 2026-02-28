@@ -130,3 +130,13 @@ What this adds:
 You can upgrade modes at any time. Moving from Mode 1 → 2 requires deploying Move contracts and registering agents. Moving from 2 → 3 requires a one-time vault sync to Walrus. Moving from 3 → 4 requires encrypting existing vault blobs with Seal policies.
 
 No data is lost during upgrades. Each mode is a strict superset of the previous one.
+
+---
+
+## Stakeholder Implications by Mode
+
+| Stakeholder | Mode 1 | Mode 2 | Mode 3 | Mode 4 |
+|-------------|--------|--------|--------|--------|
+| **Operator** | Full control, no chain setup | On-chain audit trail | Vault backup survives disk loss | Cryptographic agent boundaries |
+| **Observer** | No external verification possible | Can verify decisions on Sui explorer | Can read vault content via Walrus | Can verify access was policy-controlled |
+| **Developer** | Fast local iteration, no dependencies | Test on-chain with testnet (free) | Test vault persistence | Test full access control flow |

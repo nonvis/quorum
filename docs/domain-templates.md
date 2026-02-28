@@ -156,3 +156,18 @@ If yes → separate agents.
 If no → merge into one agent with broader responsibilities.
 
 Context separation is the point. Two agents looking at the same data from slightly different angles should be one agent.
+
+---
+
+## Quick Reference: Domain Mapping Table
+
+| Domain | External | Internal | Builder | Operator |
+|--------|----------|----------|---------|----------|
+| Trading | Market Analyst | Bot Analyst | Engineer | Operator |
+| Software | Product Researcher | Code Quality | Implementation | DevOps |
+| Content | Trend Analyst | Performance Analyst | Creator | Publisher |
+| Research | Literature Scanner | Experiment Analyst | Code Scientist | Lab Manager |
+| Investment | Market Intelligence | Portfolio Analyst | Strategy Engineer | Operations |
+| DevOps | Threat Monitor | Performance Analyst | Platform Engineer | Incident Commander |
+
+This table demonstrates Quorum is **horizontal infrastructure**, not a single-use tool. The four-role pattern is the platform; domains are configurations.
