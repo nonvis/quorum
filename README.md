@@ -39,17 +39,22 @@ Orchestrator Daemon (C++20, deterministic, no LLM)
 ## Quick Start
 
 ```bash
-# Bootstrap project structure
-make init
+# Install dependencies (macOS)
+brew install openssl@3 sqlite yaml-cpp
 
 # Build C++ daemon
-make build
+cd quorum-core
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(sysctl -n hw.ncpu)
 
-# Run on Sui testnet
-./build/quorum_daemon --config configs/quorum.yaml
+# Run daemon
+./build/quorum_daemon --config ../configs/quorum.yaml
 
-# Deploy Move contracts
-make deploy-contracts
+# Run with verbose logging
+./build/quorum_daemon --config ../configs/quorum.yaml --verbose
+
+# Deploy Move contracts (from repo root)
+cd quorum-contracts && sui move build && sui client publish --gas-budget 100000000
 ```
 
 ## Project Structure

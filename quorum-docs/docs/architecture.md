@@ -24,12 +24,12 @@ Quorum is a **verifiable multi-agent orchestration framework** built on the Sui 
 
 A single long-running process that manages all agent invocations deterministically. No LLM calls in this layer.
 
-**Components:**
-- **Scheduler** — Periodic (cron), timer (one-shot), and event-driven triggers
-- **Router** — Maps tasks to agents via static rules with priority handling
-- **Consensus Engine** — Tracks proposal state machine, enforces round limits
-- **Event Dispatcher** — Monitors file system, database, and chain for changes
-- **Message Bus** — In-process thread-safe queue connecting all components
+**Components (all implemented):**
+- **Scheduler** (`daemon/scheduler.h`) — Periodic interval-driven triggers with per-task tracking
+- **Router** (`daemon/router.h`) — Maps task types to agents via static rules
+- **Consensus Engine** (`daemon/consensus.h`) — Proposal state machine (DRAFT→EVALUATED) with round limits
+- **Event Dispatcher** (`daemon/event_dispatcher.h`) — Event pub/sub for internal lifecycle hooks
+- **Message Bus** (`daemon/message_bus.h`) — Thread-safe topic-based queue connecting all components
 
 ### Agent Layer
 
