@@ -22,11 +22,13 @@
 
 3. **`src/utils/json.h`** ✅ — manual JSON parser
    - `extract_string()`, `extract_number()`, `extract_int()`, `extract_bool()`
+   - `extract_anthropic_content()` for Anthropic Messages API response parsing
    - `build_object()`, `quote()` for JSON construction
    - No external JSON library
 
 4. **`src/utils/http_client.h`** ✅ — libcurl wrapper
    - GET, POST with JSON body and custom headers
+   - `post_json()` overload accepting caller-supplied extra headers
    - Configurable timeout and user agent
    - Non-copyable, non-movable RAII design
 
@@ -63,10 +65,12 @@
 
 ### Week 3: Agent Invocation (scaffolded)
 
-11. **`src/agent/invoker.h`** — LLM API caller (scaffolded)
-    - `invoke_frontier()` method with API URL, key, model, prompts
-    - Uses HttpClient + json utilities
-    - Needs: Anthropic API message format, retry logic
+11. **`src/agent/invoker.h`** ✅ — LLM API caller
+    - `invoke_frontier()` calls Anthropic Messages API with proper auth
+    - Sends `x-api-key` and `anthropic-version` headers
+    - Parses response via `extract_anthropic_content()` (handles type/text field ordering)
+    - Populates `tokens_used` from usage.input_tokens + output_tokens
+    - Needs: retry logic, local LLM (Ollama) support
 
 12. **`src/agent/context_assembler.h`** — prompt builder (stub)
     - Interface defined, returns empty context

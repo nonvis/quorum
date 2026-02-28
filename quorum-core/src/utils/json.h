@@ -142,4 +142,39 @@ inline std::string quote(std::string_view s) {
     return result;
 }
 
+// Extract the text content from an Anthropic Messages API response.
+// Handles the standard single-text-block format:
+//   {"content": [{"type": "text", "text": "..."}], "usage": {...}}
+// Tool-use responses and multi-block responses are out of scope for Phase 1.
+inline std::optional<std::string> extract_anthropic_content(const std::string& json) {
+    // Find the "content" array
+    auto content_pos = json.find("\"content\"");
+    if (content_pos == std::string::npos) return std::nullopt;
+
+    // Find the first '{' after "content" (start of first content block object)
+    auto block_start = json.find('{', content_pos);
+    if (block_start == std::string::npos) return std::nullopt;
+
+    // Find the matching '}' for this block (handles nested quotes but not nested objects)
+    auto block_end = json.find('}', block_start);
+    if (block_end == std::string::npos) return std::nullopt;
+
+    // Extract the block substring and find "text" key within it.
+    // Because extract_string does a naive first-match, and "type":"text" appears
+    // before the actual "text":"..." key, we need to skip past the "type" field.
+    auto block = json.substr(block_start, block_end - block_start + 1);
+
+    // Find "type" first, then search for "text" key after it
+    auto type_pos = block.find("\"type\"");
+    if (type_pos == std::string::npos) return std::nullopt;
+
+    // Skip past the "type":"text" value — find the comma after it
+    auto after_type = block.find(',', type_pos);
+    if (after_type == std::string::npos) return std::nullopt;
+
+    // Extract "text" from the remainder of the block
+    auto remainder = block.substr(after_type);
+    return extract_string(remainder, "text");
+}
+
 } // namespace sui::quorum::json

@@ -50,6 +50,13 @@ public:
         return perform(url, json_body.c_str(), {"Content-Type: application/json"});
     }
 
+    [[nodiscard]] HttpResponse post_json(const std::string& url, const std::string& json_body,
+                                          const std::vector<std::string>& extra_headers) {
+        std::vector<std::string> headers = {"Content-Type: application/json"};
+        headers.insert(headers.end(), extra_headers.begin(), extra_headers.end());
+        return perform(url, json_body.c_str(), headers);
+    }
+
 private:
     CURL* curl_{nullptr};
     std::chrono::milliseconds timeout_{15000};

@@ -2,10 +2,13 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include "utils/http_client.h"
 #include "utils/json.h"
 
 namespace sui::quorum {
+
+static constexpr std::string_view ANTHROPIC_API_VERSION = "2023-06-01";
 
 struct InvocationResult {
     bool success{false};
@@ -35,16 +38,23 @@ public:
             {"system", json::quote(system_prompt)},
         });
 
-        // Set auth header via a temporary post
-        auto resp = http_.post_json(api_url, body);
+        auto resp = http_.post_json(api_url, body, {
+            "x-api-key: " + api_key,
+            "anthropic-version: " + std::string(ANTHROPIC_API_VERSION),
+        });
         if (!resp.success()) {
             return {.success = false, .error = resp.error.empty() ? resp.body : resp.error};
         }
 
-        auto content = json::extract_string(resp.body, "text");
+        auto content = json::extract_anthropic_content(resp.body);
+        auto input_tokens = json::extract_int(resp.body, "input_tokens");
+        auto output_tokens = json::extract_int(resp.body, "output_tokens");
+
         return {
             .success = true,
             .output = content.value_or(""),
+            .error = {},
+            .tokens_used = static_cast<int>(input_tokens + output_tokens),
         };
     }
 
