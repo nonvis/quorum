@@ -41,6 +41,12 @@ consensus:
   round_timeout_seconds: 7200   # 2 hours per round
   human_escalation: true
 
+budget:
+  max_concurrent: 2             # max parallel claude -p processes
+  daily_limit_usd: 10.0         # pause dispatch when exceeded
+  hourly_limit_usd: 3.0         # pause dispatch when exceeded
+  task_timeout_seconds: 300     # kill claude -p after 5 minutes
+
 agents:
   - config: configs/agents/market_analyst.yaml
   - config: configs/agents/bot_analyst.yaml

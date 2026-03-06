@@ -58,6 +58,13 @@ struct ConsensusConfig {
     bool human_escalation = true;
 };
 
+struct BudgetConfig {
+    uint64_t max_concurrent = 2;       // max parallel claude -p processes
+    double daily_limit_usd = 10.0;     // pause dispatch when exceeded
+    double hourly_limit_usd = 3.0;     // pause dispatch when exceeded
+    uint64_t task_timeout_seconds = 300; // kill claude -p after this
+};
+
 struct AgentRef {
     std::string config_path;
 };
@@ -69,6 +76,7 @@ struct QuorumConfig {
     SealConfig seal;
     InferenceConfig inference;
     ConsensusConfig consensus;
+    BudgetConfig budget;
     std::vector<AgentRef> agents;
 };
 
@@ -193,6 +201,16 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
                 try { cfg.consensus.round_timeout_seconds = std::stoull(val); } catch (...) {}
             } else if (key == "human_escalation") {
                 cfg.consensus.human_escalation = (val == "true");
+            }
+        } else if (section == "budget") {
+            if (key == "max_concurrent") {
+                try { cfg.budget.max_concurrent = std::stoull(val); } catch (...) {}
+            } else if (key == "daily_limit_usd") {
+                try { cfg.budget.daily_limit_usd = std::stod(val); } catch (...) {}
+            } else if (key == "hourly_limit_usd") {
+                try { cfg.budget.hourly_limit_usd = std::stod(val); } catch (...) {}
+            } else if (key == "task_timeout_seconds") {
+                try { cfg.budget.task_timeout_seconds = std::stoull(val); } catch (...) {}
             }
         }
     }
