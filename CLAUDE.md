@@ -2,7 +2,9 @@
 
 ## Project Overview
 
-Quorum is a **verifiable multi-agent orchestration framework** on Sui Stack. A deterministic C++20 daemon orchestrates independent AI agents that coordinate through on-chain proposals, persist knowledge on Walrus, and enforce access control via Seal.
+Quorum is a **multi-agent orchestration framework**. A deterministic C++20 daemon orchestrates independent AI agents that coordinate through structured proposals and persist knowledge in local vaults.
+
+**Current phase: Phase 0 — Pure local orchestration.** No blockchain, no Walrus, no Seal. Everything runs on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) will be added in later phases after the core orchestration loop is proven.
 
 **Tagline:** "Your AI agents now have verifiable memory and auditable decisions."
 
@@ -15,32 +17,20 @@ quorum/
 │   ├── CMakeLists.txt
 │   ├── src/
 │   │   ├── main.cpp             # Daemon entry, signal handling, PID lock
-│   │   ├── daemon/              # Scheduler, router, consensus, events, message bus
-│   │   ├── agent/               # LLM invoker, context assembler, output parser, model router
-│   │   ├── vault/               # Walrus vault manager, retention, indexer
-│   │   ├── chain/               # Sui RPC client, proposal mgmt, agent identity, audit, PTB
-│   │   ├── seal/                # Seal encrypt/decrypt, access policies
-│   │   ├── storage/             # SQLite (WAL mode), local vault cache
+│   │   ├── daemon/              # Scheduler, router, message bus, events
+│   │   ├── agent/               # Claude Code invoker (claude -p), context assembler, output parser
+│   │   ├── vault/               # Local vault manager (filesystem-based)
+│   │   ├── chain/               # [DEFERRED] Sui RPC client, proposals, audit, PTB
+│   │   ├── seal/                # [DEFERRED] Seal encrypt/decrypt, access policies
+│   │   ├── storage/             # SQLite (WAL mode) — task queue, token tracking
 │   │   ├── utils/               # HTTP (libcurl), JSON (manual), crypto (ed25519), config
-│   │   ├── sdk/                 # libquorum public API
+│   │   ├── sdk/                 # [DEFERRED] libquorum public API
 │   │   └── cli/                 # quorum binary CLI commands
 │   ├── tests/
 │   └── configs/                 # Agent YAML definitions, task YAML definitions
 │
-├── quorum-contracts/            # Move (OPEN SOURCE) — on-chain state machines
-│   ├── Move.toml
-│   ├── sources/
-│   │   ├── proposal.move        # DRAFT→REVIEWING→APPROVED→EXECUTED→EVALUATED
-│   │   ├── agent.move           # AgentIdentity + AgentCap
-│   │   ├── audit.move           # Append-only audit log
-│   │   └── vault_access.move    # Seal access policies
-│   └── tests/
-│
-├── quorum-ts/                   # TypeScript (OPEN SOURCE) — community-facing
-│   ├── packages/sdk/            # @quorum/sdk
-│   ├── packages/cli/            # @quorum/cli (npm wrapper)
-│   └── packages/dashboard/      # @quorum/dashboard (React web UI)
-│
+├── quorum-contracts/            # [DEFERRED] Move (OPEN SOURCE) — on-chain state machines
+├── quorum-ts/                   # [DEFERRED] TypeScript (OPEN SOURCE) — community-facing
 └── quorum-docs/                 # Documentation (OPEN SOURCE)
 ```
 
@@ -63,17 +53,15 @@ The bot-manager project at `../bot-manager` is the primary C++ reference. Reuse 
 - **String handling:** `std::string_view` for read-only, `std::string` for ownership
 - **Error handling pattern:** return `bool` or `std::optional<T>` — never throw
 
-### Dependencies
+### Dependencies (Phase 0)
 
 | Dependency | Purpose | Source |
 |-----------|---------|--------|
-| libcurl | HTTP client (Sui RPC, Walrus API, LLM APIs) | Reuse from bot-manager |
-| sqlite3 | Local metrics, audit cache, vault index | Reuse from bot-manager |
-| ed25519 | Sui transaction signing | Reuse from bot-manager |
-| OpenSSL | Hashing (SHA-256, BLAKE2), TLS | Reuse from bot-manager |
-| yaml-cpp | Config parsing (agent/task YAML) | New dependency |
-| libuv | Event loop, file watching, timers | New dependency (evaluate) |
-| CLI11 | CLI argument parsing | New dependency |
+| sqlite3 | Task queue, token tracking, audit cache | Reuse from bot-manager |
+| OpenSSL | Hashing (SHA-256), TLS | Reuse from bot-manager |
+| libcurl | HTTP client (future use) | Reuse from bot-manager |
+
+**Runtime dependency:** `claude` CLI (Claude Code) must be installed and authenticated.
 
 **Banned:** nlohmann/json, Boost, any JSON library, any ORM, any framework
 
@@ -105,18 +93,24 @@ cd build && ctest --output-on-failure
 
 ### The Daemon Is Deterministic
 
-The orchestrator daemon (`quorum_daemon`) **never** calls an LLM. All scheduling, routing, consensus, and event handling is pure C++ logic. LLM calls happen only in the agent invocation layer (`src/agent/invoker.h`), which is triggered by the daemon but runs as an external API call.
+The orchestrator daemon (`quorum_daemon`) **never** calls an LLM. All scheduling, routing, consensus, and event handling is pure C++ logic. Agent invocations happen by spawning `claude -p` subprocesses (`src/agent/invoker.h`), triggered by the daemon's task dispatch loop.
 
-### Cost-Layered Inference
+### Agent Invocation (Phase 0)
+
+The daemon spawns Claude Code CLI as the agent runtime:
 
 ```
-Tier 0: Rule-based (free)      — ALL daemon logic
-Tier 1: Local LLM ($0)         — 90% of LLM calls (Ollama/llama.cpp)
-Tier 2: Frontier model ($$)    — 10% of LLM calls (Claude API)
-Tier 3: Human (priceless)      — capital decisions, deadlocks
+daemon → assembles prompt (vault + task) → spawns `claude -p "..." --dangerously-skip-permissions --output-format json` → collects stdout → parses result → writes to vault → routes follow-up tasks
 ```
 
-The `model_router.h` selects tier based on task type, never on LLM output.
+Each `claude -p` call is a **fresh context** (no memory between calls). The vault provides continuity.
+
+### Parallelism Control
+
+- Max concurrent `claude -p` processes: configurable (default 2-3)
+- Per-task token cap: kills process if exceeded
+- Global daily budget: daemon pauses all invocations when hit
+- Critical for unattended overnight runs
 
 ### Proposal State Machine
 
@@ -128,33 +122,31 @@ DRAFT(0) → REVIEWING(1) → APPROVED(2) → EXECUTED(5) → EVALUATED(6)
 
 - Max 3 rounds per proposal
 - Required reviewers declared at creation
-- Human approval gate for high-stakes decisions (HumanApprovalCap)
-- All transitions are atomic on-chain via PTB
+- All transitions tracked locally in SQLite (Phase 0)
+- On-chain transitions via PTB deferred to Phase 1+
 
 ### Vault System
 
-Each agent owns a vault: `vault/{agent_name}/`
+Each agent owns a vault: `data/vaults/{agent_name}/`
 
 ```
-vault/{agent_name}/
+data/vaults/{agent_name}/
 ├── CONTEXT.md          # Always loaded — role description + instructions
 ├── knowledge/          # Accumulated analysis and conclusions
 ├── experiments/        # Experiment designs and results
-├── decisions/          # Past decisions linked to on-chain proposals
+├── decisions/          # Past decisions linked to proposals
 └── inbox/              # Items from other agents via proposal/consensus
 ```
 
-- Local SQLite cache for fast reads
-- Async sync to Walrus (content-addressed blobs)
-- Cross-agent reads ONLY through Seal-authorized proposal review
-- Retention policies: permanent | archive_after_90d | archive_after_evaluation
+- Local filesystem only (Phase 0) — no Walrus sync
+- SQLite index for fast lookups
+- Cross-agent reads through proposal review process (local enforcement)
 
-### Three-Layer Storage
+### Storage (Phase 0)
 
 ```
-Local (Tier 0):   SQLite metrics, tmp workspace, local LLM — FREE
-Walrus (Tier 1):  Vault blobs, snapshots, encrypted cross-agent data — LOW COST
-Sui (Tier 2):     Proposal objects, agent identities, audit log — DECISIONS ONLY
+Local only:  SQLite task queue, token tracking, vault index, proposal state
+Future:      Walrus (vault blobs), Sui (proposals, audit), Seal (access control)
 ```
 
 ## Key Patterns
@@ -214,7 +206,7 @@ agents:
   - config: configs/agents/operator.yaml
 ```
 
-## Move Contract Conventions
+## Move Contract Conventions (Deferred — Phase 1+)
 
 - All proposal state transitions enforce the state machine (assert on invalid transitions)
 - Use `clock::timestamp_ms(clock)` for all timestamps
@@ -222,7 +214,7 @@ agents:
 - Heavy content on Walrus (referenced by blob ID as `vector<u8>`), lightweight metadata on-chain
 - Shared objects for proposals (multi-party interaction), owned objects for agent identities
 
-## TypeScript Conventions
+## TypeScript Conventions (Deferred — Phase 5+)
 
 - pnpm workspaces with turborepo
 - @quorum/sdk connects to daemon via HTTP REST API
@@ -235,25 +227,26 @@ agents:
 1. **Never add LLM calls to the daemon control loop** — the orchestrator is deterministic
 2. **Never use nlohmann/json or any JSON library** — manual json.h only
 3. **Never use Boost** — for anything
-4. **Never store full proposal content on Sui** — only metadata + Walrus blob IDs
-5. **Never allow direct vault writes across agents** — cross-agent access goes through Seal
-6. **Never skip the proposal protocol** — all material decisions go through create→review→approve→execute→evaluate
-7. **Never hardcode Sui addresses** — all object IDs come from config
-8. **Never block the daemon event loop** — async I/O for chain and Walrus calls
+4. **Never allow direct vault writes across agents** — cross-agent access goes through proposal review
+5. **Never skip the proposal protocol** — all material decisions go through create→review→approve→execute→evaluate
+6. **Never block the daemon event loop** — subprocess spawning must be non-blocking
+7. **Never run `claude -p` without token budget enforcement** — per-task cap + global daily cap
 
 ## Current Phase
 
-**Phase 1: Orchestrator Daemon + Sui Contracts** (Weeks 1-4)
+**Phase 0: Pure Local Orchestration** — Prove the multi-agent coordination loop on a single machine before adding web3 layers.
 
 Priority order:
-1. C++ daemon skeleton: main.cpp, signal handling, PID lock, config loading
-2. Scheduler (cron + timer + event)
-3. Message bus (in-process queue)
-4. Router (static rules)
-5. Consensus engine (proposal state machine — local mirror)
-6. Agent invoker (Claude API wrapper)
-7. Move contracts: proposal.move, agent.move, audit.move
-8. CLI: `quorum daemon start/stop/status`, `quorum proposal create/status`
+1. ~~C++ daemon skeleton~~ ✓ (main.cpp, signal handling, PID lock, config loading)
+2. ~~Scheduler, message bus, router, event dispatcher~~ ✓ (skeleton implementations)
+3. **Invoker rewrite** — spawn `claude -p` subprocess instead of raw Claude API calls
+4. **SQLite task queue** — pending/active/done states with token tracking
+5. **Context assembler** — build prompts from vault files + task definitions
+6. **Output parser** — extract vault updates from Claude Code output
+7. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
+8. **Token budget enforcement** — per-task cap + global daily cap
+
+**Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 
 ## Useful Commands
 
@@ -267,24 +260,16 @@ cmake -B build && cmake --build build -j$(nproc)
 # Run with verbose logging
 ./build/quorum_daemon --config configs/quorum.yaml --verbose
 
-# CLI commands
+# Check daemon status (overnight runs)
+./build/quorum status
+
+# CLI commands (Phase 0)
 ./build/quorum daemon start
 ./build/quorum daemon status
 ./build/quorum agent list
 ./build/quorum proposal create --title "..." --author market_analyst
 ./build/quorum proposal status --id proposal-042
-./build/quorum vault list --agent market_analyst
-./build/quorum audit list --limit 20
 
-# Move contract build (from quorum-contracts/)
-sui move build
-sui move test
-
-# Move deploy to testnet
-sui client publish --gas-budget 100000000
-
-# TypeScript (from quorum-ts/)
-pnpm install
-pnpm build
-pnpm --filter @quorum/cli start
+# Agent invocation (what the daemon spawns)
+claude -p "prompt" --dangerously-skip-permissions --output-format json
 ```

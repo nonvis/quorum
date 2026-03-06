@@ -2,7 +2,9 @@
 
 ## Overview
 
-Quorum is a **verifiable multi-agent orchestration framework** built on the Sui Stack. It coordinates independent AI agents that accumulate domain knowledge, make decisions through structured proposals, and record everything with cryptographic guarantees.
+Quorum is a **multi-agent orchestration framework**. A deterministic C++20 daemon orchestrates independent AI agents that accumulate domain knowledge, make decisions through structured proposals, and coordinate via local vaults.
+
+**Phase 0 (current):** Pure local orchestration. No blockchain, no remote storage. The daemon spawns `claude -p` (Claude Code CLI) subprocesses as the agent runtime. Web3 layers (Sui, Walrus, Seal) will be added in later phases.
 
 ## Design Principles
 
@@ -10,13 +12,11 @@ Quorum is a **verifiable multi-agent orchestration framework** built on the Sui 
 
 2. **Context separation is the product.** Each agent gets its own full context window loaded with domain-relevant knowledge. A Market Analyst and an Engineer need fundamentally different information.
 
-3. **Persistent memory as first-class citizen.** Agent knowledge accumulates across sessions in Walrus-backed vaults — version-controlled, queryable, and surviving indefinitely.
+3. **Persistent memory as first-class citizen.** Agent knowledge accumulates across sessions in local vaults — queryable and surviving indefinitely. (Walrus-backed persistence in later phases.)
 
-4. **Cost-layered inference.** Tier 0: rules (free). Tier 1: local LLM ($0). Tier 2: frontier model ($$). Tier 3: human. Target: 90% local, 10% frontier.
+4. **Fail-safe by default.** If the orchestrator crashes, underlying systems continue with their last known configuration.
 
-5. **Fail-safe by default.** If the orchestrator crashes, underlying systems continue with their last known configuration.
-
-6. **Local speed, on-chain truth.** The orchestrator runs locally for speed. Chain interactions happen at boundaries only (proposal transitions, audit entries, vault persistence).
+5. **Local speed, verifiable truth (later).** The orchestrator runs locally for speed. Chain interactions will happen at boundaries only in future phases.
 
 ## System Layers
 
@@ -24,26 +24,38 @@ Quorum is a **verifiable multi-agent orchestration framework** built on the Sui 
 
 A single long-running process that manages all agent invocations deterministically. No LLM calls in this layer.
 
-**Components (all implemented):**
+**Components (all implemented as skeletons):**
 - **Scheduler** (`daemon/scheduler.h`) — Periodic interval-driven triggers with per-task tracking
 - **Router** (`daemon/router.h`) — Maps task types to agents via static rules
 - **Consensus Engine** (`daemon/consensus.h`) — Proposal state machine (DRAFT→EVALUATED) with round limits
 - **Event Dispatcher** (`daemon/event_dispatcher.h`) — Event pub/sub for internal lifecycle hooks
 - **Message Bus** (`daemon/message_bus.h`) — Thread-safe topic-based queue connecting all components
 
-### Agent Layer
+### Agent Layer (Phase 0)
 
-Each agent is invoked as an independent LLM call. The orchestrator assembles context (vault files + metrics + task description), calls the LLM, and parses structured output.
+Each agent is invoked by spawning a `claude -p` subprocess. The daemon:
 
-Agents are **stateless between invocations** — all state lives in their vault and the shared data layer.
+1. Assembles context (vault CONTEXT.md + relevant vault files + task description)
+2. Spawns: `claude -p "prompt" --dangerously-skip-permissions --output-format json`
+3. Collects stdout when process completes
+4. Parses structured output (vault updates, proposals, reviews)
+5. Writes results to agent's vault
+6. Routes follow-up tasks to other agents
 
-### Storage Layers
+Agents are **stateless between invocations** — all state lives in their vault. Each `claude -p` call is a fresh context. The vault provides continuity.
 
-**Local (Tier 0):** SQLite for metrics, temporary workspace, local LLM inference. Free.
+**Parallelism:** Max 2-3 concurrent `claude -p` processes (configurable). Per-task token cap + global daily budget prevent runaway costs during unattended runs.
 
-**Walrus (Tier 1):** Agent vault blobs, periodic snapshots, Seal-encrypted cross-agent data. Low cost, content-addressed, deletable.
+### Storage (Phase 0)
 
-**Sui (Tier 2):** Proposal objects, agent identities, audit log entries. Decisions only, tamper-proof.
+**Local only:**
+- SQLite (WAL mode) — task queue, token tracking, proposal state, vault index
+- Filesystem — agent vault directories under `data/vaults/`
+
+**Deferred:**
+- Walrus — vault blob persistence (Phase 1+)
+- Sui — proposal objects, agent identities, audit log (Phase 1+)
+- Seal — cross-agent access control (Phase 2+)
 
 ## Proposal Protocol
 
@@ -58,8 +70,8 @@ DRAFT(0) → REVIEWING(1) → APPROVED(2) → EXECUTED(5) → EVALUATED(6)
 **Rules:**
 - Max 3 rounds of review per proposal
 - Required reviewers declared at creation time
-- Human approval gate for high-stakes decisions (via HumanApprovalCap)
-- All transitions are atomic on Sui via Programmable Transaction Blocks
+- Human approval gate for high-stakes decisions
+- All transitions tracked in SQLite (Phase 0), on-chain via PTB (Phase 1+)
 
 ## Agent Roles (Default Template)
 
@@ -72,7 +84,7 @@ The four-role pattern maps to any domain:
 | **Engineer** | "How do we build it safely?" | Code, architecture, safety |
 | **Operator** | "Is everything running?" | Processes, logs, configs |
 
-## Sui Stack Mapping
+## Future: Sui Stack Mapping (Phase 1+)
 
 | Quorum Concept | Sui Stack | Why It Fits |
 |----------------|-----------|-------------|
