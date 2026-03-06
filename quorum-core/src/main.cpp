@@ -189,6 +189,82 @@ static std::string get_task_agent(sui::quorum::Database& db, int64_t task_id) {
     return agent;
 }
 
+// Schedule review tasks for all pending reviewers on a proposal.
+// Idempotent: skips reviewers who already have a pending/active review task
+// for this proposal (detected via prompt LIKE match on proposal_id).
+static void schedule_review_tasks(
+    sui::quorum::Database& db,
+    sui::quorum::ConsensusEngine& consensus,
+    const sui::quorum::ContextAssembler& context_assembler,
+    const sui::quorum::VaultManager& vault_manager,
+    const std::string& proposal_id,
+    bool verbose)
+{
+    auto pending = consensus.get_pending_reviewers(proposal_id);
+    if (pending.empty()) return;
+
+    auto prop_opt = consensus.get_proposal(proposal_id);
+    if (!prop_opt) return;
+    const auto& prop = *prop_opt;
+
+    for (const auto& reviewer : pending) {
+        // Idempotency guard: skip if a pending/active review task already
+        // exists for this reviewer + proposal_id combination.
+        int64_t existing = 0;
+        std::string like_pattern = std::string("%") + proposal_id + "%";
+        db.query(
+            "SELECT COUNT(*) FROM tasks "
+            "WHERE agent = ? AND task_type = 'review' "
+            "AND status IN ('pending', 'active') "
+            "AND prompt LIKE ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_text(stmt, 1, reviewer.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 2, like_pattern.c_str(), -1, SQLITE_TRANSIENT);
+            },
+            [&](sqlite3_stmt* stmt) {
+                existing = sqlite3_column_int64(stmt, 0);
+            }
+        );
+        if (existing > 0) {
+            if (verbose) {
+                std::cout << "[consensus] review task already exists for "
+                          << reviewer << " on " << proposal_id << ", skipping\n";
+            }
+            continue;
+        }
+
+        // Build review task description with full proposal context
+        std::string task_description;
+        task_description += "## Proposal to Review\n\n";
+        task_description += "**Proposal ID:** " + proposal_id + "\n";
+        task_description += "**Title:** " + prop.title + "\n";
+        task_description += "**Author:** " + prop.author + "\n";
+        task_description += "**Round:** " + std::to_string(prop.current_round) + "\n\n";
+        task_description += "### Proposal Content\n\n";
+        task_description += prop.content + "\n\n";
+        task_description += "---\n\n";
+        task_description += "Review this proposal and respond with a REVIEW block.\n\n";
+        task_description += "```REVIEW\n";
+        task_description += "proposal_id: " + proposal_id + "\n";
+        task_description += "verdict: approve | reject | escalate\n";
+        task_description += "reasoning: |\n";
+        task_description += "  <your analysis of the proposal>\n";
+        task_description += "```\n";
+
+        // Assemble full prompt with vault context
+        auto vault_path = vault_manager.vault_path(reviewer);
+        auto prompt = context_assembler.assemble(
+            reviewer, vault_path, "review", task_description);
+
+        enqueue_task(db, reviewer, "review", prompt);
+
+        if (verbose) {
+            std::cout << "[consensus] scheduled review task for "
+                      << reviewer << " on " << proposal_id << "\n";
+        }
+    }
+}
+
 int main(int argc, char* argv[]) {
     std::cout << "Quorum Daemon v0.2.0" << std::endl;
     std::cout << "====================" << std::endl;
@@ -368,8 +444,40 @@ int main(int argc, char* argv[]) {
                               << " summary: " << parsed.summary.substr(0, 200) << "\n";
                 }
 
-                // TODO: handle parsed.proposals (Action Item #5)
-                // TODO: handle parsed.reviews (Action Item #6)
+                // Create proposals and schedule reviewer tasks
+                for (const auto& p : parsed.proposals) {
+                    if (p.title.empty() || p.content.empty()) continue;  // skip malformed
+                    auto prop_id = consensus.create_proposal(
+                        agent_id, p.title, p.content,
+                        p.requires_consensus_from, task_id);
+                    if (verbose) {
+                        std::cout << "[consensus] proposal created: " << prop_id
+                                  << " by " << agent_id
+                                  << " — \"" << p.title << "\""
+                                  << " reviewers: " << p.requires_consensus_from.size()
+                                  << "\n";
+                    }
+                    schedule_review_tasks(db, consensus, context_assembler,
+                                          vault_manager, prop_id, verbose);
+                }
+
+                // Submit reviews and handle potential new rounds
+                for (const auto& r : parsed.reviews) {
+                    if (r.proposal_id.empty() || r.verdict.empty()) continue;
+                    bool ok = consensus.submit_review(
+                        r.proposal_id, agent_id, r.verdict, r.reasoning, task_id);
+                    if (verbose) {
+                        std::cout << "[consensus] review submitted: " << r.proposal_id
+                                  << " by " << agent_id
+                                  << " verdict=" << r.verdict
+                                  << (ok ? "" : " (FAILED)") << "\n";
+                    }
+                    // If a rejection triggered a new round, schedule reviews for it
+                    if (ok) {
+                        schedule_review_tasks(db, consensus, context_assembler,
+                                              vault_manager, r.proposal_id, verbose);
+                    }
+                }
             }
         }
 
