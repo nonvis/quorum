@@ -17,6 +17,7 @@
 #include "daemon/message_bus.h"
 #include "daemon/router.h"
 #include "daemon/event_dispatcher.h"
+#include "daemon/consensus.h"
 #include "storage/database.h"
 #include "agent/invoker.h"
 #include "agent/context_assembler.h"
@@ -86,18 +87,7 @@ static void init_schema(sui::quorum::Database& db) {
         "  details TEXT"
         ")"
     );
-    db.execute(
-        "CREATE TABLE IF NOT EXISTS proposals ("
-        "  id TEXT PRIMARY KEY,"
-        "  title TEXT NOT NULL,"
-        "  author TEXT NOT NULL,"
-        "  state INTEGER NOT NULL DEFAULT 0,"
-        "  created_at INTEGER NOT NULL,"
-        "  updated_at INTEGER NOT NULL,"
-        "  current_round INTEGER NOT NULL DEFAULT 0,"
-        "  walrus_blob_id TEXT"
-        ")"
-    );
+    sui::quorum::ConsensusEngine::init_schema(db);
     db.execute(
         "CREATE TABLE IF NOT EXISTS tasks ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -277,6 +267,7 @@ int main(int argc, char* argv[]) {
     sui::quorum::ContextAssembler context_assembler;
     sui::quorum::OutputParser output_parser;
     sui::quorum::VaultManager vault_manager(cfg.daemon.data_dir);
+    sui::quorum::ConsensusEngine consensus(db, cfg.consensus);
 
     // Initialize vaults for all configured agents
     for (const auto& agent_ref : cfg.agents) {
