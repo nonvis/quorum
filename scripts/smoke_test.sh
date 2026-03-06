@@ -35,11 +35,13 @@ ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
 # ─── 1. Clean slate ──────────────────────────────────────────────────────────
 info "Cleaning previous state..."
 if [ -f "$DB_PATH" ]; then
-    rm "$DB_PATH"
-    ok "Removed existing $DB_PATH"
+    rm -f "$DB_PATH" "${DB_PATH}-wal" "${DB_PATH}-shm"
+    ok "Removed existing $DB_PATH (+ WAL/SHM)"
 else
     ok "No existing database — fresh start"
 fi
+# Edge case: WAL/SHM may linger even if the main DB was already gone
+rm -f "${DB_PATH}-wal" "${DB_PATH}-shm" 2>/dev/null
 
 # ─── 2. Build ─────────────────────────────────────────────────────────────────
 info "Building quorum_daemon..."

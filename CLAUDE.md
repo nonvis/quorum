@@ -245,10 +245,17 @@ Priority order:
 5. ~~Context assembler~~ ✓ (vault CONTEXT.md + knowledge + inbox, output format instructions)
 6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / SUMMARY blocks, KV + multi-line parsing)
 7. ~~Token budget enforcement~~ ✓ (per-task cap + hourly/daily caps with rolling window)
-8. ~~Smoke test script~~ ✓ (scripts/smoke_test.sh — seeds tasks, runs daemon, validates results)
-9. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
+8. ~~Smoke test script~~ ✓ (scripts/smoke_test.sh — seeds tasks, runs daemon, validates results; includes WAL/SHM cleanup to prevent stale SQLite state)
+9. ~~End-to-end dispatch verified~~ ✓ (daemon claims pending tasks, invokes `claude -p`, writes results back to DB)
+10. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
+
+### Known Issues
+
+- **Nested Claude Code sessions:** `claude -p` refuses to launch inside another Claude Code session (`CLAUDECODE` env var detected). The smoke test must be run from a regular terminal, not from within `claude` CLI.
+- **Invoker error handling:** The invoker marks tasks `done` even when `claude -p` exits non-zero (as long as stdout is non-empty). Error messages get stored as "results" instead of triggering `failed` status. Needs exit-code + JSON validation before calling `mark_done`.
+- **Buffered stdout in background mode:** When daemon stdout is redirected to a file, `std::cout` uses full buffering. Verbose log lines only appear after process exit. Add `std::flush` to verbose output paths if real-time log tailing is needed.
 
 ## Useful Commands
 
@@ -276,5 +283,9 @@ cmake -B build && cmake --build build -j$(nproc)
 claude -p "prompt" --dangerously-skip-permissions --output-format json
 
 # Smoke test (seeds tasks, runs daemon with real claude -p, validates results)
+# MUST be run from a regular terminal, NOT inside a claude session
 ./scripts/smoke_test.sh
+
+# Troubleshooting: clear stale SQLite WAL/SHM if daemon sees wrong data
+rm -f data/quorum.db-wal data/quorum.db-shm
 ```
