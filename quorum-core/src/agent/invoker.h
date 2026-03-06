@@ -80,10 +80,10 @@ public:
         auto& raw_output = *result;
 
         // Parse token usage from JSON output
-        // claude --output-format json returns: {"type":"result","result":"...","cost_usd":...,"stats":{"input_tokens":...,"output_tokens":...}}
+        // claude --output-format json returns: {"type":"result","subtype":"success","result":"...","total_cost_usd":...,"usage":{"input_tokens":...,"output_tokens":...}}
         int64_t tokens_in = json::extract_int(raw_output, "input_tokens");
         int64_t tokens_out = json::extract_int(raw_output, "output_tokens");
-        double cost = json::extract_number(raw_output, "cost_usd");
+        double cost = json::extract_number(raw_output, "total_cost_usd");
 
         // Extract the result text from JSON
         auto result_text = json::extract_string(raw_output, "result");

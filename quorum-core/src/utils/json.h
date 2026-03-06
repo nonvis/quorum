@@ -9,109 +9,174 @@
 namespace sui::quorum::json {
 
 // Extract a JSON string value by key: "key": "value"
+// Searches in a loop to skip matches where "key" appears as a VALUE rather than a KEY.
+// A key is always followed (after optional whitespace) by ':'.
 inline std::optional<std::string> extract_string(const std::string& json, std::string_view key) {
     std::string search = "\"" + std::string(key) + "\"";
-    auto pos = json.find(search);
-    if (pos == std::string::npos) return std::nullopt;
+    size_t search_from = 0;
 
-    pos = json.find(':', pos + search.size());
-    if (pos == std::string::npos) return std::nullopt;
-    ++pos;
+    while (true) {
+        auto pos = json.find(search, search_from);
+        if (pos == std::string::npos) return std::nullopt;
 
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' || json[pos] == '\r'))
-        ++pos;
+        // Verify this is a KEY (next non-whitespace must be ':')
+        auto after = pos + search.size();
+        while (after < json.size() && (json[after] == ' ' || json[after] == '\t'
+               || json[after] == '\n' || json[after] == '\r'))
+            ++after;
 
-    if (pos >= json.size() || json[pos] != '"') return std::nullopt;
-    ++pos;
-
-    std::string result;
-    while (pos < json.size() && json[pos] != '"') {
-        if (json[pos] == '\\' && pos + 1 < json.size()) {
-            ++pos;
-            switch (json[pos]) {
-                case '"':  result += '"'; break;
-                case '\\': result += '\\'; break;
-                case 'n':  result += '\n'; break;
-                case 't':  result += '\t'; break;
-                case 'r':  result += '\r'; break;
-                default:   result += json[pos]; break;
-            }
-        } else {
-            result += json[pos];
+        if (after >= json.size() || json[after] != ':') {
+            // Not a key — it's a value. Skip and keep searching.
+            search_from = pos + 1;
+            continue;
         }
+
+        // Found the key. Skip the ':' and extract the value.
+        pos = after + 1;
+
+        // Skip whitespace before value
+        while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t'
+               || json[pos] == '\n' || json[pos] == '\r'))
+            ++pos;
+
+        if (pos >= json.size() || json[pos] != '"') return std::nullopt;
         ++pos;
+
+        // Extract string value (handle escapes)
+        std::string result;
+        while (pos < json.size() && json[pos] != '"') {
+            if (json[pos] == '\\' && pos + 1 < json.size()) {
+                ++pos;
+                switch (json[pos]) {
+                    case '"':  result += '"'; break;
+                    case '\\': result += '\\'; break;
+                    case 'n':  result += '\n'; break;
+                    case 't':  result += '\t'; break;
+                    case 'r':  result += '\r'; break;
+                    default:   result += json[pos]; break;
+                }
+            } else {
+                result += json[pos];
+            }
+            ++pos;
+        }
+        return result;
     }
-    return result;
 }
 
 // Extract a number value by key (handles both quoted and unquoted)
+// Searches in a loop to skip matches where "key" appears as a VALUE rather than a KEY.
 inline double extract_number(const std::string& json, std::string_view key, double fallback = 0.0) {
     std::string search = "\"" + std::string(key) + "\"";
-    auto pos = json.find(search);
-    if (pos == std::string::npos) return fallback;
+    size_t search_from = 0;
 
-    pos = json.find(':', pos + search.size());
-    if (pos == std::string::npos) return fallback;
-    ++pos;
+    while (true) {
+        auto pos = json.find(search, search_from);
+        if (pos == std::string::npos) return fallback;
 
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' || json[pos] == '\r'))
-        ++pos;
+        // Verify this is a KEY (next non-whitespace must be ':')
+        auto after = pos + search.size();
+        while (after < json.size() && (json[after] == ' ' || json[after] == '\t'
+               || json[after] == '\n' || json[after] == '\r'))
+            ++after;
 
-    if (pos >= json.size()) return fallback;
+        if (after >= json.size() || json[after] != ':') {
+            search_from = pos + 1;
+            continue;
+        }
 
-    bool quoted = (json[pos] == '"');
-    if (quoted) ++pos;
+        // Found the key. Skip ':' and whitespace.
+        pos = after + 1;
+        while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t'
+               || json[pos] == '\n' || json[pos] == '\r'))
+            ++pos;
 
-    try {
-        return std::stod(json.substr(pos));
-    } catch (...) {
-        return fallback;
+        if (pos >= json.size()) return fallback;
+
+        bool quoted = (json[pos] == '"');
+        if (quoted) ++pos;
+
+        try {
+            return std::stod(json.substr(pos));
+        } catch (...) {
+            return fallback;
+        }
     }
 }
 
 // Extract an integer value by key
+// Searches in a loop to skip matches where "key" appears as a VALUE rather than a KEY.
 inline int64_t extract_int(const std::string& json, std::string_view key, int64_t fallback = 0) {
     std::string search = "\"" + std::string(key) + "\"";
-    auto pos = json.find(search);
-    if (pos == std::string::npos) return fallback;
+    size_t search_from = 0;
 
-    pos = json.find(':', pos + search.size());
-    if (pos == std::string::npos) return fallback;
-    ++pos;
+    while (true) {
+        auto pos = json.find(search, search_from);
+        if (pos == std::string::npos) return fallback;
 
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' || json[pos] == '\r'))
-        ++pos;
+        // Verify this is a KEY (next non-whitespace must be ':')
+        auto after = pos + search.size();
+        while (after < json.size() && (json[after] == ' ' || json[after] == '\t'
+               || json[after] == '\n' || json[after] == '\r'))
+            ++after;
 
-    if (pos >= json.size()) return fallback;
+        if (after >= json.size() || json[after] != ':') {
+            search_from = pos + 1;
+            continue;
+        }
 
-    bool quoted = (json[pos] == '"');
-    if (quoted) ++pos;
+        // Found the key. Skip ':' and whitespace.
+        pos = after + 1;
+        while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t'
+               || json[pos] == '\n' || json[pos] == '\r'))
+            ++pos;
 
-    try {
-        return std::stoll(json.substr(pos));
-    } catch (...) {
-        return fallback;
+        if (pos >= json.size()) return fallback;
+
+        bool quoted = (json[pos] == '"');
+        if (quoted) ++pos;
+
+        try {
+            return std::stoll(json.substr(pos));
+        } catch (...) {
+            return fallback;
+        }
     }
 }
 
 // Extract a boolean value by key
+// Searches in a loop to skip matches where "key" appears as a VALUE rather than a KEY.
 inline bool extract_bool(const std::string& json, std::string_view key, bool fallback = false) {
     std::string search = "\"" + std::string(key) + "\"";
-    auto pos = json.find(search);
-    if (pos == std::string::npos) return fallback;
+    size_t search_from = 0;
 
-    pos = json.find(':', pos + search.size());
-    if (pos == std::string::npos) return fallback;
-    ++pos;
+    while (true) {
+        auto pos = json.find(search, search_from);
+        if (pos == std::string::npos) return fallback;
 
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t'))
-        ++pos;
+        // Verify this is a KEY (next non-whitespace must be ':')
+        auto after = pos + search.size();
+        while (after < json.size() && (json[after] == ' ' || json[after] == '\t'
+               || json[after] == '\n' || json[after] == '\r'))
+            ++after;
 
-    if (pos >= json.size()) return fallback;
+        if (after >= json.size() || json[after] != ':') {
+            search_from = pos + 1;
+            continue;
+        }
 
-    if (json.compare(pos, 4, "true") == 0) return true;
-    if (json.compare(pos, 5, "false") == 0) return false;
-    return fallback;
+        // Found the key. Skip ':' and whitespace.
+        pos = after + 1;
+        while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t'
+               || json[pos] == '\n' || json[pos] == '\r'))
+            ++pos;
+
+        if (pos >= json.size()) return fallback;
+
+        if (json.compare(pos, 4, "true") == 0) return true;
+        if (json.compare(pos, 5, "false") == 0) return false;
+        return fallback;
+    }
 }
 
 // Build a JSON object string from key-value pairs

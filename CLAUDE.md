@@ -167,10 +167,12 @@ if (!response) {
 ### JSON Pattern (from bot-manager)
 
 ```cpp
-// Manual JSON parsing — no libraries
-// See utils/json.h for the parser
-auto parsed = sui::quorum::json::parse(response_body);
-auto value = parsed.get_string("result");
+// Manual JSON extraction — no libraries
+// See utils/json.h — flat key extraction functions that distinguish keys from values
+auto text  = sui::quorum::json::extract_string(json_str, "result");   // -> std::optional<std::string>
+auto cost  = sui::quorum::json::extract_number(json_str, "total_cost_usd"); // -> double
+auto toks  = sui::quorum::json::extract_int(json_str, "input_tokens");      // -> int64_t
+auto flag  = sui::quorum::json::extract_bool(json_str, "is_error");         // -> bool
 ```
 
 ### SQLite Pattern (from bot-manager)
