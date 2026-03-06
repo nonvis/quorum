@@ -66,3 +66,7 @@ enable_testing()
 # add_executable(test_scheduler tests/unit/test_scheduler.cpp)
 # target_include_directories(test_scheduler PRIVATE src)
 # add_test(NAME test_scheduler COMMAND test_scheduler)
+
+add_executable(test_output_parser tests/unit/test_output_parser.cpp)
+target_include_directories(test_output_parser PRIVATE src)
+add_test(NAME test_output_parser COMMAND test_output_parser)

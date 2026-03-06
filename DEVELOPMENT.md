@@ -65,20 +65,26 @@
 
 ### Week 3: Agent Invocation (scaffolded)
 
-11. **`src/agent/invoker.h`** ✅ — LLM API caller
-    - `invoke_frontier()` calls Anthropic Messages API with proper auth
-    - Sends `x-api-key` and `anthropic-version` headers
-    - Parses response via `extract_anthropic_content()` (handles type/text field ordering)
-    - Populates `tokens_used` from usage.input_tokens + output_tokens
-    - Needs: retry logic, local LLM (Ollama) support
+11. **`src/agent/invoker.h`** ✅ — `claude -p` subprocess runner
+    - `invoke(task_id)` reads prompt from DB, writes to temp file, spawns `claude -p`
+    - Command: `cat prompt.txt | claude -p --dangerously-skip-permissions --output-format json`
+    - Parses JSON envelope from stdout: extracts `result`, `cost_usd`, `input_tokens`, `output_tokens`
+    - Marks task `done` or `failed` in SQLite with token/cost data
+    - Needs: retry logic, per-task token cap enforcement
 
-12. **`src/agent/context_assembler.h`** — prompt builder (stub)
-    - Interface defined, returns empty context
-    - Needs: vault file reading, token budgeting
+12. **`src/agent/context_assembler.h`** ✅ — prompt builder
+    - Loads `CONTEXT.md` (always first), then `knowledge/` files by recency, then `inbox/` items
+    - Respects `ContextBudget` (max 20 files, 200 000 chars)
+    - Appends task description and structured output format instructions
+    - Output instructions teach agents the 4 block types: `VAULT_UPDATE`, `PROPOSAL`, `REVIEW`, `SUMMARY`
 
-13. **`src/agent/output_parser.h`** — structured output parser (scaffolded)
-    - Basic `parse()` extracts summary from first line
-    - Needs: VAULT_UPDATE, PROPOSAL, REVIEW block parsing
+13. **`src/agent/output_parser.h`** ✅ — structured output parser
+    - Scans agent response line-by-line; detects fenced block opens (`` ```BLOCK_TYPE ``) and closes (`` ``` ``)
+    - Parses 4 block types: `VAULT_UPDATE` → `VaultUpdate`, `PROPOSAL` → `Proposal`, `REVIEW` → `Review`, `SUMMARY` → `summary` string
+    - Key-value parser inside blocks handles: simple `key: value`, `key: [list, items]`, and `key: |` multi-line with 2-space indent stripping
+    - Everything outside blocks collected into `free_text`; original preserved in `raw`
+    - `has_actionable_output()` returns true when any vault update, proposal, or review was parsed
+    - Lenient: unclosed blocks are parsed rather than dropped
 
 14. **`src/agent/model_router.h`** ✅ — tier selection
     - `InferenceTier` enum (RuleBased, LocalLLM, Frontier, Human)
@@ -143,9 +149,9 @@ brew install openssl@3 sqlite yaml-cpp
 
 - [x] Daemon starts, loads config, creates PID file
 - [x] Scheduler triggers periodic agent tasks
-- [ ] Agent invoker successfully calls Claude API
-- [ ] Context assembler builds prompts from vault files
-- [ ] Output parser extracts structured blocks
+- [x] Agent invoker spawns `claude -p` subprocesses, tracks token usage
+- [x] Context assembler builds prompts from vault files
+- [x] Output parser extracts VAULT_UPDATE / PROPOSAL / REVIEW / SUMMARY blocks
 - [x] Proposal state machine tracks lifecycle locally
 - [ ] Move contracts deployed to Sui testnet
 - [ ] CLI can create proposals and query status

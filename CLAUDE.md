@@ -239,10 +239,10 @@ agents:
 Priority order:
 1. ~~C++ daemon skeleton~~ ✓ (main.cpp, signal handling, PID lock, config loading)
 2. ~~Scheduler, message bus, router, event dispatcher~~ ✓ (skeleton implementations)
-3. **Invoker rewrite** — spawn `claude -p` subprocess instead of raw Claude API calls
-4. **SQLite task queue** — pending/active/done states with token tracking
-5. **Context assembler** — build prompts from vault files + task definitions
-6. **Output parser** — extract vault updates from Claude Code output
+3. ~~Invoker rewrite~~ ✓ (spawns `claude -p`, captures JSON output, writes token/cost to DB)
+4. ~~SQLite task queue~~ ✓ (pending/active/done states with token tracking)
+5. ~~Context assembler~~ ✓ (vault CONTEXT.md + knowledge + inbox, output format instructions)
+6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / SUMMARY blocks, KV + multi-line parsing)
 7. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
 8. **Token budget enforcement** — per-task cap + global daily cap
 
