@@ -20,6 +20,8 @@
 #include "storage/database.h"
 #include "agent/invoker.h"
 #include "agent/context_assembler.h"
+#include "agent/output_parser.h"
+#include "vault/vault_manager.h"
 
 namespace fs = std::filesystem;
 
@@ -179,6 +181,24 @@ static int64_t claim_next_task(sui::quorum::Database& db) {
     return task_id;
 }
 
+// Look up the agent name for a given task id.
+// Returns empty string if the task doesn't exist.
+static std::string get_task_agent(sui::quorum::Database& db, int64_t task_id) {
+    std::string agent;
+    db.query(
+        "SELECT agent FROM tasks WHERE id = ?",
+        [&](sqlite3_stmt* stmt) {
+            sqlite3_bind_int64(stmt, 1, task_id);
+        },
+        [&](sqlite3_stmt* stmt) {
+            const char* text = reinterpret_cast<const char*>(
+                sqlite3_column_text(stmt, 0));
+            if (text) agent = text;
+        }
+    );
+    return agent;
+}
+
 int main(int argc, char* argv[]) {
     std::cout << "Quorum Daemon v0.2.0" << std::endl;
     std::cout << "====================" << std::endl;
@@ -255,6 +275,18 @@ int main(int argc, char* argv[]) {
     sui::quorum::EventDispatcher events;
     sui::quorum::Invoker invoker(db);
     sui::quorum::ContextAssembler context_assembler;
+    sui::quorum::OutputParser output_parser;
+    sui::quorum::VaultManager vault_manager(cfg.daemon.data_dir);
+
+    // Initialize vaults for all configured agents
+    for (const auto& agent_ref : cfg.agents) {
+        auto agent_id = fs::path(agent_ref.config_path).stem().string();
+        bool ok = vault_manager.init_vault(agent_id);
+        if (verbose) {
+            std::cout << "  Vault init: " << agent_id
+                      << (ok ? " (OK)" : " (FAILED)") << "\n";
+        }
+    }
 
     // Wire up event handlers
     events.on("daemon.started", [&](const std::string&) {
@@ -319,6 +351,34 @@ int main(int argc, char* argv[]) {
             } else {
                 std::cout << "[dispatch] task " << task_id
                           << " failed: " << result.error << "\n";
+            }
+        }
+
+        // Process structured output
+        if (result.success && !result.output.empty()) {
+            auto agent_id = get_task_agent(db, task_id);
+            if (!agent_id.empty()) {
+                auto parsed = output_parser.parse(result.output);
+
+                // Apply vault updates
+                if (!parsed.vault_updates.empty()) {
+                    auto applied = vault_manager.apply_all_updates(agent_id,
+                        parsed.vault_updates);
+                    if (verbose) {
+                        std::cout << "[dispatch] task " << task_id
+                                  << " — " << applied << "/" << parsed.vault_updates.size()
+                                  << " vault updates applied for " << agent_id << "\n";
+                    }
+                }
+
+                // Log summary if present
+                if (verbose && !parsed.summary.empty()) {
+                    std::cout << "[dispatch] task " << task_id
+                              << " summary: " << parsed.summary.substr(0, 200) << "\n";
+                }
+
+                // TODO: handle parsed.proposals (Action Item #5)
+                // TODO: handle parsed.reviews (Action Item #6)
             }
         }
 
