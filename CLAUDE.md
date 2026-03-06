@@ -29,6 +29,7 @@ quorum/
 │   ├── tests/
 │   └── configs/                 # Agent YAML definitions, task YAML definitions
 │
+├── scripts/                     # Shell scripts (smoke tests, utilities)
 ├── quorum-contracts/            # [DEFERRED] Move (OPEN SOURCE) — on-chain state machines
 ├── quorum-ts/                   # [DEFERRED] TypeScript (OPEN SOURCE) — community-facing
 └── quorum-docs/                 # Documentation (OPEN SOURCE)
@@ -243,8 +244,9 @@ Priority order:
 4. ~~SQLite task queue~~ ✓ (pending/active/done states with token tracking)
 5. ~~Context assembler~~ ✓ (vault CONTEXT.md + knowledge + inbox, output format instructions)
 6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / SUMMARY blocks, KV + multi-line parsing)
-7. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
-8. **Token budget enforcement** — per-task cap + global daily cap
+7. ~~Token budget enforcement~~ ✓ (per-task cap + hourly/daily caps with rolling window)
+8. ~~Smoke test script~~ ✓ (scripts/smoke_test.sh — seeds tasks, runs daemon, validates results)
+9. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 
@@ -272,4 +274,7 @@ cmake -B build && cmake --build build -j$(nproc)
 
 # Agent invocation (what the daemon spawns)
 claude -p "prompt" --dangerously-skip-permissions --output-format json
+
+# Smoke test (seeds tasks, runs daemon with real claude -p, validates results)
+./scripts/smoke_test.sh
 ```
