@@ -70,3 +70,7 @@ enable_testing()
 add_executable(test_output_parser tests/unit/test_output_parser.cpp)
 target_include_directories(test_output_parser PRIVATE src)
 add_test(NAME test_output_parser COMMAND test_output_parser)
+
+add_executable(test_vault_manager tests/unit/test_vault_manager.cpp)
+target_include_directories(test_vault_manager PRIVATE src)
+add_test(NAME test_vault_manager COMMAND test_vault_manager)
