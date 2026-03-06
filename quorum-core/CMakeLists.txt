@@ -74,3 +74,8 @@ add_test(NAME test_output_parser COMMAND test_output_parser)
 add_executable(test_vault_manager tests/unit/test_vault_manager.cpp)
 target_include_directories(test_vault_manager PRIVATE src)
 add_test(NAME test_vault_manager COMMAND test_vault_manager)
+
+add_executable(test_pipeline tests/integration/test_pipeline.cpp)
+target_include_directories(test_pipeline PRIVATE src)
+target_link_libraries(test_pipeline PRIVATE SQLite::SQLite3)
+add_test(NAME test_pipeline COMMAND test_pipeline)

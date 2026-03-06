@@ -393,6 +393,16 @@ int main(int argc, char* argv[]) {
             return;
         }
 
+        auto cost_h = hourly_cost(db);
+        if (cost_h >= cfg.budget.hourly_limit_usd) {
+            if (verbose) {
+                std::cout << "[dispatch] hourly budget exceeded ($"
+                          << cost_h << " >= $" << cfg.budget.hourly_limit_usd
+                          << "), pausing dispatch\n";
+            }
+            return;
+        }
+
         // Check parallelism
         auto active = count_active_tasks(db);
         if (active >= static_cast<int64_t>(cfg.budget.max_concurrent)) {
