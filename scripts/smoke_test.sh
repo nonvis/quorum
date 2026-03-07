@@ -12,6 +12,14 @@
 
 set -euo pipefail
 
+# Guard: claude -p nesting is blocked inside Claude Code sessions
+if [ -n "${CLAUDECODE:-}" ]; then
+    echo -e "\033[0;31m[ERROR]\033[0m Cannot run smoke test inside a Claude Code session."
+    echo -e "\033[0;31m[ERROR]\033[0m claude -p nesting is blocked by the CLAUDECODE env var."
+    echo -e "\033[0;31m[ERROR]\033[0m Run this from a regular terminal: ./scripts/smoke_test.sh"
+    exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CORE_DIR="$ROOT_DIR/quorum-core"
