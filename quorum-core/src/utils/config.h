@@ -13,6 +13,7 @@ struct DaemonConfig {
     std::string pid_file = "/tmp/quorum.pid";
     std::string data_dir = "./data";
     std::string log_level = "info";
+    std::string knowledge_dir = "./data/knowledge";
 };
 
 struct ChainConfig {
@@ -162,6 +163,7 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
             if (key == "pid_file") cfg.daemon.pid_file = val;
             else if (key == "data_dir") cfg.daemon.data_dir = val;
             else if (key == "log_level") cfg.daemon.log_level = val;
+            else if (key == "knowledge_dir") cfg.daemon.knowledge_dir = val;
         } else if (section == "chain") {
             if (key == "network") cfg.chain.network = val;
             else if (key == "rpc_url") cfg.chain.rpc_url = val;
