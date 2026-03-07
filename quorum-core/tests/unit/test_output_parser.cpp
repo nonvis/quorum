@@ -218,6 +218,190 @@ static void test_observation_no_tags() {
     check(r.observations[0].content.find("without tags") != std::string::npos, "no-tags: content parsed");
 }
 
+// ─── lenient block detection tests ──────────────────────────────────────────
+
+static void test_heading_vault_update() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "## VAULT_UPDATE\n"
+        "```\n"
+        "path: knowledge/foo.md\n"
+        "content: |\n"
+        "  some data here\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.size() == 1, "heading-vu: one vault update");
+    check(r.vault_updates[0].path == "knowledge/foo.md", "heading-vu: path matches");
+    check(r.vault_updates[0].content.find("some data") != std::string::npos,
+          "heading-vu: content parsed");
+}
+
+static void test_bold_proposal() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "**PROPOSAL**\n"
+        "```\n"
+        "title: My Idea\n"
+        "requires_consensus_from: [bot_analyst]\n"
+        "content: |\n"
+        "  details\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.proposals.size() == 1, "bold-prop: one proposal");
+    check(r.proposals[0].title == "My Idea", "bold-prop: title matches");
+    check(r.proposals[0].requires_consensus_from.size() == 1, "bold-prop: one reviewer");
+    check(r.proposals[0].requires_consensus_from[0] == "bot_analyst",
+          "bold-prop: reviewer matches");
+}
+
+static void test_first_line_type_fallback() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "```\n"
+        "OBSERVATION\n"
+        "title: Something\n"
+        "tags: [x]\n"
+        "content: |\n"
+        "  data\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.observations.size() == 1, "first-line: one observation");
+    check(r.observations[0].title == "Something", "first-line: title matches");
+    check(r.observations[0].tags.size() == 1, "first-line: one tag");
+}
+
+static void test_bold_with_type_inside_dedup() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "**OBSERVATION**\n"
+        "```\n"
+        "OBSERVATION\n"
+        "agent: market_analyst\n"
+        "title: Pool Scan\n"
+        "content: |\n"
+        "  details\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.observations.size() == 1, "dedup: one observation");
+    check(r.observations[0].title == "Pool Scan", "dedup: title is Pool Scan");
+    check(r.observations[0].content.find("OBSERVATION") == std::string::npos,
+          "dedup: OBSERVATION not in content");
+}
+
+static void test_heading_with_suffix() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "## VAULT_UPDATE \xe2\x80\x94 knowledge/latest.md\n"
+        "```\n"
+        "path: knowledge/latest.md\n"
+        "content: |\n"
+        "  analysis data\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.size() == 1, "heading-suffix: one vault update");
+    check(r.vault_updates[0].path == "knowledge/latest.md",
+          "heading-suffix: path matches");
+}
+
+static void test_bold_with_colon_suffix() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "**VAULT_UPDATE: knowledge/market.md**\n"
+        "```\n"
+        "path: knowledge/market.md\n"
+        "content: |\n"
+        "  market data\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.size() == 1, "bold-colon: one vault update");
+    check(r.vault_updates[0].path == "knowledge/market.md",
+          "bold-colon: path matches");
+}
+
+static void test_backward_compat_explicit_fence() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "```VAULT_UPDATE\n"
+        "path: knowledge/compat.md\n"
+        "content: |\n"
+        "  old-style block\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.size() == 1, "compat: one vault update");
+    check(r.vault_updates[0].path == "knowledge/compat.md", "compat: path matches");
+    check(r.vault_updates[0].content.find("old-style") != std::string::npos,
+          "compat: content parsed");
+}
+
+static void test_plain_fence_no_type_ignored() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "```\n"
+        "hello world\n"
+        "some code\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.empty(), "no-type: no vault updates");
+    check(r.proposals.empty(), "no-type: no proposals");
+    check(r.observations.empty(), "no-type: no observations");
+    check(r.reviews.empty(), "no-type: no reviews");
+}
+
+static void test_no_type_leak_across_blocks() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "**PROPOSAL**\n"
+        "```\n"
+        "title: First\n"
+        "requires_consensus_from: [x]\n"
+        "content: |\n"
+        "  a\n"
+        "```\n"
+        "\n"
+        "```\n"
+        "random code\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.proposals.size() == 1, "no-leak: one proposal");
+    check(r.proposals[0].title == "First", "no-leak: proposal title");
+    check(r.vault_updates.empty(), "no-leak: no vault updates leaked");
+    check(r.observations.empty(), "no-leak: no observations leaked");
+}
+
+static void test_multiple_lenient_blocks() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "## VAULT_UPDATE\n"
+        "```\n"
+        "path: knowledge/session.md\n"
+        "content: |\n"
+        "  session data\n"
+        "```\n"
+        "\n"
+        "## OBSERVATION\n"
+        "```\n"
+        "title: Fill Anomaly\n"
+        "tags: [mm-bot]\n"
+        "content: |\n"
+        "  observed anomaly\n"
+        "```\n"
+        "\n"
+        "**PROPOSAL \xe2\x80\x94 Widen Spread**\n"
+        "```\n"
+        "title: Widen Spread\n"
+        "requires_consensus_from: [operator]\n"
+        "content: |\n"
+        "  widen by 15%\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.size() == 1, "multi: one vault update");
+    check(r.observations.size() == 1, "multi: one observation");
+    check(r.proposals.size() == 1, "multi: one proposal");
+    check(r.vault_updates[0].path == "knowledge/session.md", "multi: vault path");
+    check(r.observations[0].title == "Fill Anomaly", "multi: observation title");
+    check(r.proposals[0].title == "Widen Spread", "multi: proposal title");
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -232,6 +416,18 @@ int main() {
     test_single_observation();
     test_mixed_with_observation();
     test_observation_no_tags();
+
+    // Lenient block detection tests
+    test_heading_vault_update();
+    test_bold_proposal();
+    test_first_line_type_fallback();
+    test_bold_with_type_inside_dedup();
+    test_heading_with_suffix();
+    test_bold_with_colon_suffix();
+    test_backward_compat_explicit_fence();
+    test_plain_fence_no_type_ignored();
+    test_no_type_leak_across_blocks();
+    test_multiple_lenient_blocks();
 
     std::cout << "\nAll tests passed.\n";
     return 0;

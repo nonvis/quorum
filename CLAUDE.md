@@ -277,7 +277,7 @@ Priority order:
 3. ~~Invoker rewrite~~ ✓ (spawns `claude -p`, captures JSON output, writes token/cost to DB)
 4. ~~SQLite task queue~~ ✓ (pending/active/done states with token tracking)
 5. ~~Context assembler~~ ✓ (vault CONTEXT.md + knowledge + inbox, output format instructions incl. OBSERVATION guidance)
-6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / OBSERVATION / SUMMARY blocks, KV + multi-line parsing)
+6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / OBSERVATION / SUMMARY blocks, KV + multi-line parsing, lenient block detection for heading/bold labels and first-line type fallback)
 7. ~~Token budget enforcement~~ ✓ (per-task cap + hourly/daily caps with rolling window)
 8. ~~Smoke test script~~ ✓ (scripts/smoke_test.sh — seeds tasks, runs daemon, validates results; includes WAL/SHM cleanup to prevent stale SQLite state)
 9. ~~End-to-end dispatch verified~~ ✓ (daemon claims pending tasks, invokes `claude -p`, writes results back to DB)

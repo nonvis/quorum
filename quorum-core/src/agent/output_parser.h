@@ -47,31 +47,37 @@ struct ParsedOutput {
 
 // Parses structured blocks from agent output.
 //
-// Block format (fenced with backticks):
+// Recognized block types: VAULT_UPDATE, PROPOSAL, REVIEW, OBSERVATION, SUMMARY
 //
-//   ```VAULT_UPDATE
-//   path: knowledge/foo.md
-//   content: |
-//     multi-line content here
-//   ```
+// Three accepted formats (in order of precedence):
 //
-//   ```PROPOSAL
-//   title: Some Title
-//   requires_consensus_from: [agent_a, agent_b]
-//   content: |
-//     proposal details
-//   ```
+//   Format 1 — Explicit fence (original):
+//     ```VAULT_UPDATE
+//     path: knowledge/foo.md
+//     content: |
+//       multi-line content here
+//     ```
 //
-//   ```REVIEW
-//   proposal_id: proposal-042
-//   verdict: approve
-//   reasoning: |
-//     multi-line reasoning
-//   ```
+//   Format 2 — Heading/bold label above a plain fence:
+//     ## VAULT_UPDATE                          (or ### / # / **VAULT_UPDATE**)
+//     ```
+//     path: knowledge/foo.md
+//     content: |
+//       multi-line content here
+//     ```
+//     Heading suffixes are tolerated: "## VAULT_UPDATE — knowledge/foo.md"
+//     Bold suffixes are tolerated:   "**VAULT_UPDATE: knowledge/foo.md**"
 //
-//   ```SUMMARY
-//   plain text summary
-//   ```
+//   Format 3 — Type echoed as first line inside a plain fence:
+//     ```
+//     VAULT_UPDATE
+//     path: knowledge/foo.md
+//     content: |
+//       multi-line content here
+//     ```
+//     If the type was already set by a heading above, a duplicate first line
+//     is silently stripped (dedup). A plain ``` block with no type from any
+//     source is silently ignored.
 //
 // Everything outside these blocks is collected into free_text.
 
@@ -86,6 +92,7 @@ public:
         bool in_block = false;
         std::string block_type;
         std::vector<std::string> block_lines;
+        std::string pending_type;
 
         for (const auto& line : lines) {
             if (!in_block) {
@@ -94,24 +101,51 @@ public:
                     in_block = true;
                     block_type = btype;
                     block_lines.clear();
+                    pending_type.clear();
+                } else if (is_plain_fence(line)) {
+                    in_block = true;
+                    block_type = pending_type; // may be empty (tentative)
+                    block_lines.clear();
                 } else {
+                    auto ht = detect_type_header(line);
+                    if (!ht.empty()) pending_type = ht;
                     if (!result.free_text.empty()) result.free_text += '\n';
                     result.free_text += line;
                 }
             } else {
                 if (is_block_close(line)) {
-                    dispatch_block(block_type, block_lines, result);
+                    if (!block_type.empty()) {
+                        dispatch_block(block_type, block_lines, result);
+                    }
                     in_block = false;
                     block_type.clear();
                     block_lines.clear();
+                    pending_type.clear();
                 } else {
-                    block_lines.push_back(line);
+                    // First-line type detection (Enhancement B)
+                    if (block_lines.empty()) {
+                        auto ft = trim(line);
+                        bool skip = false;
+                        for (const char* t : {"VAULT_UPDATE", "PROPOSAL",
+                             "OBSERVATION", "SUMMARY", "REVIEW"}) {
+                            if (ft == t) {
+                                if (block_type.empty()) {
+                                    block_type = t;
+                                }
+                                skip = (block_type == std::string(t));
+                                break;
+                            }
+                        }
+                        if (!skip) block_lines.push_back(line);
+                    } else {
+                        block_lines.push_back(line);
+                    }
                 }
             }
         }
 
         // Lenient: process an unclosed block rather than silently dropping it
-        if (in_block && !block_lines.empty()) {
+        if (in_block && !block_type.empty() && !block_lines.empty()) {
             dispatch_block(block_type, block_lines, result);
         }
 
@@ -210,6 +244,55 @@ private:
         // Only trailing whitespace is allowed after the backticks
         line = trim_sv(line);
         return line.empty();
+    }
+
+    // Returns true if line is a plain code fence (``` with only whitespace after).
+    // Identical logic to is_block_close() — both recognize the same pattern.
+    static bool is_plain_fence(std::string_view line) {
+        return is_block_close(line);
+    }
+
+    // Detects a known block type from a markdown heading or bold label line.
+    // Handles:  ## VAULT_UPDATE   ### OBSERVATION   # REVIEW
+    //           **PROPOSAL**      **VAULT_UPDATE: path/here.md**
+    // Returns the type string (e.g. "VAULT_UPDATE") or empty string.
+    static std::string detect_type_header(std::string_view line) {
+        // Strip leading whitespace
+        while (!line.empty() && (line.front() == ' ' || line.front() == '\t'))
+            line.remove_prefix(1);
+
+        // Strip heading prefix (#, ##, ###, etc.)
+        if (!line.empty() && line.front() == '#') {
+            while (!line.empty() && line.front() == '#')
+                line.remove_prefix(1);
+            while (!line.empty() && (line.front() == ' ' || line.front() == '\t'))
+                line.remove_prefix(1);
+        }
+
+        // Strip bold markers (**)
+        if (line.size() >= 2 && line.substr(0, 2) == "**")
+            line.remove_prefix(2);
+        if (line.size() >= 2 && line.substr(line.size() - 2, 2) == "**")
+            line.remove_suffix(2);
+
+        // Strip whitespace again after marker removal
+        line = trim_sv(line);
+
+        // Check if remainder starts with a known type followed by non-alpha or end
+        for (const char* t : {"VAULT_UPDATE", "PROPOSAL",
+             "OBSERVATION", "SUMMARY", "REVIEW"}) {
+            std::string_view type_sv(t);
+            if (line.size() >= type_sv.size() &&
+                line.substr(0, type_sv.size()) == type_sv) {
+                if (line.size() == type_sv.size()) return std::string(type_sv);
+                char next = line[type_sv.size()];
+                // Non-alpha: any char that is not A-Z or a-z
+                bool is_alpha = (next >= 'A' && next <= 'Z') ||
+                                (next >= 'a' && next <= 'z');
+                if (!is_alpha) return std::string(type_sv);
+            }
+        }
+        return {};
     }
 
     // ── Key-value parsing ──────────────────────────────────────────────────────
