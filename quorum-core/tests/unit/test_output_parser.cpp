@@ -150,6 +150,74 @@ static void test_list_single_item() {
     check(r.proposals[0].requires_consensus_from[0] == "agent_x", "reviewer = agent_x");
 }
 
+static void test_single_observation() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "```OBSERVATION\n"
+        "title: Session 30 Adverse Selection Spike\n"
+        "tags: [mm-bot, adverse-selection, session-30]\n"
+        "content: |\n"
+        "  15 adverse fills totaling -4.8 SUI.\n"
+        "  Spread of 30bps insufficient during high-vol windows.\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.observations.size() == 1, "obs: one observation");
+    check(r.observations[0].title == "Session 30 Adverse Selection Spike", "obs: title matches");
+    check(r.observations[0].tags.size() == 3, "obs: tags has 3 items");
+    check(r.observations[0].tags[0] == "mm-bot", "obs: tag[0] = mm-bot");
+    check(r.observations[0].tags[1] == "adverse-selection", "obs: tag[1] = adverse-selection");
+    check(r.observations[0].tags[2] == "session-30", "obs: tag[2] = session-30");
+    check(r.observations[0].content.find("adverse fills") != std::string::npos, "obs: content contains 'adverse fills'");
+    check(r.observations[0].agent.empty(), "obs: agent is empty (not parsed)");
+    check(r.observations[0].task_type.empty(), "obs: task_type is empty (not parsed)");
+    check(parser.has_actionable_output(r), "obs: has_actionable_output is true");
+}
+
+static void test_mixed_with_observation() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "```VAULT_UPDATE\n"
+        "path: knowledge/notes.md\n"
+        "content: |\n"
+        "  Some notes here.\n"
+        "```\n"
+        "```OBSERVATION\n"
+        "title: Spread Anomaly\n"
+        "tags: [spread, anomaly]\n"
+        "content: |\n"
+        "  Observed unusual spread widening.\n"
+        "```\n"
+        "```PROPOSAL\n"
+        "title: Adjust Parameters\n"
+        "requires_consensus_from: [operator]\n"
+        "content: |\n"
+        "  Recommend parameter adjustment.\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.size() == 1, "mixed: one vault update");
+    check(r.observations.size() == 1, "mixed: one observation");
+    check(r.proposals.size() == 1, "mixed: one proposal");
+    check(r.vault_updates[0].path == "knowledge/notes.md", "mixed: vault path");
+    check(r.observations[0].title == "Spread Anomaly", "mixed: observation title");
+    check(r.observations[0].tags.size() == 2, "mixed: observation tags count");
+    check(r.proposals[0].title == "Adjust Parameters", "mixed: proposal title");
+}
+
+static void test_observation_no_tags() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "```OBSERVATION\n"
+        "title: Simple Observation\n"
+        "content: |\n"
+        "  Just a note without tags.\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.observations.size() == 1, "no-tags: one observation");
+    check(r.observations[0].tags.empty(), "no-tags: tags vector is empty");
+    check(r.observations[0].title == "Simple Observation", "no-tags: title parsed");
+    check(r.observations[0].content.find("without tags") != std::string::npos, "no-tags: content parsed");
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -161,6 +229,9 @@ int main() {
     test_multiple_vault_updates();
     test_summary_only();
     test_list_single_item();
+    test_single_observation();
+    test_mixed_with_observation();
+    test_observation_no_tags();
 
     std::cout << "\nAll tests passed.\n";
     return 0;

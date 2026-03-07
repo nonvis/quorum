@@ -25,11 +25,20 @@ struct Review {
     std::string reasoning;
 };
 
+struct ParsedObservation {
+    std::string title;
+    std::string agent;        // filled by main.cpp, not parsed from block
+    std::string task_type;    // filled by main.cpp, not parsed from block
+    std::vector<std::string> tags;
+    std::string content;
+};
+
 struct ParsedOutput {
     std::string summary;                     // contents of SUMMARY block (empty if absent)
     std::vector<VaultUpdate> vault_updates;  // VAULT_UPDATE blocks
     std::vector<Proposal>    proposals;      // PROPOSAL blocks
     std::vector<Review>      reviews;        // REVIEW blocks
+    std::vector<ParsedObservation> observations;  // OBSERVATION blocks
     std::string free_text;                   // everything outside structured blocks
     std::string raw;                         // original unmodified output
 };
@@ -119,7 +128,8 @@ public:
     // Returns true if the output contains at least one actionable item
     // (vault update, proposal, or review) that the daemon should act on.
     [[nodiscard]] bool has_actionable_output(const ParsedOutput& p) const {
-        return !p.vault_updates.empty() || !p.proposals.empty() || !p.reviews.empty();
+        return !p.vault_updates.empty() || !p.proposals.empty() ||
+               !p.reviews.empty() || !p.observations.empty();
     }
 
 private:
@@ -185,7 +195,7 @@ private:
         line.remove_prefix(3);
         auto type = trim(line);
         if (type == "VAULT_UPDATE" || type == "PROPOSAL" ||
-            type == "REVIEW"       || type == "SUMMARY") {
+            type == "REVIEW"       || type == "SUMMARY"  || type == "OBSERVATION") {
             return type;
         }
         return {};
@@ -349,6 +359,15 @@ private:
             r.verdict     = bag.get_str("verdict");
             r.reasoning   = bag.get_str("reasoning");
             out.reviews.push_back(std::move(r));
+
+        } else if (type == "OBSERVATION") {
+            auto bag = parse_kv(lines);
+            ParsedObservation obs;
+            obs.title   = bag.get_str("title");
+            obs.tags    = bag.get_list("tags");
+            obs.content = bag.get_str("content");
+            // agent and task_type are filled by the daemon, not parsed
+            out.observations.push_back(std::move(obs));
         }
     }
 };
