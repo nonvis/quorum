@@ -58,13 +58,15 @@ struct ParsedOutput {
 //       multi-line content here
 //     ```
 //
-//   Format 2 — Heading/bold label above a plain fence:
+//   Format 2 — Heading/bold label above a plain or language-tagged fence:
 //     ## VAULT_UPDATE                          (or ### / # / **VAULT_UPDATE**)
-//     ```
+//     ```                                     (plain fence)
 //     path: knowledge/foo.md
 //     content: |
 //       multi-line content here
 //     ```
+//     Also accepted: ```markdown, ```sql, etc. when preceded by a type header.
+//     A language-tagged fence without a preceding type header is ignored.
 //     Heading suffixes are tolerated: "## VAULT_UPDATE — knowledge/foo.md"
 //     Bold suffixes are tolerated:   "**VAULT_UPDATE: knowledge/foo.md**"
 //
@@ -78,6 +80,10 @@ struct ParsedOutput {
 //     If the type was already set by a heading above, a duplicate first line
 //     is silently stripped (dedup). A plain ``` block with no type from any
 //     source is silently ignored.
+//
+// Content fallback: if no explicit "content: |" field is found in a block,
+// all block lines are joined and used as the content. This ensures blocks
+// with free-text content (e.g. after a "---" separator) are not empty.
 //
 // Everything outside these blocks is collected into free_text.
 
@@ -105,6 +111,12 @@ public:
                 } else if (is_plain_fence(line)) {
                     in_block = true;
                     block_type = pending_type; // may be empty (tentative)
+                    block_lines.clear();
+                } else if (!pending_type.empty() && starts_with_fence(line)) {
+                    // Language-tagged fence (```markdown, ```sql, etc.)
+                    // Only triggers when a type header was already seen above.
+                    in_block = true;
+                    block_type = pending_type;
                     block_lines.clear();
                 } else {
                     auto ht = detect_type_header(line);
@@ -199,6 +211,19 @@ private:
         return lines;
     }
 
+    // Join a vector of lines into a single string separated by newlines.
+    // Trailing newlines are stripped.
+    static std::string join_lines(const std::vector<std::string>& lines) {
+        std::string result;
+        for (const auto& l : lines) {
+            result += l;
+            result += '\n';
+        }
+        while (!result.empty() && result.back() == '\n')
+            result.pop_back();
+        return result;
+    }
+
     // Parse "[item1, item2, item3]" → vector of trimmed strings.
     static std::vector<std::string> parse_list(std::string_view sv) {
         sv = trim_sv(sv);
@@ -250,6 +275,14 @@ private:
     // Identical logic to is_block_close() — both recognize the same pattern.
     static bool is_plain_fence(std::string_view line) {
         return is_block_close(line);
+    }
+
+    // Returns true if line starts with ``` (possibly followed by a language tag).
+    // Unlike is_plain_fence(), this matches ```markdown, ```sql, etc.
+    static bool starts_with_fence(std::string_view line) {
+        while (!line.empty() && (line.front() == ' ' || line.front() == '\t'))
+            line.remove_prefix(1);
+        return line.size() >= 3 && line.substr(0, 3) == "```";
     }
 
     // Detects a known block type from a markdown heading or bold label line.
@@ -425,6 +458,9 @@ private:
             VaultUpdate vu;
             vu.path    = bag.get_str("path");
             vu.content = bag.get_str("content");
+            if (vu.content.empty() && !lines.empty()) {
+                vu.content = join_lines(lines);
+            }
             out.vault_updates.push_back(std::move(vu));
 
         } else if (type == "PROPOSAL") {
@@ -432,14 +468,23 @@ private:
             Proposal p;
             p.title                   = bag.get_str("title");
             p.requires_consensus_from = bag.get_list("requires_consensus_from");
+            if (p.requires_consensus_from.empty())
+                p.requires_consensus_from = bag.get_list("required_reviewers");
+            if (p.requires_consensus_from.empty())
+                p.requires_consensus_from = bag.get_list("reviewers");
             p.content                 = bag.get_str("content");
+            if (p.content.empty() && !lines.empty()) {
+                p.content = join_lines(lines);
+            }
             out.proposals.push_back(std::move(p));
 
         } else if (type == "REVIEW") {
             auto bag = parse_kv(lines);
             Review r;
             r.proposal_id = bag.get_str("proposal_id");
+            if (r.proposal_id.empty()) r.proposal_id = bag.get_str("proposal");
             r.verdict     = bag.get_str("verdict");
+            if (r.verdict.empty()) r.verdict = bag.get_str("decision");
             r.reasoning   = bag.get_str("reasoning");
             out.reviews.push_back(std::move(r));
 
@@ -449,6 +494,9 @@ private:
             obs.title   = bag.get_str("title");
             obs.tags    = bag.get_list("tags");
             obs.content = bag.get_str("content");
+            if (obs.content.empty() && !lines.empty()) {
+                obs.content = join_lines(lines);
+            }
             // agent and task_type are filled by the daemon, not parsed
             out.observations.push_back(std::move(obs));
         }

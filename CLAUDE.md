@@ -277,7 +277,7 @@ Priority order:
 3. ~~Invoker rewrite~~ ✓ (spawns `claude -p`, captures JSON output, writes token/cost to DB)
 4. ~~SQLite task queue~~ ✓ (pending/active/done states with token tracking)
 5. ~~Context assembler~~ ✓ (vault CONTEXT.md + knowledge + inbox, output format instructions incl. OBSERVATION guidance)
-6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / OBSERVATION / SUMMARY blocks, KV + multi-line parsing, lenient block detection for heading/bold labels and first-line type fallback)
+6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / OBSERVATION / SUMMARY blocks, KV + multi-line parsing, lenient block detection for heading/bold labels and first-line type fallback, language-tagged fences, content fallback for free-text blocks, field aliases for reviewer/verdict variants)
 7. ~~Token budget enforcement~~ ✓ (per-task cap + hourly/daily caps with rolling window)
 8. ~~Smoke test script~~ ✓ (scripts/smoke_test.sh — seeds tasks, runs daemon, validates results; includes WAL/SHM cleanup to prevent stale SQLite state)
 9. ~~End-to-end dispatch verified~~ ✓ (daemon claims pending tasks, invokes `claude -p`, writes results back to DB)
@@ -292,6 +292,7 @@ Priority order:
 - ~~**Invoker error handling:**~~ ✓ Fixed — invoker now checks exit code and validates JSON structure (`"type":"result"`) before calling `mark_done()`. Non-zero exits and invalid output are routed to `mark_failed()`. See `CommandResult` struct and `validate_claude_output()` in `src/agent/invoker.h`.
 - **Buffered stdout in background mode:** When daemon stdout is redirected to a file, `std::cout` uses full buffering. Verbose log lines only appear after process exit. Add `std::flush` to verbose output paths if real-time log tailing is needed.
 - ~~**Agents writing files directly:**~~ ✓ Fixed — Phase 0.5 observation test revealed all agents used Claude Code's built-in Write/Edit tools instead of structured blocks, bypassing the output parser entirely. Prompt-level instructions alone were insufficient — agents treat available tools as the preferred path. Definitive fix: `--disallowedTools "Write,Edit,NotebookEdit"` in the invoker removes the tools entirely. Defense-in-depth via CONTEXT.md and context_assembler.h prompt instructions retained as secondary layers.
+- ~~**Zero blocks through pipeline:**~~ ✓ Fixed — Test 4 revealed agents produce structured blocks but 0 flow through the parser. Three root causes: (1) agents wrap blocks in language-tagged fences (`\`\`\`markdown`) which neither `detect_block_open` nor `is_plain_fence` matched — added `starts_with_fence()` for type-header + language-tagged fence combos; (2) agents write free-text content after `---` separator inside blocks, which `parse_kv()` silently drops (no colon = no key) — added `join_lines()` content fallback in `dispatch_block()` when `content` field is empty; (3) agents use `required_reviewers` / `reviewers` instead of `requires_consensus_from` — added field alias chains in PROPOSAL and REVIEW dispatch. 29 tests pass (19 existing + 10 new).
 
 ## Useful Commands
 

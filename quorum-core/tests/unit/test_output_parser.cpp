@@ -402,6 +402,227 @@ static void test_multiple_lenient_blocks() {
     check(r.proposals[0].title == "Widen Spread", "multi: proposal title");
 }
 
+// ─── language-tagged fences, content fallback, and field alias tests ─────────
+
+static void test_language_tagged_fence_markdown() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "## VAULT_UPDATE\n"
+        "```markdown\n"
+        "# Latest Session\n"
+        "Some analysis.\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.size() == 1, "lang-md: one vault update");
+    check(r.vault_updates[0].content.find("Latest Session") != std::string::npos,
+          "lang-md: content contains 'Latest Session'");
+    check(r.vault_updates[0].content.find("analysis") != std::string::npos,
+          "lang-md: content contains 'analysis'");
+}
+
+static void test_language_tagged_fence_sql() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "**OBSERVATION**\n"
+        "```sql\n"
+        "title: Query Results\n"
+        "tags: [db]\n"
+        "content: |\n"
+        "  SELECT * FROM sessions\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.observations.size() == 1, "lang-sql: one observation");
+    check(r.observations[0].title == "Query Results", "lang-sql: title == 'Query Results'");
+}
+
+static void test_language_tagged_fence_no_pending_type() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "```markdown\n"
+        "# Just a code block\n"
+        "No type header above.\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.empty(), "lang-no-type: no vault updates");
+    check(r.proposals.empty(), "lang-no-type: no proposals");
+    check(r.observations.empty(), "lang-no-type: no observations");
+}
+
+static void test_proposal_freetext_content() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "**PROPOSAL**\n"
+        "```\n"
+        "title: Restart mm-bot\n"
+        "severity: CRITICAL\n"
+        "---\n"
+        "**Problem:** Session stuck.\n"
+        "\n"
+        "**Fix:**\n"
+        "1. Check logs\n"
+        "2. Restart\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.proposals.size() == 1, "prop-ft: one proposal");
+    check(r.proposals[0].title == "Restart mm-bot", "prop-ft: title matches");
+    check(!r.proposals[0].content.empty(), "prop-ft: content NOT empty");
+    check(r.proposals[0].content.find("Problem") != std::string::npos,
+          "prop-ft: content contains 'Problem'");
+    check(r.proposals[0].content.find("Restart") != std::string::npos,
+          "prop-ft: content contains 'Restart'");
+}
+
+static void test_observation_freetext_content() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "## OBSERVATION\n"
+        "```\n"
+        "title: Fill Pattern\n"
+        "tags: [mm-bot]\n"
+        "---\n"
+        "Clustering of fills at epoch boundaries.\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.observations.size() == 1, "obs-ft: one observation");
+    check(r.observations[0].title == "Fill Pattern", "obs-ft: title matches");
+    check(!r.observations[0].content.empty(), "obs-ft: content NOT empty");
+    check(r.observations[0].content.find("Clustering") != std::string::npos,
+          "obs-ft: content contains 'Clustering'");
+}
+
+static void test_vault_update_no_content_field() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "## VAULT_UPDATE\n"
+        "```markdown\n"
+        "# Market State\n"
+        "\n"
+        "DEEP/SUI at 0.0421.\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.size() == 1, "vu-no-content: one vault update");
+    check(!r.vault_updates[0].content.empty(), "vu-no-content: content NOT empty");
+    check(r.vault_updates[0].content.find("Market State") != std::string::npos,
+          "vu-no-content: content contains 'Market State'");
+    check(r.vault_updates[0].content.find("0.0421") != std::string::npos,
+          "vu-no-content: content contains '0.0421'");
+}
+
+static void test_required_reviewers_alias() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "```PROPOSAL\n"
+        "title: Widen Spread\n"
+        "required_reviewers: [bot_analyst, engineer]\n"
+        "content: |\n"
+        "  Increase spread\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.proposals.size() == 1, "alias-rr: one proposal");
+    check(r.proposals[0].requires_consensus_from.size() == 2,
+          "alias-rr: two reviewers");
+    check(r.proposals[0].requires_consensus_from[0] == "bot_analyst",
+          "alias-rr: reviewer[0] == bot_analyst");
+}
+
+static void test_reviewers_alias() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "```PROPOSAL\n"
+        "title: Reduce Size\n"
+        "reviewers: [operator]\n"
+        "content: |\n"
+        "  Decrease size\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.proposals.size() == 1, "alias-rev: one proposal");
+    check(r.proposals[0].requires_consensus_from.size() == 1,
+          "alias-rev: one reviewer");
+    check(r.proposals[0].requires_consensus_from[0] == "operator",
+          "alias-rev: reviewer[0] == operator");
+}
+
+static void test_explicit_content_not_overridden() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "```PROPOSAL\n"
+        "title: Test\n"
+        "requires_consensus_from: [x]\n"
+        "content: |\n"
+        "  Explicit content here.\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.proposals.size() == 1, "no-override: one proposal");
+    check(r.proposals[0].content == "Explicit content here.",
+          "no-override: content == 'Explicit content here.'");
+}
+
+static void test_realistic_agent_output() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "## VAULT_UPDATE\n"
+        "\n"
+        "```markdown\n"
+        "# System Health Report\n"
+        "\n"
+        "## mm-bot Status\n"
+        "- PID 12345\n"
+        "- Session #31\n"
+        "- Fills: 0\n"
+        "```\n"
+        "\n"
+        "## PROPOSAL\n"
+        "\n"
+        "```\n"
+        "title: Investigate zero-fill session\n"
+        "required_reviewers: [bot_analyst]\n"
+        "severity: HIGH\n"
+        "---\n"
+        "Session #31: 9.5 hours, zero fills.\n"
+        "\n"
+        "Recommended:\n"
+        "1. Check logs\n"
+        "2. Verify liquidity\n"
+        "3. Restart\n"
+        "```\n"
+        "\n"
+        "## OBSERVATION\n"
+        "\n"
+        "```\n"
+        "title: Zero-Fill Anomaly\n"
+        "tags: [mm-bot, health, anomaly]\n"
+        "---\n"
+        "0 fills over 9.5 hours. Average is 40-60.\n"
+        "```\n";
+    auto r = parser.parse(input);
+
+    // VAULT_UPDATE
+    check(r.vault_updates.size() == 1, "realistic: one vault update");
+    check(r.vault_updates[0].content.find("Health Report") != std::string::npos,
+          "realistic: vault content contains 'Health Report'");
+
+    // PROPOSAL
+    check(r.proposals.size() == 1, "realistic: one proposal");
+    check(r.proposals[0].title == "Investigate zero-fill session",
+          "realistic: proposal title matches");
+    check(r.proposals[0].requires_consensus_from.size() == 1,
+          "realistic: one reviewer");
+    check(r.proposals[0].requires_consensus_from[0] == "bot_analyst",
+          "realistic: reviewer == bot_analyst");
+    check(!r.proposals[0].content.empty(), "realistic: proposal content NOT empty");
+    check(r.proposals[0].content.find("Recommended") != std::string::npos,
+          "realistic: proposal content contains 'Recommended'");
+
+    // OBSERVATION
+    check(r.observations.size() == 1, "realistic: one observation");
+    check(r.observations[0].title == "Zero-Fill Anomaly",
+          "realistic: observation title matches");
+    check(r.observations[0].tags.size() == 3, "realistic: 3 tags");
+    check(!r.observations[0].content.empty(), "realistic: observation content NOT empty");
+    check(r.observations[0].content.find("40-60") != std::string::npos,
+          "realistic: observation content contains '40-60'");
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -428,6 +649,18 @@ int main() {
     test_plain_fence_no_type_ignored();
     test_no_type_leak_across_blocks();
     test_multiple_lenient_blocks();
+
+    // Language-tagged fences, content fallback, and field alias tests
+    test_language_tagged_fence_markdown();
+    test_language_tagged_fence_sql();
+    test_language_tagged_fence_no_pending_type();
+    test_proposal_freetext_content();
+    test_observation_freetext_content();
+    test_vault_update_no_content_field();
+    test_required_reviewers_alias();
+    test_reviewers_alias();
+    test_explicit_content_not_overridden();
+    test_realistic_agent_output();
 
     std::cout << "\nAll tests passed.\n";
     return 0;
