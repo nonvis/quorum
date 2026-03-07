@@ -266,6 +266,9 @@ static void schedule_review_tasks(
 }
 
 int main(int argc, char* argv[]) {
+    // Disable stdout buffering for real-time log tailing when redirected to file
+    std::setbuf(stdout, nullptr);
+
     std::cout << "Quorum Daemon v0.2.0" << std::endl;
     std::cout << "====================" << std::endl;
 
