@@ -256,7 +256,7 @@ Priority order:
 ### Known Issues
 
 - **Nested Claude Code sessions:** `claude -p` refuses to launch inside another Claude Code session (`CLAUDECODE` env var detected). The smoke test must be run from a regular terminal, not from within `claude` CLI.
-- **Invoker error handling:** The invoker marks tasks `done` even when `claude -p` exits non-zero (as long as stdout is non-empty). Error messages get stored as "results" instead of triggering `failed` status. Needs exit-code + JSON validation before calling `mark_done`.
+- ~~**Invoker error handling:**~~ ✓ Fixed — invoker now checks exit code and validates JSON structure (`"type":"result"`) before calling `mark_done()`. Non-zero exits and invalid output are routed to `mark_failed()`. See `CommandResult` struct and `validate_claude_output()` in `src/agent/invoker.h`.
 - **Buffered stdout in background mode:** When daemon stdout is redirected to a file, `std::cout` uses full buffering. Verbose log lines only appear after process exit. Add `std::flush` to verbose output paths if real-time log tailing is needed.
 
 ## Useful Commands

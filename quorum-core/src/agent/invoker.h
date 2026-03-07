@@ -23,10 +23,29 @@ struct InvocationResult {
     double cost{0.0};
 };
 
+struct CommandResult {
+    std::string output;
+    int exit_code{-1};
+};
+
 // Spawns `claude -p` subprocess, reads prompt from tasks table, writes result back.
 class Invoker {
 public:
     explicit Invoker(Database& db) : db_(db) {}
+
+    // Validate claude -p output. Returns error string if invalid, nullopt if valid.
+    [[nodiscard]] static std::optional<std::string> validate_claude_output(
+        const CommandResult& result) {
+        if (result.exit_code != 0) {
+            return "non-zero exit code: " + std::to_string(result.exit_code)
+                + (result.output.empty() ? "" : " — " + result.output);
+        }
+        auto type_field = json::extract_string(result.output, "type");
+        if (!type_field || *type_field != "result") {
+            return "invalid JSON structure: missing or wrong \"type\" field";
+        }
+        return std::nullopt;  // valid
+    }
 
     // Invoke a task by id. Reads prompt from DB, spawns claude -p, writes result back.
     [[nodiscard]] InvocationResult invoke(int64_t task_id) {
@@ -66,21 +85,39 @@ public:
         auto cmd = "cat " + temp_path
             + " | claude -p --dangerously-skip-permissions --output-format json 2>&1";
 
-        auto result = run_command(cmd);
+        auto cmd_result = run_command(cmd);
 
         // Clean up temp file
         std::remove(temp_path.c_str());
 
-        if (!result) {
-            auto err = "claude -p process failed for task " + std::to_string(task_id);
+        if (!cmd_result) {
+            auto err = "claude -p process failed to launch for task " + std::to_string(task_id);
             mark_failed(task_id, err);
             return {.success = false, .error = err};
         }
 
-        auto& raw_output = *result;
+        auto& [raw_output, exit_code] = *cmd_result;
 
-        // Parse token usage from JSON output
-        // claude --output-format json returns: {"type":"result","subtype":"success","result":"...","total_cost_usd":...,"usage":{"input_tokens":...,"output_tokens":...}}
+        // Layer 1: Check exit code
+        if (exit_code != 0) {
+            auto err = "claude -p exited with code " + std::to_string(exit_code)
+                + " for task " + std::to_string(task_id)
+                + (raw_output.empty() ? "" : ": " + raw_output);
+            mark_failed(task_id, err);
+            return {.success = false, .error = err};
+        }
+
+        // Layer 2: Validate JSON structure — claude -p --output-format json
+        // always returns {"type":"result",...} on success
+        auto type_field = json::extract_string(raw_output, "type");
+        if (!type_field || *type_field != "result") {
+            auto err = "claude -p returned invalid JSON for task " + std::to_string(task_id)
+                + ": " + raw_output.substr(0, 200);
+            mark_failed(task_id, err);
+            return {.success = false, .error = err};
+        }
+
+        // Parse token usage from validated JSON output
         int64_t tokens_in = json::extract_int(raw_output, "input_tokens");
         int64_t tokens_out = json::extract_int(raw_output, "output_tokens");
         double cost = json::extract_number(raw_output, "total_cost_usd");
@@ -133,8 +170,8 @@ private:
         );
     }
 
-    // Run a shell command and capture stdout
-    [[nodiscard]] std::optional<std::string> run_command(const std::string& cmd) {
+    // Run a shell command and capture stdout + exit code
+    [[nodiscard]] std::optional<CommandResult> run_command(const std::string& cmd) {
         std::array<char, 4096> buffer;
         std::string output;
 
@@ -146,13 +183,8 @@ private:
         }
 
         int status = pclose(pipe);
-        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-            return output;
-        }
-
-        // Non-zero exit — still return output (may contain error info)
-        if (!output.empty()) return output;
-        return std::nullopt;
+        int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        return CommandResult{.output = std::move(output), .exit_code = exit_code};
     }
 };
 
