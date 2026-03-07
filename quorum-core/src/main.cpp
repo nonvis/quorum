@@ -23,6 +23,7 @@
 #include "agent/context_assembler.h"
 #include "agent/output_parser.h"
 #include "vault/vault_manager.h"
+#include "knowledge/inbox_writer.h"
 
 namespace fs = std::filesystem;
 
@@ -189,6 +190,24 @@ static std::string get_task_agent(sui::quorum::Database& db, int64_t task_id) {
     return agent;
 }
 
+// Look up the task_type for a given task id.
+// Returns empty string if the task doesn't exist.
+static std::string get_task_type(sui::quorum::Database& db, int64_t task_id) {
+    std::string task_type;
+    db.query(
+        "SELECT task_type FROM tasks WHERE id = ?",
+        [&](sqlite3_stmt* stmt) {
+            sqlite3_bind_int64(stmt, 1, task_id);
+        },
+        [&](sqlite3_stmt* stmt) {
+            const char* text = reinterpret_cast<const char*>(
+                sqlite3_column_text(stmt, 0));
+            if (text) task_type = text;
+        }
+    );
+    return task_type;
+}
+
 // Schedule review tasks for all pending reviewers on a proposal.
 // Idempotent: skips reviewers who already have a pending/active review task
 // for this proposal (detected via prompt LIKE match on proposal_id).
@@ -347,6 +366,14 @@ int main(int argc, char* argv[]) {
     sui::quorum::OutputParser output_parser;
     sui::quorum::VaultManager vault_manager(cfg.daemon.data_dir);
     sui::quorum::ConsensusEngine consensus(db, cfg.consensus);
+    sui::quorum::InboxWriter inbox_writer(cfg.daemon.knowledge_dir);
+    if (!inbox_writer.init()) {
+        std::cerr << "WARNING: Failed to initialize knowledge directories\n";
+    }
+
+    if (verbose) {
+        std::cout << "  Knowledge dir: " << cfg.daemon.knowledge_dir << "\n";
+    }
 
     // Initialize vaults for all configured agents
     for (const auto& agent_ref : cfg.agents) {
@@ -489,6 +516,21 @@ int main(int argc, char* argv[]) {
                     if (ok) {
                         schedule_review_tasks(db, consensus, context_assembler,
                                               vault_manager, r.proposal_id, verbose);
+                    }
+                }
+
+                // Write observations to knowledge inbox
+                if (!parsed.observations.empty()) {
+                    auto task_type = get_task_type(db, task_id);
+                    for (auto& obs : parsed.observations) {
+                        obs.agent = agent_id;
+                        obs.task_type = task_type;
+                        bool ok = inbox_writer.write_observation(obs);
+                        if (verbose) {
+                            std::cout << "[knowledge] observation "
+                                      << (ok ? "written" : "FAILED")
+                                      << ": " << obs.title << "\n";
+                        }
                     }
                 }
             }

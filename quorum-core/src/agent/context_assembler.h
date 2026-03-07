@@ -87,6 +87,9 @@ public:
         prompt += "---\n\n";
         prompt += "# Output Instructions\n\n";
         prompt += "When you have findings, use these structured blocks in your response:\n\n";
+        prompt += "- **VAULT_UPDATE**: Your current distilled beliefs. Overwrites previous. Keep concise.\n";
+        prompt += "- **OBSERVATION**: What you noticed. Timestamped, accumulated over time. Write freely.\n";
+        prompt += "- **PROPOSAL**: Actions requiring consensus from other agents.\n\n";
         prompt += "```VAULT_UPDATE\n";
         prompt += "path: knowledge/<filename>.md\n";
         prompt += "content: |\n";
@@ -97,6 +100,12 @@ public:
         prompt += "requires_consensus_from: [<agent_names>]\n";
         prompt += "content: |\n";
         prompt += "  <proposal details>\n";
+        prompt += "```\n\n";
+        prompt += "```OBSERVATION\n";
+        prompt += "title: <what you observed>\n";
+        prompt += "tags: [<relevant, topic, tags>]\n";
+        prompt += "content: |\n";
+        prompt += "  <detailed observation — accumulated, never overwritten>\n";
         prompt += "```\n\n";
         prompt += "```SUMMARY\n";
         prompt += "<brief findings summary>\n";

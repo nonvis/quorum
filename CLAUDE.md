@@ -19,6 +19,7 @@ quorum/
 │   │   ├── main.cpp             # Daemon entry, signal handling, PID lock
 │   │   ├── daemon/              # Scheduler, router, message bus, events
 │   │   ├── agent/               # Claude Code invoker (claude -p), context assembler, output parser
+│   │   ├── knowledge/           # InboxWriter — writes OBSERVATION blocks to knowledge inbox
 │   │   ├── vault/               # Local vault manager (filesystem-based)
 │   │   ├── chain/               # [DEFERRED] Sui RPC client, proposals, audit, PTB
 │   │   ├── seal/                # [DEFERRED] Seal encrypt/decrypt, access policies
@@ -29,6 +30,10 @@ quorum/
 │   ├── tests/
 │   └── configs/                 # Agent YAML definitions, task YAML definitions
 │
+├── data/                        # Runtime data (not compiled)
+│   ├── vaults/                  # Per-agent vaults (CONTEXT.md, knowledge/, inbox/)
+│   └── knowledge/               # Shared knowledge base (inbox/, library/, archive/)
+│       └── PROCESSING.md        # Instructions for knowledge synthesis agent
 ├── scripts/                     # Shell scripts (smoke tests, utilities)
 ├── quorum-contracts/            # [DEFERRED] Move (OPEN SOURCE) — on-chain state machines
 ├── quorum-ts/                   # [DEFERRED] TypeScript (OPEN SOURCE) — community-facing
@@ -143,6 +148,22 @@ data/vaults/{agent_name}/
 - SQLite index for fast lookups
 - Cross-agent reads through proposal review process (local enforcement)
 
+### Knowledge System
+
+Agents produce OBSERVATION blocks (timestamped, accumulated, never overwritten) in addition to VAULT_UPDATE blocks (distilled beliefs, overwritten). Observations flow through a 3-zone knowledge pipeline:
+
+```
+data/knowledge/
+├── PROCESSING.md       # Instructions for the knowledge synthesis agent
+├── inbox/              # Raw observations from agents (timestamped markdown files)
+├── library/            # Synthesized findings by topic (findings.md per topic)
+└── archive/            # Superseded topics (>30 days old, all evidence outdated)
+```
+
+- **InboxWriter** (`src/knowledge/inbox_writer.h`): daemon writes each OBSERVATION to `inbox/` as `{date}_{time}_{agent}_{task_type}.md` with YAML frontmatter (`agent`, `task_type`, `date`, `tags`, `processed: false`)
+- **Synthesis**: a future knowledge-processing task reads `PROCESSING.md`, merges unprocessed inbox notes into `library/{topic}/findings.md`, and marks notes as `processed: true`
+- Agents see both VAULT_UPDATE and OBSERVATION in their output instructions (context assembler includes both block formats)
+
 ### Storage (Phase 0)
 
 ```
@@ -244,12 +265,13 @@ Priority order:
 2. ~~Scheduler, message bus, router, event dispatcher~~ ✓ (skeleton implementations)
 3. ~~Invoker rewrite~~ ✓ (spawns `claude -p`, captures JSON output, writes token/cost to DB)
 4. ~~SQLite task queue~~ ✓ (pending/active/done states with token tracking)
-5. ~~Context assembler~~ ✓ (vault CONTEXT.md + knowledge + inbox, output format instructions)
-6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / SUMMARY blocks, KV + multi-line parsing)
+5. ~~Context assembler~~ ✓ (vault CONTEXT.md + knowledge + inbox, output format instructions incl. OBSERVATION guidance)
+6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / OBSERVATION / SUMMARY blocks, KV + multi-line parsing)
 7. ~~Token budget enforcement~~ ✓ (per-task cap + hourly/daily caps with rolling window)
 8. ~~Smoke test script~~ ✓ (scripts/smoke_test.sh — seeds tasks, runs daemon, validates results; includes WAL/SHM cleanup to prevent stale SQLite state)
 9. ~~End-to-end dispatch verified~~ ✓ (daemon claims pending tasks, invokes `claude -p`, writes results back to DB)
-10. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
+10. ~~Knowledge pipeline wired~~ ✓ (OBSERVATION blocks parsed → InboxWriter → `data/knowledge/inbox/`; PROCESSING.md for synthesis agent; all 4 agent CONTEXT.md files updated with OBSERVATION block format)
+11. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 
