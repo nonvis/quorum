@@ -623,6 +623,131 @@ static void test_realistic_agent_output() {
           "realistic: observation content contains '40-60'");
 }
 
+// ─── VAULT_UPDATE path alias and bold metadata tests ────────────────────────
+
+static void test_vault_path_target_alias() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "```VAULT_UPDATE\n"
+        "target: knowledge/health.md\n"
+        "content: |\n"
+        "  status ok\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.size() == 1, "target-alias: one vault update");
+    check(r.vault_updates[0].path == "knowledge/health.md",
+          "target-alias: path == 'knowledge/health.md'");
+}
+
+static void test_vault_path_file_alias() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "```VAULT_UPDATE\n"
+        "file: knowledge/report.md\n"
+        "content: |\n"
+        "  report\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.size() == 1, "file-alias: one vault update");
+    check(r.vault_updates[0].path == "knowledge/report.md",
+          "file-alias: path == 'knowledge/report.md'");
+}
+
+static void test_vault_path_bold_target_above() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "## VAULT_UPDATE\n"
+        "\n"
+        "**target:** knowledge/market_state.md\n"
+        "\n"
+        "```\n"
+        "# Market State\n"
+        "DEEP at 0.04\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.size() == 1, "bold-target: one vault update");
+    check(r.vault_updates[0].path == "knowledge/market_state.md",
+          "bold-target: path == 'knowledge/market_state.md'");
+    check(r.vault_updates[0].content.find("Market State") != std::string::npos,
+          "bold-target: content contains 'Market State'");
+}
+
+static void test_vault_path_bold_file_backtick_above() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "## VAULT_UPDATE\n"
+        "\n"
+        "**file:** `knowledge/latest_session.md`\n"
+        "\n"
+        "```markdown\n"
+        "## Session 30\n"
+        "Analysis here.\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.size() == 1, "bold-file-bt: one vault update");
+    check(r.vault_updates[0].path == "knowledge/latest_session.md",
+          "bold-file-bt: path == 'knowledge/latest_session.md'");
+    check(r.vault_updates[0].content.find("Session 30") != std::string::npos,
+          "bold-file-bt: content contains 'Session 30'");
+}
+
+static void test_vault_path_inside_overrides_above() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "## VAULT_UPDATE\n"
+        "\n"
+        "**target:** knowledge/old.md\n"
+        "\n"
+        "```\n"
+        "path: knowledge/new.md\n"
+        "content: |\n"
+        "  data\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.size() == 1, "override: one vault update");
+    check(r.vault_updates[0].path == "knowledge/new.md",
+          "override: path == 'knowledge/new.md' (inside overrides above)");
+}
+
+static void test_vault_path_no_leak_to_non_vault() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "## PROPOSAL\n"
+        "\n"
+        "**target:** knowledge/foo.md\n"
+        "\n"
+        "```\n"
+        "title: My Proposal\n"
+        "content: |\n"
+        "  stuff\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.proposals.size() == 1, "no-leak-non-vu: one proposal");
+    check(r.proposals[0].title == "My Proposal",
+          "no-leak-non-vu: title == 'My Proposal'");
+}
+
+static void test_vault_path_reset_across_blocks() {
+    sui::quorum::OutputParser parser;
+    std::string input =
+        "## VAULT_UPDATE\n"
+        "**target:** knowledge/a.md\n"
+        "```\n"
+        "# First\n"
+        "```\n"
+        "\n"
+        "## VAULT_UPDATE\n"
+        "```\n"
+        "# Second\n"
+        "```\n";
+    auto r = parser.parse(input);
+    check(r.vault_updates.size() == 2, "reset: two vault updates");
+    check(r.vault_updates[0].path == "knowledge/a.md",
+          "reset: first path == 'knowledge/a.md'");
+    check(r.vault_updates[1].path.empty(),
+          "reset: second path is empty (pending_path cleared)");
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -661,6 +786,15 @@ int main() {
     test_reviewers_alias();
     test_explicit_content_not_overridden();
     test_realistic_agent_output();
+
+    // VAULT_UPDATE path alias and bold metadata tests
+    test_vault_path_target_alias();
+    test_vault_path_file_alias();
+    test_vault_path_bold_target_above();
+    test_vault_path_bold_file_backtick_above();
+    test_vault_path_inside_overrides_above();
+    test_vault_path_no_leak_to_non_vault();
+    test_vault_path_reset_across_blocks();
 
     std::cout << "\nAll tests passed.\n";
     return 0;

@@ -85,6 +85,16 @@ struct ParsedOutput {
 // all block lines are joined and used as the content. This ensures blocks
 // with free-text content (e.g. after a "---" separator) are not empty.
 //
+// VAULT_UPDATE path aliases: inside a VAULT_UPDATE block, the fields
+// `target:` and `file:` are accepted as aliases for `path:`. The first
+// non-empty value wins (checked in order: path → target → file).
+//
+// Bold metadata above fence: if bold metadata lines appear between a type
+// header and the code fence (e.g. "**file:** `knowledge/foo.md`"), the
+// path is captured and injected as a synthetic `path:` line at the start
+// of the block. An explicit `path:`/`target:`/`file:` inside the block
+// takes precedence (last-wins in parse_kv).
+//
 // Everything outside these blocks is collected into free_text.
 
 class OutputParser {
@@ -99,6 +109,7 @@ public:
         std::string block_type;
         std::vector<std::string> block_lines;
         std::string pending_type;
+        std::string pending_path;
 
         for (const auto& line : lines) {
             if (!in_block) {
@@ -108,19 +119,34 @@ public:
                     block_type = btype;
                     block_lines.clear();
                     pending_type.clear();
+                    pending_path.clear();
                 } else if (is_plain_fence(line)) {
                     in_block = true;
                     block_type = pending_type; // may be empty (tentative)
                     block_lines.clear();
+                    if (!pending_path.empty() && block_type == "VAULT_UPDATE") {
+                        block_lines.push_back("path: " + pending_path);
+                    }
                 } else if (!pending_type.empty() && starts_with_fence(line)) {
                     // Language-tagged fence (```markdown, ```sql, etc.)
                     // Only triggers when a type header was already seen above.
                     in_block = true;
                     block_type = pending_type;
                     block_lines.clear();
+                    if (!pending_path.empty() && block_type == "VAULT_UPDATE") {
+                        block_lines.push_back("path: " + pending_path);
+                    }
                 } else {
                     auto ht = detect_type_header(line);
-                    if (!ht.empty()) pending_type = ht;
+                    if (!ht.empty()) {
+                        pending_type = ht;
+                        pending_path.clear();  // Reset path on new type header
+                    }
+                    // Extract path from bold metadata when expecting a VAULT_UPDATE
+                    if (pending_type == "VAULT_UPDATE") {
+                        auto mp = extract_metadata_path(line);
+                        if (!mp.empty()) pending_path = mp;
+                    }
                     if (!result.free_text.empty()) result.free_text += '\n';
                     result.free_text += line;
                 }
@@ -133,6 +159,7 @@ public:
                     block_type.clear();
                     block_lines.clear();
                     pending_type.clear();
+                    pending_path.clear();
                 } else {
                     // First-line type detection (Enhancement B)
                     if (block_lines.empty()) {
@@ -328,6 +355,42 @@ private:
         return {};
     }
 
+    // Extract a vault path from bold metadata lines between a type header
+    // and a code fence. Recognizes patterns like:
+    //   **target:** knowledge/foo.md
+    //   **file:** `knowledge/foo.md`
+    //   **path:** knowledge/foo.md
+    // Returns the extracted path or empty string.
+    static std::string extract_metadata_path(std::string_view line) {
+        line = trim_sv(line);
+        // Must start with **
+        if (line.size() < 2 || line.substr(0, 2) != "**") return {};
+        line.remove_prefix(2);
+
+        // Check for known path labels
+        for (const char* label : {"target:", "file:", "path:"}) {
+            std::string_view lbl(label);
+            if (line.size() >= lbl.size() &&
+                line.substr(0, lbl.size()) == lbl) {
+                line.remove_prefix(lbl.size());
+                // Strip closing ** if present
+                if (line.size() >= 2 && line.substr(0, 2) == "**")
+                    line.remove_prefix(2);
+                // Trim whitespace, then strip backticks
+                auto path = trim_sv(line);
+                if (!path.empty() && path.front() == '`') path.remove_prefix(1);
+                if (!path.empty() && path.back() == '`') path.remove_suffix(1);
+                // Strip trailing ** that might appear after backtick-wrapped paths
+                auto result = trim_sv(path);
+                if (result.size() >= 2 && result.substr(result.size() - 2) == "**")
+                    result.remove_suffix(2);
+                result = trim_sv(result);
+                return result.empty() ? std::string{} : std::string(result);
+            }
+        }
+        return {};
+    }
+
     // ── Key-value parsing ──────────────────────────────────────────────────────
 
     // Lightweight key-value bag for parsing block fields.
@@ -457,6 +520,8 @@ private:
             auto bag = parse_kv(lines);
             VaultUpdate vu;
             vu.path    = bag.get_str("path");
+            if (vu.path.empty()) vu.path = bag.get_str("target");
+            if (vu.path.empty()) vu.path = bag.get_str("file");
             vu.content = bag.get_str("content");
             if (vu.content.empty() && !lines.empty()) {
                 vu.content = join_lines(lines);
