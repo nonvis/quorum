@@ -84,7 +84,9 @@ public:
         // Build command: read prompt from file, pipe to claude -p
         // env -u CLAUDECODE prevents nesting detection when daemon runs inside a Claude Code session
         auto cmd = "env -u CLAUDECODE cat " + temp_path
-            + " | claude -p --dangerously-skip-permissions --output-format json 2>&1";
+            + " | claude -p --dangerously-skip-permissions"
+            + " --disallowedTools \"Write,Edit,NotebookEdit\""
+            + " --output-format json 2>&1";
 
         auto cmd_result = run_command(cmd);
 
