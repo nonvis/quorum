@@ -83,6 +83,20 @@ public:
         prompt += task_description;
         prompt += "\n\n";
 
+        // Inject critical output rules (defense-in-depth — always present)
+        prompt += "---\n\n";
+        prompt += "# CRITICAL — Output Rules\n\n";
+        prompt += "You MUST follow these rules for ALL output:\n\n";
+        prompt += "1. **NEVER write files directly.** Do not use Write, Edit, or any file-creation tool. ";
+        prompt += "All output goes in your response text as structured blocks.\n";
+        prompt += "2. **NEVER run commands that modify files.** You may READ files and RUN queries ";
+        prompt += "(sqlite3, cat, ls, grep), but never write, move, or delete.\n";
+        prompt += "3. **ALL findings must use structured blocks** in your response: ";
+        prompt += "VAULT_UPDATE, OBSERVATION, PROPOSAL, SUMMARY.\n";
+        prompt += "4. **Only write to YOUR vault.** VAULT_UPDATE paths must start with `knowledge/` or `inbox/`.\n\n";
+        prompt += "The daemon extracts these blocks from your response text and routes them. ";
+        prompt += "If you write files directly, the daemon cannot track your output.\n\n";
+
         // Append output format instructions
         prompt += "---\n\n";
         prompt += "# Output Instructions\n\n";

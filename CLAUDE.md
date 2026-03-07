@@ -111,6 +111,15 @@ daemon → assembles prompt (vault + task) → spawns `claude -p "..." --dangero
 
 Each `claude -p` call is a **fresh context** (no memory between calls). The vault provides continuity.
 
+### Agent Output Rules (Defense-in-Depth)
+
+Agents must produce structured blocks (VAULT_UPDATE, OBSERVATION, PROPOSAL, SUMMARY) in their response text — never write files directly. This is enforced at two layers:
+
+1. **CONTEXT.md** — each agent's vault `CONTEXT.md` has a "## CRITICAL — Output Rules" section (between Role and Core Question) prohibiting file writes and requiring structured blocks.
+2. **Context assembler** — `src/agent/context_assembler.h` injects the same rules into every assembled prompt as a failsafe, between the "Current Task" and "Output Instructions" sections.
+
+Template for new agents: `docs/CONTEXT_TEMPLATE.md`.
+
 ### Parallelism Control
 
 - Max concurrent `claude -p` processes: configurable (default 2-3)
@@ -255,6 +264,7 @@ agents:
 5. **Never skip the proposal protocol** — all material decisions go through create→review→approve→execute→evaluate
 6. **Never block the daemon event loop** — subprocess spawning must be non-blocking
 7. **Never run `claude -p` without token budget enforcement** — per-task cap + global daily cap
+8. **Never let agents write files directly** — all output must be structured blocks in the response text; the daemon parses and routes them
 
 ## Current Phase
 
@@ -280,6 +290,7 @@ Priority order:
 - **Nested Claude Code sessions:** `claude -p` refuses to launch inside another Claude Code session (`CLAUDECODE` env var detected). The smoke test must be run from a regular terminal, not from within `claude` CLI.
 - ~~**Invoker error handling:**~~ ✓ Fixed — invoker now checks exit code and validates JSON structure (`"type":"result"`) before calling `mark_done()`. Non-zero exits and invalid output are routed to `mark_failed()`. See `CommandResult` struct and `validate_claude_output()` in `src/agent/invoker.h`.
 - **Buffered stdout in background mode:** When daemon stdout is redirected to a file, `std::cout` uses full buffering. Verbose log lines only appear after process exit. Add `std::flush` to verbose output paths if real-time log tailing is needed.
+- ~~**Agents writing files directly:**~~ ✓ Fixed — Phase 0.5 observation test revealed all agents used Claude Code's built-in Write/Edit tools instead of structured blocks, bypassing the output parser entirely. Fix: added "CRITICAL — Output Rules" section to all 4 CONTEXT.md files + defense-in-depth injection in context_assembler.h.
 
 ## Useful Commands
 
