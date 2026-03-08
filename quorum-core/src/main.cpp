@@ -71,11 +71,66 @@ static void release_pid_lock(const std::string& path) {
     std::remove(path.c_str());
 }
 
+static void print_conversations(sui::quorum::Database& db) {
+    std::cout << "Conversations:\n";
+    int count = 0;
+    db.query(
+        "SELECT id, goal, state, round, max_rounds, budget_usd, spent_usd, "
+        "created_at, paused_reason FROM conversations ORDER BY id DESC",
+        [&](sqlite3_stmt* stmt) {
+            auto id = sqlite3_column_int64(stmt, 0);
+            auto goal_raw = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            auto state = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            auto round = sqlite3_column_int(stmt, 3);
+            auto max_r = sqlite3_column_int(stmt, 4);
+            auto budget = sqlite3_column_double(stmt, 5);
+            auto spent = sqlite3_column_double(stmt, 6);
+            auto reason_raw = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
+
+            std::string goal = goal_raw ? std::string(goal_raw) : "";
+            std::string reason = reason_raw ? std::string(reason_raw) : "";
+            if (goal.size() > 50) goal = goal.substr(0, 50) + "...";
+
+            std::cout << "  #" << id
+                      << "  " << (state ? state : "?")
+                      << "  round " << round << "/" << max_r
+                      << "  $" << spent << "/$" << budget
+                      << "  " << goal;
+            if (!reason.empty()) std::cout << "  (" << reason << ")";
+            std::cout << "\n";
+
+            // Per-conversation task counts
+            auto total = db.query_int(
+                "SELECT COUNT(*) FROM tasks WHERE conversation_id = "
+                + std::to_string(id));
+            auto done = db.query_int(
+                "SELECT COUNT(*) FROM tasks WHERE conversation_id = "
+                + std::to_string(id) + " AND status = 'done'");
+            std::cout << "    tasks: " << done << "/" << total << " done\n";
+
+            ++count;
+        }
+    );
+    if (count == 0) {
+        std::cout << "  No conversations.\n";
+    }
+}
+
 static void print_usage(const char* prog) {
-    std::cerr << "Usage: " << prog << " --config <path>\n"
-              << "  --config <path>   Path to quorum.yaml config file\n"
-              << "  --verbose         Enable verbose logging\n"
-              << "  --help            Show this message\n";
+    std::cerr << "Usage:\n"
+              << "  " << prog << " --config <path>                            Start daemon\n"
+              << "  " << prog << " --config <path> converse \"goal text\"       Start conversation + daemon\n"
+              << "  " << prog << " --config <path> converse --budget 3.0 \"g\"  Custom budget\n"
+              << "  " << prog << " --config <path> status                     List conversations\n"
+              << "  " << prog << " --config <path> resume --conversation <id> Resume paused\n"
+              << "  " << prog << " --config <path> close --conversation <id>  Close conversation\n"
+              << "\nOptions:\n"
+              << "  --config <path>      Path to quorum.yaml (required)\n"
+              << "  --verbose            Enable verbose logging\n"
+              << "  --budget <usd>       Per-conversation budget (default: 5.0)\n"
+              << "  --max-rounds <n>     Max revision rounds (default: 3)\n"
+              << "  --conversation <id>  Conversation ID for resume/close\n"
+              << "  --help               Show this message\n";
 }
 
 // Initialize all database tables
@@ -309,27 +364,65 @@ int main(int argc, char* argv[]) {
     // Disable stdout buffering for real-time log tailing when redirected to file
     std::setbuf(stdout, nullptr);
 
-    std::cout << "Quorum Daemon v0.2.0" << std::endl;
-    std::cout << "====================" << std::endl;
-
-    // Parse CLI args
+    // Phase 1: extract global flags from anywhere in argv
     std::string config_path;
     bool verbose = false;
+    std::vector<bool> consumed(argc, false);
+    consumed[0] = true; // program name
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--config" && i + 1 < argc) {
             config_path = argv[++i];
+            consumed[i - 1] = true;
+            consumed[i] = true;
         } else if (arg == "--verbose") {
             verbose = true;
+            consumed[i] = true;
         } else if (arg == "--help") {
             print_usage(argv[0]);
             return 0;
-        } else {
-            std::cerr << "Unknown argument: " << arg << "\n";
-            print_usage(argv[0]);
-            return 1;
         }
+    }
+
+    // Phase 2: collect unconsumed args -> subcommand + subcommand args
+    std::string subcommand;
+    std::vector<std::string> sub_args;
+    for (int i = 1; i < argc; ++i) {
+        if (consumed[i]) continue;
+        if (subcommand.empty()) {
+            subcommand = argv[i];
+        } else {
+            sub_args.push_back(argv[i]);
+        }
+    }
+
+    // Parse subcommand-specific flags
+    double conv_budget = 5.0;
+    int conv_max_rounds = 3;
+    int64_t conv_id_arg = 0;
+    std::string goal_text;
+
+    if (subcommand == "converse") {
+        for (size_t i = 0; i < sub_args.size(); ++i) {
+            if (sub_args[i] == "--budget" && i + 1 < sub_args.size()) {
+                conv_budget = std::stod(sub_args[++i]);
+            } else if (sub_args[i] == "--max-rounds" && i + 1 < sub_args.size()) {
+                conv_max_rounds = std::stoi(sub_args[++i]);
+            } else {
+                goal_text = sub_args[i]; // last positional = goal
+            }
+        }
+    } else if (subcommand == "resume" || subcommand == "close") {
+        for (size_t i = 0; i < sub_args.size(); ++i) {
+            if (sub_args[i] == "--conversation" && i + 1 < sub_args.size()) {
+                conv_id_arg = std::stoll(sub_args[++i]);
+            }
+        }
+    } else if (!subcommand.empty() && subcommand != "status") {
+        std::cerr << "Unknown subcommand: " << subcommand << "\n";
+        print_usage(argv[0]);
+        return 1;
     }
 
     if (config_path.empty()) {
@@ -346,20 +439,6 @@ int main(int argc, char* argv[]) {
     }
     auto& cfg = *cfg_opt;
 
-    std::cout << "  Network:    " << cfg.chain.network << "\n";
-    std::cout << "  Data dir:   " << cfg.daemon.data_dir << "\n";
-    std::cout << "  Log level:  " << cfg.daemon.log_level << "\n";
-    std::cout << "  Agents:     " << cfg.agents.size() << "\n";
-    std::cout << "  Dispatch:   sequential (one task at a time)\n";
-    std::cout << "  Daily budget: $" << cfg.budget.daily_limit_usd << "\n";
-
-    // Signal handlers
-    std::signal(SIGINT, signal_handler);
-    std::signal(SIGTERM, signal_handler);
-
-    // PID lock
-    if (!acquire_pid_lock(cfg.daemon.pid_file)) return 1;
-
     // Ensure data directory exists
     fs::create_directories(cfg.daemon.data_dir);
 
@@ -368,13 +447,85 @@ int main(int argc, char* argv[]) {
     sui::quorum::Database db(db_path);
     if (!db.is_open()) {
         std::cerr << "ERROR: Failed to open database: " << db_path << "\n";
-        release_pid_lock(cfg.daemon.pid_file);
         return 1;
     }
     init_schema(db);
 
+    // Conversation engine — lightweight (Database& only), needed for subcommands
+    sui::quorum::ConversationEngine conversation_engine(db);
+
+    // ── Subcommand early exits (no PID lock, no daemon) ──────────────────
+    if (subcommand == "status") {
+        print_conversations(db);
+        return 0;
+    }
+
+    if (subcommand == "close") {
+        if (conv_id_arg == 0) {
+            std::cerr << "ERROR: close requires --conversation <id>\n";
+            return 1;
+        }
+        auto conv = db.get_conversation(conv_id_arg);
+        if (!conv) {
+            std::cerr << "ERROR: conversation " << conv_id_arg << " not found\n";
+            return 1;
+        }
+        conversation_engine.close(conv_id_arg);
+        std::cout << "Conversation " << conv_id_arg << " closed.\n";
+        return 0;
+    }
+
+    // ── Banner + config summary (daemon paths only) ──────────────────────
+    std::cout << "Quorum Daemon v0.2.0" << std::endl;
+    std::cout << "====================" << std::endl;
+    std::cout << "  Network:    " << cfg.chain.network << "\n";
+    std::cout << "  Data dir:   " << cfg.daemon.data_dir << "\n";
+    std::cout << "  Log level:  " << cfg.daemon.log_level << "\n";
+    std::cout << "  Agents:     " << cfg.agents.size() << "\n";
+    std::cout << "  Dispatch:   sequential (one task at a time)\n";
+    std::cout << "  Daily budget: $" << cfg.budget.daily_limit_usd << "\n";
+
     if (verbose) {
         std::cout << "  Database:   " << db_path << " (OK)\n";
+    }
+
+    // Signal handlers
+    std::signal(SIGINT, signal_handler);
+    std::signal(SIGTERM, signal_handler);
+
+    // PID lock with graceful fallback for converse/resume
+    bool needs_daemon = subcommand.empty() || subcommand == "converse" || subcommand == "resume";
+    if (needs_daemon) {
+        if (!acquire_pid_lock(cfg.daemon.pid_file)) {
+            if (subcommand.empty()) {
+                // No subcommand = operator wants to start daemon. Hard error.
+                return 1;
+            }
+            // converse/resume: daemon already running, it will pick up our changes
+            if (subcommand == "converse") {
+                if (goal_text.empty()) {
+                    std::cerr << "ERROR: converse requires a goal string\n";
+                    return 1;
+                }
+                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds);
+                std::cout << "Conversation " << id << " created.\n";
+                std::cout << "Daemon already running — it will pick up the conversation.\n";
+            } else if (subcommand == "resume") {
+                if (conv_id_arg == 0) {
+                    std::cerr << "ERROR: resume requires --conversation <id>\n";
+                    return 1;
+                }
+                bool ok = conversation_engine.resume(conv_id_arg);
+                if (!ok) {
+                    std::cerr << "ERROR: conversation " << conv_id_arg
+                              << " cannot be resumed (not paused?)\n";
+                    return 1;
+                }
+                std::cout << "Conversation " << conv_id_arg << " resumed.\n";
+                std::cout << "Daemon already running — it will pick up the change.\n";
+            }
+            return 0;
+        }
     }
 
     // Initialize subsystems
@@ -394,10 +545,6 @@ int main(int argc, char* argv[]) {
 
     if (verbose) {
         std::cout << "  Knowledge dir: " << cfg.daemon.knowledge_dir << "\n";
-    }
-
-    sui::quorum::ConversationEngine conversation_engine(db);
-    if (verbose) {
         std::cout << "  Conversation engine: OK\n";
     }
 
@@ -409,6 +556,33 @@ int main(int argc, char* argv[]) {
             std::cout << "  Vault init: " << agent_id
                       << (ok ? " (OK)" : " (FAILED)") << "\n";
         }
+    }
+
+    // converse/resume dispatch (daemon path — PID lock acquired)
+    if (subcommand == "converse") {
+        if (goal_text.empty()) {
+            std::cerr << "ERROR: converse requires a goal string\n";
+            release_pid_lock(cfg.daemon.pid_file);
+            return 1;
+        }
+        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds);
+        std::cout << "Conversation " << id << " created. Starting daemon...\n";
+        // fall through to daemon loop
+    } else if (subcommand == "resume") {
+        if (conv_id_arg == 0) {
+            std::cerr << "ERROR: resume requires --conversation <id>\n";
+            release_pid_lock(cfg.daemon.pid_file);
+            return 1;
+        }
+        bool ok = conversation_engine.resume(conv_id_arg);
+        if (!ok) {
+            std::cerr << "ERROR: conversation " << conv_id_arg
+                      << " cannot be resumed (not paused?)\n";
+            release_pid_lock(cfg.daemon.pid_file);
+            return 1;
+        }
+        std::cout << "Conversation " << conv_id_arg << " resumed. Starting daemon...\n";
+        // fall through to daemon loop
     }
 
     // Wire up event handlers

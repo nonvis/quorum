@@ -16,7 +16,7 @@ quorum/
 ├── quorum-core/                 # C++20 (CLOSED SOURCE) — orchestrator daemon
 │   ├── CMakeLists.txt
 │   ├── src/
-│   │   ├── main.cpp             # Daemon entry, signal handling, PID lock
+│   │   ├── main.cpp             # Daemon entry, signal handling, PID lock, CLI subcommands
 │   │   ├── daemon/              # Scheduler, router, message bus, events, conversation engine
 │   │   ├── agent/               # Claude Code invoker (claude -p), context assembler, output parser
 │   │   ├── knowledge/           # InboxWriter — writes OBSERVATION blocks to knowledge inbox
@@ -353,7 +353,7 @@ Priority order:
 14. ~~Session resume in Invoker~~ ✓ (reads session_id from tasks table, uses `--session-id` for first use / `-r` for resume; fallback retry on resume failure; `generate_uuid()` centralized in `utils/uuid.h`; `InvocationResult` includes session_id; verbose log shows session prefix)
 15. ~~Pause conditions + escalation~~ ✓ (centralized `check_pause_conditions()` with 4 triggers: budget exceeded, token anomaly >2x median, 2+ consecutive failures, agent escalation verdict; `PauseCheck` struct; `normalize_verdict()` in OutputParser maps aliases to canonical values; "escalate" verdict in handle_reviewing; agent CONTEXT.md files updated with REVIEW Verdicts section)
 16. ~~Sequential dispatch enforcement~~ ✓ (removed `max_concurrent` from BudgetConfig/config parser/quorum.yaml; dispatch gate changed from `active >= max_concurrent` to `active > 0`; design decision, not configuration; test_pipeline updated from parallelism gate to sequential dispatch test)
-17. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
+17. ~~CLI subcommands~~ ✓ (`converse`, `status`, `resume`, `close` subcommands in main.cpp — two-phase arg parser, early-exit for status/close without PID lock, graceful PID lock fallback for converse/resume when daemon already running, `print_conversations()` for status display)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 
@@ -372,21 +372,26 @@ Priority order:
 # Build
 cmake -B build && cmake --build build -j$(nproc)
 
-# Run daemon
+# Run daemon (no subcommand — plain daemon mode)
 ./build/quorum_daemon --config configs/quorum.yaml
 
 # Run with verbose logging
 ./build/quorum_daemon --config configs/quorum.yaml --verbose
 
-# Check daemon status (overnight runs)
-./build/quorum status
+# Start a conversation + daemon
+./build/quorum_daemon --config configs/quorum.yaml converse "Analyze market trends"
 
-# CLI commands (Phase 0)
-./build/quorum daemon start
-./build/quorum daemon status
-./build/quorum agent list
-./build/quorum proposal create --title "..." --author market_analyst
-./build/quorum proposal status --id proposal-042
+# Start with custom budget and max rounds
+./build/quorum_daemon --config configs/quorum.yaml converse --budget 3.0 --max-rounds 5 "goal text"
+
+# List all conversations (no PID lock, no daemon)
+./build/quorum_daemon --config configs/quorum.yaml status
+
+# Resume a paused conversation (works with or without running daemon)
+./build/quorum_daemon --config configs/quorum.yaml resume --conversation 1
+
+# Close a conversation (no PID lock, no daemon)
+./build/quorum_daemon --config configs/quorum.yaml close --conversation 1
 
 # Agent invocation (what the daemon spawns)
 claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" --output-format json
