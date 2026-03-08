@@ -17,13 +17,13 @@ quorum/
 │   ├── CMakeLists.txt
 │   ├── src/
 │   │   ├── main.cpp             # Daemon entry, signal handling, PID lock
-│   │   ├── daemon/              # Scheduler, router, message bus, events
+│   │   ├── daemon/              # Scheduler, router, message bus, events, conversation engine
 │   │   ├── agent/               # Claude Code invoker (claude -p), context assembler, output parser
 │   │   ├── knowledge/           # InboxWriter — writes OBSERVATION blocks to knowledge inbox
 │   │   ├── vault/               # Local vault manager (filesystem-based)
 │   │   ├── chain/               # [DEFERRED] Sui RPC client, proposals, audit, PTB
 │   │   ├── seal/                # [DEFERRED] Seal encrypt/decrypt, access policies
-│   │   ├── storage/             # SQLite (WAL mode) — task queue, token tracking
+│   │   ├── storage/             # SQLite (WAL mode) — task queue, token tracking, conversations
 │   │   ├── utils/               # HTTP (libcurl), JSON (manual), crypto (ed25519), config
 │   │   ├── sdk/                 # [DEFERRED] libquorum public API
 │   │   └── cli/                 # quorum binary CLI commands
@@ -174,10 +174,47 @@ data/knowledge/
 - **Synthesis**: a future knowledge-processing task reads `PROCESSING.md`, merges unprocessed inbox notes into `library/{topic}/findings.md`, and marks notes as `processed: true`
 - Agents see both VAULT_UPDATE and OBSERVATION in their output instructions (context assembler includes both block formats)
 
+### Conversation Mode (Phase 0.7)
+
+Conversation Mode seeds a single goal and lets the daemon drive a Thinker/Reviewer pipeline through a state machine. The `ConversationEngine` (`src/daemon/conversation.h`) manages state transitions, task creation, and budget enforcement per conversation.
+
+**State machine:**
+
+```
+INIT → THINKING → REVIEWING ──┬──→ APPROVED → DONE (Phase 0.7: no executor)
+                      │        │
+                 REVISE (round < max_rounds)
+                      │        │
+                      ▼        │
+                   THINKING ◄──┘
+                      │
+                 REJECT or round >= max_rounds
+                      │
+                      ▼
+                    CLOSED
+
+Any state → PAUSED (budget exceeded)
+```
+
+**Key types:**
+- `ConversationRecord` — struct in `storage/database.h` (id, goal, state, round, max_rounds, budget_usd, spent_usd)
+- `ConversationEngine` — header-only class in `daemon/conversation.h`. Depends only on `Database` and `OutputParser` types. No dependency on Invoker, VaultManager, or ConsensusEngine.
+
+**Database schema:**
+- `conversations` table: id, goal, state, round, max_rounds, budget_usd, spent_usd, created_at, completed_at, paused_reason
+- `tasks` table extended with: `conversation_id INTEGER REFERENCES conversations(id)`, `session_id TEXT`
+
+**Session ID strategy:**
+- Thinker: same session_id reused across all REVISE cycles (for future `-r` resume support)
+- Reviewer: fresh session_id per review task
+
+**Main loop integration:**
+- After existing output processing (vault updates, consensus, observations), the dispatch lambda checks `get_conversation_for_task(task_id)`. If the task belongs to a conversation, `conversation_engine.on_task_complete()` routes to the next state. Tasks without `conversation_id` skip this block entirely (backward compatible).
+
 ### Storage (Phase 0)
 
 ```
-Local only:  SQLite task queue, token tracking, vault index, proposal state
+Local only:  SQLite task queue, token tracking, vault index, proposal state, conversations
 Future:      Walrus (vault blobs), Sui (proposals, audit), Seal (access control)
 ```
 
@@ -269,7 +306,7 @@ agents:
 
 ## Current Phase
 
-**Phase 0: Pure Local Orchestration** — Prove the multi-agent coordination loop on a single machine before adding web3 layers.
+**Phase 0.7: Conversation Mode** — Pure local orchestration with goal-driven Thinker/Reviewer pipeline.
 
 Priority order:
 1. ~~C++ daemon skeleton~~ ✓ (main.cpp, signal handling, PID lock, config loading)
@@ -282,7 +319,10 @@ Priority order:
 8. ~~Smoke test script~~ ✓ (scripts/smoke_test.sh — seeds tasks, runs daemon, validates results; includes WAL/SHM cleanup to prevent stale SQLite state)
 9. ~~End-to-end dispatch verified~~ ✓ (daemon claims pending tasks, invokes `claude -p`, writes results back to DB)
 10. ~~Knowledge pipeline wired~~ ✓ (OBSERVATION blocks parsed → InboxWriter → `data/knowledge/inbox/`; PROCESSING.md for synthesis agent; all 4 agent CONTEXT.md files updated with OBSERVATION block format)
-11. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
+11. ~~Conversation schema + CRUD~~ ✓ (ConversationRecord struct, 8 Database CRUD methods, conversations table, tasks extended with conversation_id + session_id, ALTER TABLE migration for existing DBs)
+12. ~~ConversationEngine~~ ✓ (header-only state machine in daemon/conversation.h — start, on_task_complete, resume, close; Thinker/Reviewer pipeline with revise loops, budget pause, session_id reuse)
+13. ~~Main loop integration~~ ✓ (conversation routing block in task_dispatch lambda — runs after existing output processing, backward compatible for non-conversation tasks)
+14. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 

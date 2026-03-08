@@ -92,6 +92,11 @@ target_include_directories(test_database PRIVATE src)
 target_link_libraries(test_database PRIVATE SQLite::SQLite3)
 add_test(NAME test_database COMMAND test_database)
 
+add_executable(test_conversation tests/unit/test_conversation.cpp)
+target_include_directories(test_conversation PRIVATE src)
+target_link_libraries(test_conversation PRIVATE SQLite::SQLite3)
+add_test(NAME test_conversation COMMAND test_conversation)
+
 add_executable(test_pipeline tests/integration/test_pipeline.cpp)
 target_include_directories(test_pipeline PRIVATE src)
 target_link_libraries(test_pipeline PRIVATE SQLite::SQLite3)

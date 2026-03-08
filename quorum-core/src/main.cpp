@@ -18,6 +18,7 @@
 #include "daemon/router.h"
 #include "daemon/event_dispatcher.h"
 #include "daemon/consensus.h"
+#include "daemon/conversation.h"
 #include "storage/database.h"
 #include "agent/invoker.h"
 #include "agent/context_assembler.h"
@@ -395,6 +396,11 @@ int main(int argc, char* argv[]) {
         std::cout << "  Knowledge dir: " << cfg.daemon.knowledge_dir << "\n";
     }
 
+    sui::quorum::ConversationEngine conversation_engine(db);
+    if (verbose) {
+        std::cout << "  Conversation engine: OK\n";
+    }
+
     // Initialize vaults for all configured agents
     for (const auto& agent_ref : cfg.agents) {
         auto agent_id = fs::path(agent_ref.config_path).stem().string();
@@ -551,6 +557,35 @@ int main(int argc, char* argv[]) {
                                       << (ok ? "written" : "FAILED")
                                       << ": " << obs.title << "\n";
                         }
+                    }
+                }
+            }
+        }
+
+        // ── Conversation routing ──────────────────────────────────────────
+        // If this task belongs to a conversation, route through the engine.
+        // Runs AFTER existing processing so vault/consensus/observations
+        // are handled for conversation tasks too.
+        {
+            auto conv_id_opt = db.get_conversation_for_task(task_id);
+            if (conv_id_opt) {
+                // Build ParsedOutput for the engine (may be empty if task failed)
+                sui::quorum::ParsedOutput conv_parsed;
+                if (result.success && !result.output.empty()) {
+                    conv_parsed = output_parser.parse(result.output);
+                }
+
+                bool still_active = conversation_engine.on_task_complete(
+                    task_id, conv_parsed, result.cost
+                );
+                (void)still_active;  // used by future dispatch logic
+
+                if (verbose) {
+                    auto conv = db.get_conversation(*conv_id_opt);
+                    if (conv) {
+                        std::cout << "[conversation " << conv->id << "] "
+                                  << conv->state
+                                  << " — " << conv->goal.substr(0, 60) << "\n";
                     }
                 }
             }
