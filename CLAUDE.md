@@ -354,6 +354,7 @@ Priority order:
 15. ~~Pause conditions + escalation~~ ✓ (centralized `check_pause_conditions()` with 4 triggers: budget exceeded, token anomaly >2x median, 2+ consecutive failures, agent escalation verdict; `PauseCheck` struct; `normalize_verdict()` in OutputParser maps aliases to canonical values; "escalate" verdict in handle_reviewing; agent CONTEXT.md files updated with REVIEW Verdicts section)
 16. ~~Sequential dispatch enforcement~~ ✓ (removed `max_concurrent` from BudgetConfig/config parser/quorum.yaml; dispatch gate changed from `active >= max_concurrent` to `active > 0`; design decision, not configuration; test_pipeline updated from parallelism gate to sequential dispatch test)
 17. ~~CLI subcommands~~ ✓ (`converse`, `status`, `resume`, `close` subcommands in main.cpp — two-phase arg parser, early-exit for status/close without PID lock, graceful PID lock fallback for converse/resume when daemon already running, `print_conversations()` for status display)
+18. ~~Conversation pipeline integration test~~ ✓ (`tests/integration/test_conversation_pipeline.cpp` — 9 tests, 34 assertions, exercises full state machine end-to-end without `claude -p`: happy path, revise with session reuse, max rounds exhaustion, budget pause, consecutive failures pause, agent escalation pause, resume from paused, operator close, reject close; all 11 ctest targets pass)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 
