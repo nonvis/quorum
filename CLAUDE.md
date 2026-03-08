@@ -24,7 +24,7 @@ quorum/
 │   │   ├── chain/               # [DEFERRED] Sui RPC client, proposals, audit, PTB
 │   │   ├── seal/                # [DEFERRED] Seal encrypt/decrypt, access policies
 │   │   ├── storage/             # SQLite (WAL mode) — task queue, token tracking, conversations
-│   │   ├── utils/               # HTTP (libcurl), JSON (manual), crypto (ed25519), config
+│   │   ├── utils/               # HTTP (libcurl), JSON (manual), crypto (ed25519), config, UUID
 │   │   ├── sdk/                 # [DEFERRED] libquorum public API
 │   │   └── cli/                 # quorum binary CLI commands
 │   ├── tests/
@@ -106,10 +106,19 @@ The orchestrator daemon (`quorum_daemon`) **never** calls an LLM. All scheduling
 The daemon spawns Claude Code CLI as the agent runtime:
 
 ```
-daemon → assembles prompt (vault + task) → spawns `claude -p "..." --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" --output-format json` → collects stdout → parses result → writes to vault → routes follow-up tasks
+daemon → assembles prompt (vault + task) → spawns `claude -p "..." --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" [--session-id <uuid> | -r <uuid>] --output-format json` → collects stdout → parses result → writes to vault → routes follow-up tasks
 ```
 
-Each `claude -p` call is a **fresh context** (no memory between calls). The vault provides continuity.
+**Session management:** The Invoker (`src/agent/invoker.h`) reads `session_id` from the `tasks` table. If a session_id is present:
+- **First use** (no prior completed task with that session_id) → `--session-id <uuid>` (creates a new named session)
+- **Subsequent use** (a completed task already used that session_id) → `-r <uuid>` (resumes the existing session)
+- **No session_id** (Task Queue mode) → no flag (fresh anonymous session, current behavior)
+
+**Resume fallback:** If `-r` fails (non-zero exit), the Invoker automatically retries with `--session-id` (fresh session). This handles expired/corrupted sessions gracefully.
+
+**Session ID source:** `InvocationResult` includes the `session_id` returned by `claude -p` JSON output (or the task's session_id as fallback). The `ConversationEngine` generates session IDs via `generate_uuid()` from `utils/uuid.h`.
+
+Task Queue mode tasks (no `conversation_id`) have NULL session_id and behave identically to pre-session behavior — each `claude -p` call is a fresh context. The vault provides continuity for these tasks.
 
 ### Agent Output Rules (Defense-in-Depth)
 
@@ -204,9 +213,11 @@ Any state → PAUSED (budget exceeded)
 - `conversations` table: id, goal, state, round, max_rounds, budget_usd, spent_usd, created_at, completed_at, paused_reason
 - `tasks` table extended with: `conversation_id INTEGER REFERENCES conversations(id)`, `session_id TEXT`
 
-**Session ID strategy:**
-- Thinker: same session_id reused across all REVISE cycles (for future `-r` resume support)
-- Reviewer: fresh session_id per review task
+**Session ID strategy (implemented in Invoker):**
+- Thinker: same session_id reused across all REVISE cycles — Invoker detects prior completed task with same session_id and uses `-r` to resume
+- Reviewer: fresh session_id per review task — Invoker uses `--session-id` (first use, no prior completion)
+- Task Queue tasks: no session_id (NULL) — Invoker adds no session flag (backward compatible)
+- UUID generation: centralized `generate_uuid()` in `utils/uuid.h` (UUID v4, `snprintf`-based, `mt19937_64`)
 
 **Main loop integration:**
 - After existing output processing (vault updates, consensus, observations), the dispatch lambda checks `get_conversation_for_task(task_id)`. If the task belongs to a conversation, `conversation_engine.on_task_complete()` routes to the next state. Tasks without `conversation_id` skip this block entirely (backward compatible).
@@ -322,7 +333,8 @@ Priority order:
 11. ~~Conversation schema + CRUD~~ ✓ (ConversationRecord struct, 8 Database CRUD methods, conversations table, tasks extended with conversation_id + session_id, ALTER TABLE migration for existing DBs)
 12. ~~ConversationEngine~~ ✓ (header-only state machine in daemon/conversation.h — start, on_task_complete, resume, close; Thinker/Reviewer pipeline with revise loops, budget pause, session_id reuse)
 13. ~~Main loop integration~~ ✓ (conversation routing block in task_dispatch lambda — runs after existing output processing, backward compatible for non-conversation tasks)
-14. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
+14. ~~Session resume in Invoker~~ ✓ (reads session_id from tasks table, uses `--session-id` for first use / `-r` for resume; fallback retry on resume failure; `generate_uuid()` centralized in `utils/uuid.h`; `InvocationResult` includes session_id; verbose log shows session prefix)
+15. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 
@@ -359,6 +371,10 @@ cmake -B build && cmake --build build -j$(nproc)
 
 # Agent invocation (what the daemon spawns)
 claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" --output-format json
+
+# Agent invocation with session (conversation mode)
+claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" --session-id <uuid> --output-format json  # first use
+claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" -r <uuid> --output-format json            # resume
 
 # Smoke test (seeds tasks, runs daemon with real claude -p, validates results)
 # MUST be run from a regular terminal, NOT inside a claude session

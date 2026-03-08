@@ -2,11 +2,9 @@
 
 #include <iostream>
 #include <optional>
-#include <random>
-#include <sstream>
 #include <string>
-#include <iomanip>
 
+#include "utils/uuid.h"
 #include "storage/database.h"
 #include "agent/output_parser.h"
 
@@ -24,7 +22,7 @@ public:
     int64_t start(const std::string& goal, double budget_usd = 5.0, int max_rounds = 3) {
         auto conv_id = db_.create_conversation(goal, budget_usd, max_rounds);
 
-        auto session_id = generate_session_id();
+        auto session_id = generate_uuid();
 
         std::string prompt =
             "# Goal\n\n" + goal +
@@ -121,7 +119,7 @@ public:
 
         if (last_task_type == "think") {
             db_.update_conversation_state(conversation_id, "thinking");
-            auto session_id = last_session_id.empty() ? generate_session_id() : last_session_id;
+            auto session_id = last_session_id.empty() ? generate_uuid() : last_session_id;
             db_.execute(
                 "INSERT INTO tasks (agent, task_type, status, prompt, conversation_id, session_id) "
                 "VALUES ('thinker', 'think', 'pending', ?, ?, ?)",
@@ -133,7 +131,7 @@ public:
             );
         } else if (last_task_type == "review") {
             db_.update_conversation_state(conversation_id, "reviewing");
-            auto session_id = generate_session_id();
+            auto session_id = generate_uuid();
             db_.execute(
                 "INSERT INTO tasks (agent, task_type, status, prompt, conversation_id, session_id) "
                 "VALUES ('reviewer', 'review', 'pending', ?, ?, ?)",
@@ -173,7 +171,7 @@ private:
             const auto& prop = parsed.proposals[0];
 
             // Create reviewer task with fresh session_id
-            auto session_id = generate_session_id();
+            auto session_id = generate_uuid();
             std::string prompt =
                 "# Proposal to Review\n\nTitle: " + prop.title +
                 "\n\n" + prop.content +
@@ -239,7 +237,7 @@ private:
                     }
                 );
                 if (original_session_id.empty()) {
-                    original_session_id = generate_session_id();
+                    original_session_id = generate_uuid();
                 }
 
                 std::string prompt =
@@ -276,25 +274,6 @@ private:
         std::cout << "[conversation " << conv_id
                   << "] closed — verdict: " << verdict << "\n";
         return false;
-    }
-
-    static std::string generate_session_id() {
-        static std::random_device rd;
-        static std::mt19937 gen(rd());
-        std::uniform_int_distribution<uint32_t> dist(0, 0xFFFFFFFF);
-
-        auto r = [&]() { return dist(gen); };
-
-        std::ostringstream ss;
-        ss << std::hex << std::setfill('0');
-        uint32_t a = r(), b = r(), c = r(), d = r();
-        ss << std::setw(8) << a << "-"
-           << std::setw(4) << (b >> 16) << "-"
-           << std::setw(4) << ((b & 0x0FFF) | 0x4000) << "-"  // version 4
-           << std::setw(4) << (((c >> 16) & 0x3FFF) | 0x8000) << "-"  // variant 1
-           << std::setw(4) << (c & 0xFFFF)
-           << std::setw(8) << d;
-        return ss.str();
     }
 };
 

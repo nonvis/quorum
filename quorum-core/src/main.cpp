@@ -480,7 +480,9 @@ int main(int argc, char* argv[]) {
                 std::cout << "[dispatch] task " << task_id << " done"
                           << " — tokens_in: " << result.tokens_in
                           << " tokens_out: " << result.tokens_out
-                          << " cost: $" << result.cost << "\n";
+                          << " cost: $" << result.cost
+                          << (result.session_id.empty() ? "" : " session: " + result.session_id.substr(0, 8))
+                          << "\n";
             } else {
                 std::cout << "[dispatch] task " << task_id
                           << " failed: " << result.error << "\n";
