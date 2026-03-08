@@ -102,6 +102,11 @@ target_include_directories(test_session_resume PRIVATE src)
 target_link_libraries(test_session_resume PRIVATE SQLite::SQLite3)
 add_test(NAME test_session_resume COMMAND test_session_resume)
 
+add_executable(test_escalation tests/unit/test_escalation.cpp)
+target_include_directories(test_escalation PRIVATE src)
+target_link_libraries(test_escalation PRIVATE SQLite::SQLite3)
+add_test(NAME test_escalation COMMAND test_escalation)
+
 add_executable(test_pipeline tests/integration/test_pipeline.cpp)
 target_include_directories(test_pipeline PRIVATE src)
 target_link_libraries(test_pipeline PRIVATE SQLite::SQLite3)

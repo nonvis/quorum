@@ -206,6 +206,26 @@ public:
     }
 
 private:
+    // ── Verdict normalization ──────────────────────────────────────────────────
+
+    static std::string normalize_verdict(const std::string& raw) {
+        // Lowercase
+        std::string v;
+        v.reserve(raw.size());
+        for (auto c : raw) {
+            v += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        // Trim whitespace
+        while (!v.empty() && v.front() == ' ') v.erase(v.begin());
+        while (!v.empty() && v.back() == ' ') v.pop_back();
+        // Normalize aliases
+        if (v == "approve" || v == "approved" || v == "accept" || v == "accepted") return "approve";
+        if (v == "reject" || v == "rejected" || v == "deny" || v == "denied") return "reject";
+        if (v == "revise" || v == "revision" || v == "revision_needed" || v == "needs_revision") return "revise";
+        if (v == "escalate" || v == "escalated" || v == "needs_human" || v == "uncertain") return "escalate";
+        return "reject";  // unknown -> reject (safe default)
+    }
+
     // ── String helpers ─────────────────────────────────────────────────────────
 
     // Trim leading and trailing ASCII whitespace from a string_view.
@@ -548,8 +568,9 @@ private:
             Review r;
             r.proposal_id = bag.get_str("proposal_id");
             if (r.proposal_id.empty()) r.proposal_id = bag.get_str("proposal");
-            r.verdict     = bag.get_str("verdict");
-            if (r.verdict.empty()) r.verdict = bag.get_str("decision");
+            auto raw_verdict = bag.get_str("verdict");
+            if (raw_verdict.empty()) raw_verdict = bag.get_str("decision");
+            r.verdict = raw_verdict.empty() ? "reject" : normalize_verdict(raw_verdict);
             r.reasoning   = bag.get_str("reasoning");
             out.reviews.push_back(std::move(r));
 

@@ -202,12 +202,13 @@ INIT → THINKING → REVIEWING ──┬──→ APPROVED → DONE (Phase 0.7:
                       ▼
                     CLOSED
 
-Any state → PAUSED (budget exceeded)
+Any state → PAUSED (budget exceeded, token anomaly, consecutive failures, or agent escalation)
 ```
 
 **Key types:**
 - `ConversationRecord` — struct in `storage/database.h` (id, goal, state, round, max_rounds, budget_usd, spent_usd)
 - `ConversationEngine` — header-only class in `daemon/conversation.h`. Depends only on `Database` and `OutputParser` types. No dependency on Invoker, VaultManager, or ConsensusEngine.
+- `PauseCheck` — struct in `daemon/conversation.h` (should_pause, reason). Returned by `check_pause_conditions()`.
 
 **Database schema:**
 - `conversations` table: id, goal, state, round, max_rounds, budget_usd, spent_usd, created_at, completed_at, paused_reason
@@ -218,6 +219,18 @@ Any state → PAUSED (budget exceeded)
 - Reviewer: fresh session_id per review task — Invoker uses `--session-id` (first use, no prior completion)
 - Task Queue tasks: no session_id (NULL) — Invoker adds no session flag (backward compatible)
 - UUID generation: centralized `generate_uuid()` in `utils/uuid.h` (UUID v4, `snprintf`-based, `mt19937_64`)
+
+**Pause conditions (`check_pause_conditions()`):**
+Centralized pause check runs in `on_task_complete()` before any state transition. Four triggers:
+1. **Budget exceeded** — `spent_usd >= budget_usd` after cost update
+2. **Token anomaly** — current task's `token_in > 2x median` of all completed tasks in the conversation (skipped if no history, i.e. median == 0)
+3. **Consecutive failures** — last 2 tasks (by id DESC) for this conversation both have `status='failed'`
+4. **Agent escalation** — reviewer produces `verdict: escalate` (caught both in pre-routing check and in `handle_reviewing()` verdict dispatch)
+
+Helper methods: `get_median_input_tokens()`, `count_recent_failures()`, `get_task_token_in()` — all query the tasks table directly.
+
+**Verdict normalization (`OutputParser::normalize_verdict()`):**
+The parser normalizes REVIEW verdicts at parse time: lowercase + trim + alias mapping. Canonical values: `approve`, `reject`, `revise`, `escalate`. Unknown verdicts default to `reject` (safe). Aliases include `approved`/`accepted` -> `approve`, `rejected`/`denied` -> `reject`, `revision`/`needs_revision` -> `revise`, `escalated`/`needs_human`/`uncertain` -> `escalate`. Defense-in-depth: `handle_reviewing()` also lowercases before matching.
 
 **Main loop integration:**
 - After existing output processing (vault updates, consensus, observations), the dispatch lambda checks `get_conversation_for_task(task_id)`. If the task belongs to a conversation, `conversation_engine.on_task_complete()` routes to the next state. Tasks without `conversation_id` skip this block entirely (backward compatible).
@@ -325,16 +338,17 @@ Priority order:
 3. ~~Invoker rewrite~~ ✓ (spawns `claude -p`, captures JSON output, writes token/cost to DB)
 4. ~~SQLite task queue~~ ✓ (pending/active/done states with token tracking)
 5. ~~Context assembler~~ ✓ (vault CONTEXT.md + knowledge + inbox, output format instructions incl. OBSERVATION guidance)
-6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / OBSERVATION / SUMMARY blocks, KV + multi-line parsing, lenient block detection for heading/bold labels and first-line type fallback, language-tagged fences, content fallback for free-text blocks, field aliases for reviewer/verdict variants, VAULT_UPDATE path aliases `target:`/`file:` and bold metadata path extraction)
+6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / OBSERVATION / SUMMARY blocks, KV + multi-line parsing, lenient block detection for heading/bold labels and first-line type fallback, language-tagged fences, content fallback for free-text blocks, field aliases for reviewer/verdict variants, VAULT_UPDATE path aliases `target:`/`file:` and bold metadata path extraction, verdict normalization with alias mapping)
 7. ~~Token budget enforcement~~ ✓ (per-task cap + hourly/daily caps with rolling window)
 8. ~~Smoke test script~~ ✓ (scripts/smoke_test.sh — seeds tasks, runs daemon, validates results; includes WAL/SHM cleanup to prevent stale SQLite state)
 9. ~~End-to-end dispatch verified~~ ✓ (daemon claims pending tasks, invokes `claude -p`, writes results back to DB)
 10. ~~Knowledge pipeline wired~~ ✓ (OBSERVATION blocks parsed → InboxWriter → `data/knowledge/inbox/`; PROCESSING.md for synthesis agent; all 4 agent CONTEXT.md files updated with OBSERVATION block format)
 11. ~~Conversation schema + CRUD~~ ✓ (ConversationRecord struct, 8 Database CRUD methods, conversations table, tasks extended with conversation_id + session_id, ALTER TABLE migration for existing DBs)
-12. ~~ConversationEngine~~ ✓ (header-only state machine in daemon/conversation.h — start, on_task_complete, resume, close; Thinker/Reviewer pipeline with revise loops, budget pause, session_id reuse)
+12. ~~ConversationEngine~~ ✓ (header-only state machine in daemon/conversation.h — start, on_task_complete, resume, close; Thinker/Reviewer pipeline with revise loops, multi-trigger pause system, escalation protocol, session_id reuse)
 13. ~~Main loop integration~~ ✓ (conversation routing block in task_dispatch lambda — runs after existing output processing, backward compatible for non-conversation tasks)
 14. ~~Session resume in Invoker~~ ✓ (reads session_id from tasks table, uses `--session-id` for first use / `-r` for resume; fallback retry on resume failure; `generate_uuid()` centralized in `utils/uuid.h`; `InvocationResult` includes session_id; verbose log shows session prefix)
-15. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
+15. ~~Pause conditions + escalation~~ ✓ (centralized `check_pause_conditions()` with 4 triggers: budget exceeded, token anomaly >2x median, 2+ consecutive failures, agent escalation verdict; `PauseCheck` struct; `normalize_verdict()` in OutputParser maps aliases to canonical values; "escalate" verdict in handle_reviewing; agent CONTEXT.md files updated with REVIEW Verdicts section)
+16. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 

@@ -1,8 +1,10 @@
 #pragma once
 
+#include <algorithm>
 #include <iostream>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "utils/uuid.h"
 #include "storage/database.h"
@@ -12,6 +14,11 @@ namespace sui::quorum {
 
 enum class ConvState {
     init, thinking, reviewing, approved, executing, evaluating, done, closed, paused
+};
+
+struct PauseCheck {
+    bool should_pause{false};
+    std::string reason;
 };
 
 class ConversationEngine {
@@ -60,14 +67,24 @@ public:
         // Update spent
         db_.update_conversation_spent(conv_id, task_cost);
 
-        // Re-read for budget check
-        conv = db_.get_conversation(conv_id);
-        if (!conv) return false;
-        if (conv->spent_usd >= conv->budget_usd) {
-            std::string reason = "budget exceeded: $" + std::to_string(conv->spent_usd);
-            db_.pause_conversation(conv_id, reason);
-            std::cout << "[conversation " << conv_id << "] paused — " << reason << "\n";
+        // Check all pause conditions BEFORE state transition
+        auto pause = check_pause_conditions(conv_id, task_id, task_cost);
+        if (pause.should_pause) {
+            db_.pause_conversation(conv_id, pause.reason);
+            std::cout << "[conversation " << conv_id << "] paused — " << pause.reason << "\n";
             return false;
+        }
+
+        // Check for agent-initiated escalation (verdict == "escalate")
+        for (const auto& review : parsed.reviews) {
+            std::string v = review.verdict;
+            for (auto& c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (v == "escalate") {
+                std::string reason = "agent escalation: " + review.reasoning;
+                db_.pause_conversation(conv_id, reason);
+                std::cout << "[conversation " << conv_id << "] paused — " << reason << "\n";
+                return false;
+            }
         }
 
         // Route based on current state
@@ -176,7 +193,7 @@ private:
                 "# Proposal to Review\n\nTitle: " + prop.title +
                 "\n\n" + prop.content +
                 "\n\n---\n\nReview this proposal. Respond with a REVIEW block. "
-                "Use verdict: approve, revise, or reject.\n";
+                "Use verdict: approve, revise, reject, or escalate.\n";
 
             db_.execute(
                 "INSERT INTO tasks (agent, task_type, status, prompt, conversation_id, session_id) "
@@ -269,11 +286,93 @@ private:
             return false;
         }
 
+        if (verdict == "escalate") {
+            db_.pause_conversation(conv_id, "agent escalation: " + reasoning);
+            std::cout << "[conversation " << conv_id
+                      << "] paused — agent requested escalation\n";
+            return false;
+        }
+
         // reject or anything else
         db_.update_conversation_state(conv_id, "closed");
         std::cout << "[conversation " << conv_id
                   << "] closed — verdict: " << verdict << "\n";
         return false;
+    }
+
+    // ── Pause condition helpers ──────────────────────────────────────────────
+
+    int64_t get_median_input_tokens(int64_t conv_id) {
+        std::vector<int64_t> tokens;
+        db_.query(
+            "SELECT token_in FROM tasks WHERE conversation_id = ? AND token_in IS NOT NULL ORDER BY token_in",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, conv_id);
+            },
+            [&](sqlite3_stmt* stmt) {
+                tokens.push_back(sqlite3_column_int64(stmt, 0));
+            }
+        );
+        if (tokens.empty()) return 0;
+        return tokens[tokens.size() / 2];
+    }
+
+    int count_recent_failures(int64_t conv_id, int n) {
+        int count = 0;
+        db_.query(
+            "SELECT status FROM tasks WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, conv_id);
+                sqlite3_bind_int(stmt, 2, n);
+            },
+            [&](sqlite3_stmt* stmt) {
+                auto s = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                if (s && std::string(s) == "failed") ++count;
+            }
+        );
+        return count;
+    }
+
+    int64_t get_task_token_in(int64_t task_id) {
+        int64_t tokens = 0;
+        db_.query(
+            "SELECT token_in FROM tasks WHERE id = ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, task_id);
+            },
+            [&](sqlite3_stmt* stmt) {
+                if (sqlite3_column_type(stmt, 0) != SQLITE_NULL)
+                    tokens = sqlite3_column_int64(stmt, 0);
+            }
+        );
+        return tokens;
+    }
+
+    PauseCheck check_pause_conditions(int64_t conv_id, int64_t task_id, double task_cost) {
+        auto conv = db_.get_conversation(conv_id);
+        if (!conv) return {true, "conversation not found"};
+
+        // 1. Budget exceeded (post-spend check)
+        if (conv->spent_usd >= conv->budget_usd) {
+            return {true, "budget exceeded: $" + std::to_string(conv->spent_usd)
+                         + " >= $" + std::to_string(conv->budget_usd)};
+        }
+
+        // 2. Token anomaly: current task's token_in > 2x median
+        auto current_tokens = get_task_token_in(task_id);
+        auto median = get_median_input_tokens(conv_id);
+        if (median > 0 && current_tokens > median * 2) {
+            return {true, "token anomaly: " + std::to_string(current_tokens)
+                         + " tokens (median: " + std::to_string(median) + ")"};
+        }
+
+        // 3. Consecutive failures (2+)
+        auto failures = count_recent_failures(conv_id, 2);
+        if (failures >= 2) {
+            return {true, "consecutive failures: " + std::to_string(failures)};
+        }
+
+        return {false, ""};
     }
 };
 

@@ -748,6 +748,66 @@ static void test_vault_path_reset_across_blocks() {
           "reset: second path is empty (pending_path cleared)");
 }
 
+// ─── verdict normalization tests ─────────────────────────────────────────────
+
+static void test_verdict_normalization() {
+    sui::quorum::OutputParser parser;
+
+    auto make_review = [&](const std::string& verdict_str) -> std::string {
+        return "```REVIEW\n"
+               "proposal_id: test-001\n"
+               "verdict: " + verdict_str + "\n"
+               "reasoning: test reasoning\n"
+               "```\n";
+    };
+
+    // approve aliases
+    auto r1 = parser.parse(make_review("approve"));
+    check(r1.reviews[0].verdict == "approve", "verdict: approve -> approve");
+    auto r2 = parser.parse(make_review("Approved"));
+    check(r2.reviews[0].verdict == "approve", "verdict: Approved -> approve");
+    auto r3 = parser.parse(make_review("ACCEPT"));
+    check(r3.reviews[0].verdict == "approve", "verdict: ACCEPT -> approve");
+
+    // reject aliases
+    auto r4 = parser.parse(make_review("reject"));
+    check(r4.reviews[0].verdict == "reject", "verdict: reject -> reject");
+    auto r5 = parser.parse(make_review("Rejected"));
+    check(r5.reviews[0].verdict == "reject", "verdict: Rejected -> reject");
+    auto r6 = parser.parse(make_review("DENIED"));
+    check(r6.reviews[0].verdict == "reject", "verdict: DENIED -> reject");
+
+    // revise aliases
+    auto r7 = parser.parse(make_review("revise"));
+    check(r7.reviews[0].verdict == "revise", "verdict: revise -> revise");
+    auto r8 = parser.parse(make_review("Revision"));
+    check(r8.reviews[0].verdict == "revise", "verdict: Revision -> revise");
+    auto r9 = parser.parse(make_review("needs_revision"));
+    check(r9.reviews[0].verdict == "revise", "verdict: needs_revision -> revise");
+
+    // escalate aliases
+    auto r10 = parser.parse(make_review("escalate"));
+    check(r10.reviews[0].verdict == "escalate", "verdict: escalate -> escalate");
+    auto r11 = parser.parse(make_review("Escalated"));
+    check(r11.reviews[0].verdict == "escalate", "verdict: Escalated -> escalate");
+    auto r12 = parser.parse(make_review("needs_human"));
+    check(r12.reviews[0].verdict == "escalate", "verdict: needs_human -> escalate");
+    auto r13 = parser.parse(make_review("uncertain"));
+    check(r13.reviews[0].verdict == "escalate", "verdict: uncertain -> escalate");
+
+    // unknown -> reject (safe default)
+    auto r14 = parser.parse(make_review("gibberish"));
+    check(r14.reviews[0].verdict == "reject", "verdict: gibberish -> reject");
+
+    // empty verdict -> reject
+    auto r15 = parser.parse("```REVIEW\nproposal_id: test-001\nreasoning: no verdict\n```\n");
+    check(r15.reviews[0].verdict == "reject", "verdict: (empty) -> reject");
+
+    // whitespace handling
+    auto r16 = parser.parse(make_review("  approve  "));
+    check(r16.reviews[0].verdict == "approve", "verdict: '  approve  ' -> approve");
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -795,6 +855,9 @@ int main() {
     test_vault_path_inside_overrides_above();
     test_vault_path_no_leak_to_non_vault();
     test_vault_path_reset_across_blocks();
+
+    // Verdict normalization tests
+    test_verdict_normalization();
 
     std::cout << "\nAll tests passed.\n";
     return 0;
