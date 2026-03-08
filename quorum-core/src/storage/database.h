@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <iostream>
@@ -10,6 +11,16 @@
 #include <sqlite3.h>
 
 namespace sui::quorum {
+
+struct ConversationRecord {
+    int64_t id{0};
+    std::string goal;
+    std::string state;
+    int round{0};
+    int max_rounds{3};
+    double budget_usd{5.0};
+    double spent_usd{0.0};
+};
 
 class Database {
 public:
@@ -40,6 +51,113 @@ public:
     [[nodiscard]] int64_t last_insert_id() {
         std::lock_guard<std::mutex> lock(mutex_);
         return sqlite3_last_insert_rowid(db_);
+    }
+
+    // ── Conversation CRUD ──────────────────────────────────────────────────
+
+    int64_t create_conversation(const std::string& goal, double budget_usd, int max_rounds) {
+        execute(
+            "INSERT INTO conversations (goal, state, round, max_rounds, budget_usd) "
+            "VALUES (?, 'init', 0, ?, ?)",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_text(stmt, 1, goal.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_int(stmt, 2, max_rounds);
+                sqlite3_bind_double(stmt, 3, budget_usd);
+            }
+        );
+        return last_insert_id();
+    }
+
+    void update_conversation_state(int64_t conv_id, const std::string& state) {
+        execute(
+            "UPDATE conversations SET state = ? WHERE id = ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_text(stmt, 1, state.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_int64(stmt, 2, conv_id);
+            }
+        );
+    }
+
+    void update_conversation_round(int64_t conv_id, int round) {
+        execute(
+            "UPDATE conversations SET round = ? WHERE id = ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int(stmt, 1, round);
+                sqlite3_bind_int64(stmt, 2, conv_id);
+            }
+        );
+    }
+
+    void update_conversation_spent(int64_t conv_id, double additional_cost) {
+        execute(
+            "UPDATE conversations SET spent_usd = spent_usd + ? WHERE id = ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_double(stmt, 1, additional_cost);
+                sqlite3_bind_int64(stmt, 2, conv_id);
+            }
+        );
+    }
+
+    void pause_conversation(int64_t conv_id, const std::string& reason) {
+        execute(
+            "UPDATE conversations SET state = 'paused', paused_reason = ? WHERE id = ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_text(stmt, 1, reason.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_int64(stmt, 2, conv_id);
+            }
+        );
+    }
+
+    void complete_conversation(int64_t conv_id) {
+        execute(
+            "UPDATE conversations SET state = 'done', completed_at = datetime('now') WHERE id = ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, conv_id);
+            }
+        );
+    }
+
+    [[nodiscard]] std::optional<ConversationRecord> get_conversation(int64_t conv_id) {
+        ConversationRecord rec;
+        bool found = false;
+        query(
+            "SELECT id, goal, state, round, max_rounds, budget_usd, spent_usd "
+            "FROM conversations WHERE id = ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, conv_id);
+            },
+            [&](sqlite3_stmt* stmt) {
+                found = true;
+                rec.id = sqlite3_column_int64(stmt, 0);
+                auto g = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+                rec.goal = g ? g : "";
+                auto s = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+                rec.state = s ? s : "";
+                rec.round = sqlite3_column_int(stmt, 3);
+                rec.max_rounds = sqlite3_column_int(stmt, 4);
+                rec.budget_usd = sqlite3_column_double(stmt, 5);
+                rec.spent_usd = sqlite3_column_double(stmt, 6);
+            }
+        );
+        return found ? std::optional{rec} : std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<int64_t> get_conversation_for_task(int64_t task_id) {
+        int64_t conv_id = 0;
+        bool found = false;
+        query(
+            "SELECT conversation_id FROM tasks WHERE id = ? AND conversation_id IS NOT NULL",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, task_id);
+            },
+            [&](sqlite3_stmt* stmt) {
+                if (sqlite3_column_type(stmt, 0) != SQLITE_NULL) {
+                    found = true;
+                    conv_id = sqlite3_column_int64(stmt, 0);
+                }
+            }
+        );
+        return found ? std::optional{conv_id} : std::nullopt;
     }
 
     // Execute with return value indicating success

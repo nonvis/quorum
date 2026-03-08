@@ -87,6 +87,11 @@ add_executable(test_inbox_writer tests/unit/test_inbox_writer.cpp)
 target_include_directories(test_inbox_writer PRIVATE src)
 add_test(NAME test_inbox_writer COMMAND test_inbox_writer)
 
+add_executable(test_database tests/unit/test_database.cpp)
+target_include_directories(test_database PRIVATE src)
+target_link_libraries(test_database PRIVATE SQLite::SQLite3)
+add_test(NAME test_database COMMAND test_database)
+
 add_executable(test_pipeline tests/integration/test_pipeline.cpp)
 target_include_directories(test_pipeline PRIVATE src)
 target_link_libraries(test_pipeline PRIVATE SQLite::SQLite3)

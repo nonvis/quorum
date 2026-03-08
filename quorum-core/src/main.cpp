@@ -90,6 +90,20 @@ static void init_schema(sui::quorum::Database& db) {
     );
     sui::quorum::ConsensusEngine::init_schema(db);
     db.execute(
+        "CREATE TABLE IF NOT EXISTS conversations ("
+        "  id INTEGER PRIMARY KEY,"
+        "  goal TEXT NOT NULL,"
+        "  state TEXT NOT NULL DEFAULT 'init',"
+        "  round INTEGER NOT NULL DEFAULT 0,"
+        "  max_rounds INTEGER NOT NULL DEFAULT 3,"
+        "  budget_usd REAL NOT NULL DEFAULT 5.0,"
+        "  spent_usd REAL NOT NULL DEFAULT 0.0,"
+        "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
+        "  completed_at TEXT,"
+        "  paused_reason TEXT"
+        ")"
+    );
+    db.execute(
         "CREATE TABLE IF NOT EXISTS tasks ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "  agent TEXT NOT NULL,"
@@ -103,7 +117,9 @@ static void init_schema(sui::quorum::Database& db) {
         "  error TEXT,"
         "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
         "  started_at TEXT,"
-        "  completed_at TEXT"
+        "  completed_at TEXT,"
+        "  conversation_id INTEGER REFERENCES conversations(id),"
+        "  session_id TEXT"
         ")"
     );
     db.execute(
@@ -112,6 +128,10 @@ static void init_schema(sui::quorum::Database& db) {
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(agent)"
     );
+    // For existing databases: add conversation columns to tasks.
+    // Errors silently if columns already exist (exec_raw logs + continues).
+    db.execute("ALTER TABLE tasks ADD COLUMN conversation_id INTEGER REFERENCES conversations(id)");
+    db.execute("ALTER TABLE tasks ADD COLUMN session_id TEXT");
 }
 
 // Insert a new task into the queue. Returns the task id.
