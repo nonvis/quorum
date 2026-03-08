@@ -42,7 +42,8 @@ consensus:
   human_escalation: true
 
 budget:
-  max_concurrent: 2             # max parallel claude -p processes
+  # Sequential execution enforced — one task at a time, always.
+  # No max_concurrent setting. This is a design decision, not a configuration.
   daily_limit_usd: 10.0         # pause dispatch when exceeded
   hourly_limit_usd: 3.0         # pause dispatch when exceeded
   task_timeout_seconds: 300     # kill claude -p after 5 minutes

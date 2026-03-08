@@ -343,29 +343,34 @@ static void test_full_pipeline() {
     cleanup();
 }
 
-// ─── Test G: Parallelism check (criterion 6) ────────────────────────────────
+// ─── Test G: Sequential dispatch (criterion 6) ──────────────────────────────
 
-static void test_parallelism_check() {
-    std::cout << "\n=== G. Parallelism Check ===\n\n";
+static void test_sequential_dispatch() {
+    std::cout << "\n=== G. Sequential Dispatch ===\n\n";
 
     sui::quorum::Database db(":memory:");
     init_tasks_table(db);
 
-    // Insert 3 active tasks
-    for (int i = 0; i < 3; ++i) {
-        db.execute(
-            "INSERT INTO tasks (agent, task_type, status, prompt) "
-            "VALUES ('test', 'scan', 'active', 'running task')"
-        );
-    }
+    // No active tasks — dispatch should proceed
+    auto active0 = db.query_int("SELECT COUNT(*) FROM tasks WHERE status = 'active'");
+    check(active0 == 0, "G: 0 active tasks — dispatch allowed");
 
-    auto active = db.query_int("SELECT COUNT(*) FROM tasks WHERE status = 'active'");
-    check(active == 3, "G: 3 active tasks counted");
+    // Insert 1 active task — dispatch should block
+    db.execute(
+        "INSERT INTO tasks (agent, task_type, status, prompt) "
+        "VALUES ('test', 'scan', 'active', 'running task')"
+    );
+    auto active1 = db.query_int("SELECT COUNT(*) FROM tasks WHERE status = 'active'");
+    check(active1 == 1, "G: 1 active task counted");
+    check(active1 > 0, "G: sequential gate blocks (active > 0)");
 
-    // Verify gate logic: active >= max_concurrent should block dispatch
-    uint64_t max_concurrent = 2;
-    check(active >= static_cast<int64_t>(max_concurrent),
-          "G: parallelism gate would block (3 >= 2)");
+    // Insert more active tasks — still blocks (same condition)
+    db.execute(
+        "INSERT INTO tasks (agent, task_type, status, prompt) "
+        "VALUES ('test', 'scan', 'active', 'running task 2')"
+    );
+    auto active2 = db.query_int("SELECT COUNT(*) FROM tasks WHERE status = 'active'");
+    check(active2 > 0, "G: sequential gate still blocks with 2 active");
 }
 
 // ─── main ────────────────────────────────────────────────────────────────────
@@ -379,7 +384,7 @@ int main() {
     test_consensus_explicit_escalate();
     test_consensus_duplicate_review();
     test_full_pipeline();
-    test_parallelism_check();
+    test_sequential_dispatch();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)
               << " tests passed ---\n";

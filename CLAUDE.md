@@ -130,11 +130,15 @@ Agents must produce structured blocks (VAULT_UPDATE, OBSERVATION, PROPOSAL, SUMM
 
 Template for new agents: `docs/CONTEXT_TEMPLATE.md`.
 
-### Parallelism Control
+### Sequential Dispatch
 
-- Max concurrent `claude -p` processes: configurable (default 2-3)
-- Per-task token cap: kills process if exceeded
-- Global daily budget: daemon pauses all invocations when hit
+The daemon enforces strictly sequential execution — one `claude -p` task at a time, always. This is a design decision, not a configuration:
+
+- **One task at a time** — dispatch blocks while any task is active (`active > 0`)
+- **No `max_concurrent` setting** — removed from `BudgetConfig` and `quorum.yaml`
+- **Per-task token cap** — kills process if exceeded
+- **Global daily/hourly budget** — daemon pauses all invocations when hit
+- **Rationale:** causal traceability (task B depends on task A's vault updates), budget predictability, session resume chaining, deterministic debugging
 - Critical for unattended overnight runs
 
 ### Proposal State Machine
@@ -348,7 +352,8 @@ Priority order:
 13. ~~Main loop integration~~ ✓ (conversation routing block in task_dispatch lambda — runs after existing output processing, backward compatible for non-conversation tasks)
 14. ~~Session resume in Invoker~~ ✓ (reads session_id from tasks table, uses `--session-id` for first use / `-r` for resume; fallback retry on resume failure; `generate_uuid()` centralized in `utils/uuid.h`; `InvocationResult` includes session_id; verbose log shows session prefix)
 15. ~~Pause conditions + escalation~~ ✓ (centralized `check_pause_conditions()` with 4 triggers: budget exceeded, token anomaly >2x median, 2+ consecutive failures, agent escalation verdict; `PauseCheck` struct; `normalize_verdict()` in OutputParser maps aliases to canonical values; "escalate" verdict in handle_reviewing; agent CONTEXT.md files updated with REVIEW Verdicts section)
-16. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
+16. ~~Sequential dispatch enforcement~~ ✓ (removed `max_concurrent` from BudgetConfig/config parser/quorum.yaml; dispatch gate changed from `active >= max_concurrent` to `active > 0`; design decision, not configuration; test_pipeline updated from parallelism gate to sequential dispatch test)
+17. **`quorum status` CLI** — check overnight run results (tasks completed, tokens spent, errors)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 

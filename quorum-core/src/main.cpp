@@ -350,7 +350,7 @@ int main(int argc, char* argv[]) {
     std::cout << "  Data dir:   " << cfg.daemon.data_dir << "\n";
     std::cout << "  Log level:  " << cfg.daemon.log_level << "\n";
     std::cout << "  Agents:     " << cfg.agents.size() << "\n";
-    std::cout << "  Max parallel: " << cfg.budget.max_concurrent << "\n";
+    std::cout << "  Dispatch:   sequential (one task at a time)\n";
     std::cout << "  Daily budget: $" << cfg.budget.daily_limit_usd << "\n";
 
     // Signal handlers
@@ -459,10 +459,10 @@ int main(int argc, char* argv[]) {
             return;
         }
 
-        // Check parallelism
+        // Sequential dispatch: one task at a time
         auto active = count_active_tasks(db);
-        if (active >= static_cast<int64_t>(cfg.budget.max_concurrent)) {
-            return;  // at capacity
+        if (active > 0) {
+            return;  // sequential — wait for current task to complete
         }
 
         // Claim and dispatch
