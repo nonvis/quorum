@@ -4,9 +4,9 @@
 
 Quorum is a **multi-agent orchestration framework**. A deterministic C++20 daemon orchestrates independent AI agents that coordinate through structured proposals and persist knowledge in local vaults.
 
-**Current phase: Phase 0 — Pure local orchestration.** No blockchain, no Walrus, no Seal. Everything runs on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) will be added in later phases after the core orchestration loop is proven.
+**Current phase: Phase 0.7 — Conversation Mode.** Pure local orchestration on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) are deferred indefinitely.
 
-**Tagline:** "Your AI agents now have verifiable memory and auditable decisions."
+**Tagline:** "Define your agents, point them at your project, let the daemon run."
 
 ## Repo Layout
 
@@ -283,20 +283,22 @@ auto result = db.query("SELECT * FROM metrics WHERE agent = ?", agent_id);
 ### Config Pattern
 
 ```yaml
-# configs/quorum.yaml — daemon config
+# configs/quorum.yaml — daemon config (key sections)
 daemon:
   pid_file: /tmp/quorum.pid
   data_dir: ./data
   log_level: info
 
-chain:
-  network: testnet          # testnet | mainnet
-  rpc_url: https://fullnode.testnet.sui.io:443
-  package_id: "0x..."
+budget:
+  daily_limit_usd: 10.0
+  hourly_limit_usd: 3.0
+  task_timeout_seconds: 300
 
-walrus:
-  aggregator_url: https://aggregator.walrus-testnet.walrus.space
-  publisher_url: https://publisher.walrus-testnet.walrus.space
+conversations:
+  enabled: true
+  default_max_rounds: 3         # max T->R revision cycles per conversation
+  default_budget_usd: 5.0       # per-conversation budget cap
+  human_gate: true               # require operator approval before executor (Phase 0.9)
 
 agents:
   - config: configs/agents/market_analyst.yaml
@@ -304,6 +306,18 @@ agents:
   - config: configs/agents/engineer.yaml
   - config: configs/agents/operator.yaml
 ```
+
+### Agent YAML Pattern
+
+```yaml
+# configs/agents/<agent>.yaml — agent config
+id: market_analyst
+agent_class: analyst    # analyst = read-only tools, no Write/Edit/NotebookEdit
+name: "Market Analyst"
+# ... schedule, triggers, context_budget, boundaries
+```
+
+Agent classes: `analyst` (read-only, Phase 0), `executor` (full tool access, Phase 0.9). The `agent_class` field is informational only in Phase 0.7 — the invoker does not read it yet.
 
 ## Move Contract Conventions (Deferred — Phase 1+)
 
@@ -355,6 +369,8 @@ Priority order:
 16. ~~Sequential dispatch enforcement~~ ✓ (removed `max_concurrent` from BudgetConfig/config parser/quorum.yaml; dispatch gate changed from `active >= max_concurrent` to `active > 0`; design decision, not configuration; test_pipeline updated from parallelism gate to sequential dispatch test)
 17. ~~CLI subcommands~~ ✓ (`converse`, `status`, `resume`, `close` subcommands in main.cpp — two-phase arg parser, early-exit for status/close without PID lock, graceful PID lock fallback for converse/resume when daemon already running, `print_conversations()` for status display)
 18. ~~Conversation pipeline integration test~~ ✓ (`tests/integration/test_conversation_pipeline.cpp` — 9 tests, 34 assertions, exercises full state machine end-to-end without `claude -p`: happy path, revise with session reuse, max rounds exhaustion, budget pause, consecutive failures pause, agent escalation pause, resume from paused, operator close, reject close; all 11 ctest targets pass)
+19. ~~ConversationConfig~~ ✓ (`ConversationConfig` struct in `config.h` with `enabled`, `default_max_rounds`, `default_budget_usd`, `human_gate`; parsed from `conversations:` section in `quorum.yaml`; CLI `--budget`/`--max-rounds` use sentinel values, resolved to config defaults after load; startup banner shows conversation settings)
+20. ~~Agent class + terminology~~ ✓ (`agent_class: analyst` added to all 4 agent YAMLs; execution mode comments in `quorum.yaml`; dispatch comment in `main.cpp` updated for dual-mode awareness; `DEVELOPMENT.md` and `README.md` rewritten for local-first positioning; `Makefile` header updated)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 

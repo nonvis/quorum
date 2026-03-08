@@ -4,6 +4,7 @@
 # Looks at RUNTIME — processes, logs, configs, health.
 
 id: operator
+agent_class: analyst    # analyst = read-only tools, no Write/Edit/NotebookEdit
 name: "Operator"
 description: "Deployment and monitoring — processes, configs, incidents"
 

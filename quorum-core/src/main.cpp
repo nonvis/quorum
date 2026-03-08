@@ -398,8 +398,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Parse subcommand-specific flags
-    double conv_budget = 5.0;
-    int conv_max_rounds = 3;
+    double conv_budget = -1.0;        // sentinel — will use config default
+    int conv_max_rounds = -1;         // sentinel — will use config default
     int64_t conv_id_arg = 0;
     std::string goal_text;
 
@@ -438,6 +438,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     auto& cfg = *cfg_opt;
+
+    // Apply conversation defaults from config (sentinels -> config values)
+    if (conv_budget < 0) conv_budget = cfg.conversations.default_budget_usd;
+    if (conv_max_rounds < 0) conv_max_rounds = cfg.conversations.default_max_rounds;
 
     // Ensure data directory exists
     fs::create_directories(cfg.daemon.data_dir);
@@ -484,6 +488,12 @@ int main(int argc, char* argv[]) {
     std::cout << "  Agents:     " << cfg.agents.size() << "\n";
     std::cout << "  Dispatch:   sequential (one task at a time)\n";
     std::cout << "  Daily budget: $" << cfg.budget.daily_limit_usd << "\n";
+    std::cout << "  Conversations: "
+              << (cfg.conversations.enabled ? "enabled" : "disabled")
+              << " (budget: $" << cfg.conversations.default_budget_usd
+              << ", max_rounds: " << cfg.conversations.default_max_rounds
+              << ", human_gate: " << (cfg.conversations.human_gate ? "on" : "off")
+              << ")\n";
 
     if (verbose) {
         std::cout << "  Database:   " << db_path << " (OK)\n";
@@ -610,7 +620,9 @@ int main(int argc, char* argv[]) {
         }
     });
 
-    // Task dispatch: check for pending tasks and invoke them
+    // Task dispatch: check for pending tasks and invoke them.
+    // Handles both Task Queue tasks (operator-seeded) and
+    // Conversation tasks (daemon-created via ConversationEngine).
     scheduler.add("task_dispatch", 5, [&]() {
         // Check budget
         auto cost_d = daily_cost(db);

@@ -4,6 +4,7 @@
 # Looks at CODE — architecture, latency, safety rails.
 
 id: engineer
+agent_class: analyst    # analyst = read-only tools, no Write/Edit/NotebookEdit
 name: "Engineer"
 description: "Implementation — C++ architecture, safety, code quality"
 

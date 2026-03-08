@@ -65,6 +65,13 @@ struct BudgetConfig {
     uint64_t task_timeout_seconds = 300; // kill claude -p after this
 };
 
+struct ConversationConfig {
+    bool enabled = true;
+    int default_max_rounds = 3;
+    double default_budget_usd = 5.0;
+    bool human_gate = true;    // Phase 0.9: require operator approval before executor runs
+};
+
 struct AgentRef {
     std::string config_path;
 };
@@ -77,6 +84,7 @@ struct QuorumConfig {
     InferenceConfig inference;
     ConsensusConfig consensus;
     BudgetConfig budget;
+    ConversationConfig conversations;
     std::vector<AgentRef> agents;
 };
 
@@ -211,6 +219,15 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
             } else if (key == "task_timeout_seconds") {
                 try { cfg.budget.task_timeout_seconds = std::stoull(val); } catch (...) {}
             }
+        } else if (section == "conversations") {
+            if (key == "enabled") cfg.conversations.enabled = (val == "true");
+            else if (key == "default_max_rounds") {
+                try { cfg.conversations.default_max_rounds = std::stoi(val); } catch (...) {}
+            }
+            else if (key == "default_budget_usd") {
+                try { cfg.conversations.default_budget_usd = std::stod(val); } catch (...) {}
+            }
+            else if (key == "human_gate") cfg.conversations.human_gate = (val == "true");
         }
     }
 

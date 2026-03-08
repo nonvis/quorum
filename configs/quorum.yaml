@@ -48,6 +48,17 @@ budget:
   hourly_limit_usd: 3.0         # pause dispatch when exceeded
   task_timeout_seconds: 300     # kill claude -p after 5 minutes
 
+conversations:
+  enabled: true
+  default_max_rounds: 3           # max T->R revision cycles per conversation
+  default_budget_usd: 5.0         # per-conversation budget cap
+  human_gate: true                # require operator approval before executor (Phase 0.9)
+
+# Execution modes:
+#   Task Queue   — operator seeds tasks, agents execute (Phase 0.5)
+#   Conversation — daemon seeds tasks from goal, T/D/R pipeline (Phase 0.7)
+# See: 01_Projects/Quorum/12 - Execution Modes.md
+
 agents:
   - config: configs/agents/market_analyst.yaml
   - config: configs/agents/bot_analyst.yaml

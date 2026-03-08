@@ -4,6 +4,7 @@
 # Looks INWARD — P&L, fill rates, parameter experiments.
 
 id: bot_analyst
+agent_class: analyst    # analyst = read-only tools, no Write/Edit/NotebookEdit
 name: "Bot Analyst"
 description: "Internal performance analysis — P&L, parameters, experiments"
 

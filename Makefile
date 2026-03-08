@@ -1,4 +1,4 @@
-# Quorum — Verifiable Multi-Agent Orchestration on Sui Stack
+# Quorum — Multi-Domain Agent Orchestration Daemon
 # ============================================================
 
 .PHONY: init build clean test deploy-contracts help
@@ -15,7 +15,7 @@ SUI_NETWORK  := testnet
 # ── Help ─────────────────────────────────────────────────────
 
 help: ## Show this help
-	@echo "Quorum — Verifiable Multi-Agent Orchestration"
+	@echo "Quorum — Multi-Domain Agent Orchestration"
 	@echo ""
 	@echo "Usage: make <target>"
 	@echo ""

@@ -1,94 +1,79 @@
 # Quorum
 
-**Verifiable Multi-Agent Orchestration on Sui Stack**
+**Multi-Domain Agent Orchestration Daemon**
 
-> Your AI agents now have verifiable memory and auditable decisions.
+> Define your agents, point them at your project, let the daemon run.
 
-Quorum is a domain-specialized multi-agent orchestration framework where independent AI agents coordinate through structured proposals, persist knowledge on [Walrus](https://walrus.site), record decisions on [Sui](https://sui.io), and enforce access control via [Seal](https://docs.seal.mystenlabs.com).
+A deterministic C++20 daemon that orchestrates AI agents across different project types. Same framework for trading bots, infrastructure monitoring, development workflows, or anything with ongoing operations.
 
-## What Makes Quorum Different
+## How It Works
 
-Every existing multi-agent framework (CrewAI, LangGraph, AG2) operates on implicit trust — you trust that agent memory is accurate, that decisions were fair, that audit logs haven't been tampered with.
+1. **You define agents** — YAML configs + CONTEXT.md files that tell each agent what to look at
+2. **You seed a goal** — `quorum_daemon converse "Analyze adverse selection and propose a fix"`
+3. **The daemon drives the pipeline** — Thinker proposes -> Reviewer validates -> (Executor implements)
+4. **Agents accumulate knowledge** — each agent has a persistent vault (filesystem markdown)
 
-Quorum replaces trust with cryptographic verification:
-
-- **Agent knowledge** → Walrus (content-addressed, versioned, encrypted)
-- **Decisions** → Sui on-chain (tamper-proof, atomic via PTB)
-- **Access control** → Seal (threshold encryption, Move-defined policies)
-- **Orchestration** → Deterministic C++ daemon (zero LLM in the control loop)
+The daemon is 100% deterministic. No LLM in the control loop. LLMs only run in agent invocations via `claude -p` subprocesses.
 
 ## Architecture
 
 ```
-Orchestrator Daemon (C++20, deterministic, no LLM)
-    │
-    ├── Scheduler (cron / timer / event)
-    ├── Router (static rules)
-    ├── Consensus Engine (proposal state machine)
-    └── Event Dispatcher (file watch / DB triggers / chain events)
-         │
-    ┌────┴────┐
-    │ Agents  │  ← LLM calls happen here (Tier 1: local, Tier 2: frontier)
-    └────┬────┘
-         │
-    Local Layer ─── SQLite metrics, tmp workspace
-    Walrus Layer ── Vault blobs, snapshots, Seal-encrypted data
-    Sui Layer ───── Proposal objects, agent identities, audit log
+Orchestrator Daemon (C++20, deterministic)
+    |
+    |-- Conversation Engine (T/D/R state machine)
+    |-- Consensus Engine (proposal lifecycle)
+    |-- Scheduler (periodic dispatch)
+    +-- Budget Enforcer (hourly/daily/per-conversation caps)
+         |
+    +----+----+
+    | Agents  |  <- claude -p subprocesses (LLM here only)
+    +----+----+
+         |
+    SQLite --- task queue, conversations, proposals
+    Vaults --- CONTEXT.md + knowledge/ per agent (filesystem)
 ```
 
 ## Quick Start
 
 ```bash
-# Install dependencies (macOS)
-brew install openssl@3 sqlite yaml-cpp
+# Dependencies (macOS)
+brew install openssl@3 sqlite
 
-# Build C++ daemon
-cd quorum-core
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(sysctl -n hw.ncpu)
+# Build
+make build
 
-# Run daemon
-./build/quorum_daemon --config ../configs/quorum.yaml
+# Start a conversation
+./build/quorum_daemon --config configs/quorum.yaml converse "Analyze mm-bot spread performance"
 
-# Run with verbose logging
-./build/quorum_daemon --config ../configs/quorum.yaml --verbose
+# Check status
+./build/quorum_daemon --config configs/quorum.yaml status
 
-# Deploy Move contracts (from repo root)
-cd quorum-contracts && sui move build && sui client publish --gas-budget 100000000
+# Start daemon only (Task Queue mode — seed tasks separately)
+make run-verbose
 ```
+
+## Multi-Domain Customization
+
+Same daemon, different agent profiles. Each domain defines agent YAML configs, CONTEXT.md files, and seed knowledge.
+
+| Domain | Agents | Use Case |
+|--------|--------|----------|
+| Trading (mm-bot) | market_analyst, bot_analyst, engineer, operator | Optimize trading parameters, monitor P&L |
+| Development | product_researcher, code_quality, implementation, devops | Analyze codebases, propose improvements |
+| Infrastructure | ecosystem_monitor, storage_analyst, infra_operator | Monitor services, optimize resources |
 
 ## Project Structure
 
-| Directory | Language | Visibility | Purpose |
-|-----------|----------|-----------|---------|
-| `quorum-core/` | C++20 | Closed source | Orchestrator daemon, SDK, CLI |
-| `quorum-contracts/` | Move | Open source | On-chain proposal, agent, audit contracts |
-| `quorum-ts/` | TypeScript | Open source | SDK, CLI wrapper, dashboard |
-| `quorum-docs/` | Markdown | Open source | Documentation |
+| Directory | Purpose |
+|-----------|---------|
+| quorum-core/ | C++20 daemon (src, tests) |
+| configs/ | YAML configs for daemon + agents |
+| data/ | Runtime data — vaults, SQLite (gitignored) |
 
-## Sui Stack Integration
+## Status
 
-| Component | Sui Stack | Purpose |
-|-----------|-----------|---------|
-| Agent Vault | Walrus | Content-addressed, versioned, deletable blob storage |
-| Proposals | Sui Objects + Move | On-chain state machine with atomic transitions (PTB) |
-| Access Control | Seal | Threshold encryption with Move-defined policies |
-| Audit Log | Sui Transactions | Tamper-proof decision records |
-| Agent Identity | Sui Owned Objects | Capability-based auth, portable, composable |
-
-## Proposal Protocol
-
-All material decisions follow the proposal lifecycle:
-
-```
-DRAFT → REVIEWING → APPROVED → EXECUTED → EVALUATED
-                  → REJECTED
-                  → ESCALATED (human decides after 3 rounds)
-```
+Phase 0.7 — Conversation Mode complete. See [Development Guide](DEVELOPMENT.md) for details.
 
 ## License
 
-C++ core: Proprietary
-Move contracts: Apache 2.0
-TypeScript packages: Apache 2.0
-Documentation: CC BY 4.0
+Proprietary

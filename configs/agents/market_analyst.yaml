@@ -4,6 +4,7 @@
 # Looks OUTWARD — pools, competitors, macro signals.
 
 id: market_analyst
+agent_class: analyst    # analyst = read-only tools, no Write/Edit/NotebookEdit
 name: "Market Analyst"
 description: "External market analysis — pools, competitors, macro signals"
 
