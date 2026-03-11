@@ -48,9 +48,11 @@ app.get("/api/config", (c) => {
     const yaml = readFileSync(config.configPath, "utf-8");
     const targetDir = yaml.match(/^\s+target_dir:\s*(.+)/m)?.[1]?.trim() ?? null;
     const pipeline = yaml.match(/^\s+pipeline:\s*(.+)/m)?.[1]?.trim() ?? null;
-    return c.json({ target_dir: targetDir, pipeline, config_path: config.configPath });
+    const dailyBudget = parseFloat(yaml.match(/^\s+daily_limit_usd:\s*(.+)/m)?.[1] ?? "0") || null;
+    const convBudget = parseFloat(yaml.match(/^\s+default_budget_usd:\s*(.+)/m)?.[1] ?? "0") || null;
+    return c.json({ target_dir: targetDir, pipeline, daily_budget_usd: dailyBudget, conv_budget_usd: convBudget, config_path: config.configPath });
   } catch {
-    return c.json({ target_dir: null, pipeline: null, config_path: config.configPath });
+    return c.json({ target_dir: null, pipeline: null, daily_budget_usd: null, conv_budget_usd: null, config_path: config.configPath });
   }
 });
 

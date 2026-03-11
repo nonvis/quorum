@@ -39,5 +39,7 @@ export interface Stats {
 export interface ProjectConfig {
   target_dir: string | null;
   pipeline: string | null;
+  daily_budget_usd: number | null;
+  conv_budget_usd: number | null;
   config_path: string;
 }

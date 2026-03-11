@@ -26,7 +26,12 @@ export function StatsBanner({
       <div className="flex gap-6 text-sm text-zinc-400">
         <span>{stats.total_conversations} conversations</span>
         <span>{stats.active_conversations} active</span>
-        <span className="text-white font-mono">${stats.total_cost_usd.toFixed(2)}</span>
+        <span className="text-white font-mono">
+          ${stats.total_cost_usd.toFixed(2)}
+          {config?.daily_budget_usd && (
+            <span className="text-zinc-500"> / ${config.daily_budget_usd.toFixed(2)}</span>
+          )}
+        </span>
       </div>
     </div>
   );
