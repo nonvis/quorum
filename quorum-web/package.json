@@ -1,0 +1,19 @@
+{
+  "name": "quorum-web",
+  "module": "server/index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --watch server/index.ts",
+    "start": "bun run server/index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "hono": "^4.12.7"
+  }
+}

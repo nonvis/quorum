@@ -1,0 +1,31 @@
+import { config } from "../config";
+
+export interface DaemonResult {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+export async function execDaemon(...args: string[]): Promise<DaemonResult> {
+  const proc = Bun.spawn([config.daemonBin, "--config", config.configPath, ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...process.env,
+      // Remove CLAUDECODE to avoid nesting detection if web server runs inside Claude Code
+      CLAUDECODE: undefined,
+    },
+  });
+
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  const exitCode = await proc.exited;
+
+  return {
+    success: exitCode === 0,
+    stdout: stdout.trim(),
+    stderr: stderr.trim(),
+    exitCode,
+  };
+}

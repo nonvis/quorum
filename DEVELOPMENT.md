@@ -9,6 +9,7 @@
 | 0.7 | Conversation Mode | Complete (2026-03-08) |
 | 0.9 | Executor Pipeline | Complete (2026-03-11) |
 | 1 | Multi-Domain Expansion | In Progress (2026-03-11) |
+| 1b | Web Dashboard API | In Progress (2026-03-11) |
 
 ## Architecture
 
@@ -54,6 +55,9 @@ make run-verbose
 
 # Run tests
 make test
+
+# Start web API server
+make web-dev
 ```
 
 ### Dependencies (macOS)
@@ -61,6 +65,10 @@ make test
 ```bash
 brew install openssl@3 sqlite
 # curl and sqlite3 provided by Xcode SDK
+
+# Web dashboard
+brew install oven-sh/bun/bun   # or: curl -fsSL https://bun.sh/install | bash
+cd quorum-web && bun install
 ```
 
 ## CLI
@@ -89,6 +97,16 @@ brew install openssl@3 sqlite
 ```
 
 ## Source Layout
+
+### Web API (quorum-web/)
+
+| File | Purpose |
+|------|---------|
+| config.ts | Paths (daemon binary, config YAML, SQLite DB) |
+| server/index.ts | Hono routes — REST + SSE, CORS |
+| server/db.ts | Read-only SQLite reader via bun:sqlite |
+| server/daemon.ts | CLI wrapper — Bun.spawn quorum_daemon subcommands |
+| server/sse.ts | SSE stream (2s poll) + auto-approve poller |
 
 ### Core Headers (quorum-core/src/)
 

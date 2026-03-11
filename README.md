@@ -65,17 +65,37 @@ Same daemon, different agent profiles. Each domain defines agent YAML configs, C
 | Development | product_researcher, code_quality, implementation, devops | Analyze codebases, propose improvements |
 | Infrastructure | ecosystem_monitor, storage_analyst, infra_operator | Monitor services, optimize resources |
 
+## Web Dashboard
+
+A Bun + Hono API server that reads `quorum.db` (read-only) and shells out to the daemon CLI for mutations.
+
+```bash
+cd quorum-web
+bun install
+bun run dev          # http://localhost:3100
+```
+
+**Endpoints:**
+- `GET /api/conversations` — list all conversations
+- `GET /api/conversations/:id` — conversation detail with tasks
+- `GET /api/stats` — aggregate stats
+- `GET /api/events` — SSE stream (2s poll, auto-approve support)
+- `POST /api/converse` — start a conversation (via daemon CLI)
+- `POST /api/gate/:id/approve` / `reject` — human gate actions
+- `POST /api/close/:id` / `resume/:id` — conversation lifecycle
+
 ## Project Structure
 
 | Directory | Purpose |
 |-----------|---------|
 | quorum-core/ | C++20 daemon (src, tests) |
+| quorum-web/ | Bun + Hono API server (web dashboard backend) |
 | configs/ | YAML configs for daemon + agents |
 | data/ | Runtime data — vaults, SQLite (gitignored) |
 
 ## Status
 
-Phase 0.9 — Executor Pipeline complete. See [Development Guide](DEVELOPMENT.md) for details.
+Phase 1 — Multi-Domain Expansion. See [Development Guide](DEVELOPMENT.md) for details.
 
 ## License
 

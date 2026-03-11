@@ -87,6 +87,17 @@ clean-data: ## Remove runtime data (vaults, SQLite)
 
 clean-all: clean clean-data ## Remove everything (build + data)
 
+# ── Web ─────────────────────────────────────────────────────
+
+web-install: ## Install web dashboard dependencies
+	cd quorum-web && bun install
+
+web-dev: ## Start web API server (dev mode with watch)
+	cd quorum-web && bun run dev
+
+web-start: ## Start web API server (production)
+	cd quorum-web && bun run start
+
 # ── Utilities ────────────────────────────────────────────────
 
 fmt: ## Format C++ code (requires clang-format)
