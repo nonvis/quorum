@@ -116,3 +116,8 @@ add_executable(test_conversation_pipeline tests/integration/test_conversation_pi
 target_include_directories(test_conversation_pipeline PRIVATE src)
 target_link_libraries(test_conversation_pipeline PRIVATE SQLite::SQLite3)
 add_test(NAME test_conversation_pipeline COMMAND test_conversation_pipeline)
+
+add_executable(test_executor_pipeline tests/integration/test_executor_pipeline.cpp)
+target_include_directories(test_executor_pipeline PRIVATE src)
+target_link_libraries(test_executor_pipeline PRIVATE SQLite::SQLite3)
+add_test(NAME test_executor_pipeline COMMAND test_executor_pipeline)

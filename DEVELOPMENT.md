@@ -115,6 +115,7 @@ brew install openssl@3 sqlite
 | unit/test_output_parser.cpp | Block parsing, verdict normalization |
 | integration/test_pipeline.cpp | Full Task Queue pipeline (38 assertions) |
 | integration/test_conversation_pipeline.cpp | Full Conversation pipeline (34 assertions) |
+| integration/test_executor_pipeline.cpp | Full Executor pipeline (41 assertions) |
 
 ## Design Notes
 
