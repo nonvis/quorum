@@ -31,8 +31,12 @@ export async function startConversation(goal: string, autoApprove = false) {
   return res.json();
 }
 
-export async function gateApprove(id: number) {
-  const res = await fetch(`${BASE}/gate/${id}/approve`, { method: "POST" });
+export async function gateApprove(id: number, proposal?: string) {
+  const res = await fetch(`${BASE}/gate/${id}/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(proposal ? { proposal } : {}),
+  });
   return res.json();
 }
 

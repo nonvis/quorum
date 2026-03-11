@@ -70,7 +70,7 @@ export function ConversationCard({
           onClick={(e) => e.stopPropagation()}
         >
           <span className="text-orange-400 text-sm">Awaiting your decision</span>
-          <GateControls conversationId={c.id} onAction={onAction} />
+          <GateControls conversationId={c.id} proposalText={proposalText} onAction={onAction} />
         </div>
       )}
 

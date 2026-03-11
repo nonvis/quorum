@@ -8,6 +8,7 @@ import {
   getTasksForConversation,
   getStats,
   freshQuery,
+  dbWrite,
   type Conversation,
 } from "./db";
 import { execDaemon, spawnDaemon, cleanupStaleDaemon } from "./daemon";
@@ -109,6 +110,17 @@ app.post("/api/converse", async (c) => {
 
 app.post("/api/gate/:id/approve", async (c) => {
   const id = c.req.param("id");
+
+  // If proposal text provided, update the thinker's task result before approving
+  const body = await c.req.json<{ proposal?: string }>().catch(() => ({}));
+  if (body.proposal) {
+    dbWrite(
+      "UPDATE tasks SET result = ? WHERE id = (SELECT id FROM tasks WHERE conversation_id = ? AND task_type = 'think' AND status = 'done' ORDER BY id DESC LIMIT 1)",
+      [body.proposal, Number(id)]
+    );
+    console.log(`[gate] updated proposal for conversation ${id}`);
+  }
+
   const result = await execDaemon("gate", "--approve", "--conversation", id);
   return c.json({
     success: result.success,

@@ -14,6 +14,13 @@ export function freshQuery<T>(sql: string, params?: any[]): T[] {
   return result;
 }
 
+// Write connection for targeted updates (e.g., editing proposal before approve)
+export function dbWrite(sql: string, params: any[]): void {
+  const writable = new Database(config.dbPath);
+  writable.query(sql).run(...params);
+  writable.close();
+}
+
 export interface Conversation {
   id: number;
   goal: string;
