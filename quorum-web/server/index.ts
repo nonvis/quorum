@@ -7,7 +7,7 @@ import {
   getTasksForConversation,
   getStats,
 } from "./db";
-import { execDaemon } from "./daemon";
+import { execDaemon, spawnDaemon } from "./daemon";
 import { createSSEStream, markAutoApprove } from "./sse";
 
 const app = new Hono();
@@ -57,23 +57,27 @@ app.post("/api/converse", async (c) => {
   const body = await c.req.json<{ goal: string; autoApprove?: boolean }>();
   if (!body.goal) return c.json({ error: "goal is required" }, 400);
 
-  const result = await execDaemon("converse", body.goal);
+  // Spawn daemon in background — it creates the conversation and runs the dispatch loop
+  spawnDaemon("converse", body.goal);
 
-  // Parse conversation ID from daemon output (e.g., "Conversation 3 created.")
+  // Give the daemon a moment to create the conversation in SQLite
+  await new Promise((r) => setTimeout(r, 500));
+
+  // Find the newly created conversation by querying DB
+  const conversations = getConversations();
+  const newest = conversations[0]; // ordered by id DESC
   let conversationId: number | null = null;
-  const match = result.stdout.match(/[Cc]onversation\s+(\d+)/);
-  if (match) {
-    conversationId = Number(match[1]);
+
+  if (newest && newest.goal === body.goal) {
+    conversationId = newest.id;
     if (body.autoApprove && conversationId) {
       markAutoApprove(conversationId);
     }
   }
 
   return c.json({
-    success: result.success,
+    success: true,
     conversationId,
-    output: result.stdout,
-    error: result.stderr || undefined,
   });
 });
 

@@ -7,15 +7,18 @@ export interface DaemonResult {
   exitCode: number;
 }
 
+const daemonEnv = {
+  ...process.env,
+  // Remove CLAUDECODE to avoid nesting detection if web server runs inside Claude Code
+  CLAUDECODE: undefined,
+};
+
+// For short-lived commands (gate, close, resume, status)
 export async function execDaemon(...args: string[]): Promise<DaemonResult> {
   const proc = Bun.spawn([config.daemonBin, "--config", config.configPath, ...args], {
     stdout: "pipe",
     stderr: "pipe",
-    env: {
-      ...process.env,
-      // Remove CLAUDECODE to avoid nesting detection if web server runs inside Claude Code
-      CLAUDECODE: undefined,
-    },
+    env: daemonEnv,
   });
 
   const stdout = await new Response(proc.stdout).text();
@@ -28,4 +31,15 @@ export async function execDaemon(...args: string[]): Promise<DaemonResult> {
     stderr: stderr.trim(),
     exitCode,
   };
+}
+
+// For long-running commands (converse) — spawns detached, doesn't wait
+export function spawnDaemon(...args: string[]): void {
+  const proc = Bun.spawn([config.daemonBin, "--config", config.configPath, ...args], {
+    stdout: "ignore",
+    stderr: "ignore",
+    env: daemonEnv,
+  });
+  // Unref so the web server can exit even if daemon is still running
+  proc.unref();
 }
