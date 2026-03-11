@@ -44,7 +44,8 @@ static void init_schema(sui::quorum::Database& db) {
         "  spent_usd REAL NOT NULL DEFAULT 0.0,"
         "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
         "  completed_at TEXT,"
-        "  paused_reason TEXT"
+        "  paused_reason TEXT,"
+        "  pipeline TEXT NOT NULL DEFAULT 'analyst'"
         ")"
     );
     db.execute(

@@ -76,7 +76,7 @@ static void print_conversations(sui::quorum::Database& db) {
     int count = 0;
     db.query(
         "SELECT id, goal, state, round, max_rounds, budget_usd, spent_usd, "
-        "created_at, paused_reason FROM conversations ORDER BY id DESC",
+        "created_at, paused_reason, pipeline FROM conversations ORDER BY id DESC",
         [&](sqlite3_stmt* stmt) {
             auto id = sqlite3_column_int64(stmt, 0);
             auto goal_raw = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
@@ -86,13 +86,16 @@ static void print_conversations(sui::quorum::Database& db) {
             auto budget = sqlite3_column_double(stmt, 5);
             auto spent = sqlite3_column_double(stmt, 6);
             auto reason_raw = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
+            auto pipeline_raw = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
 
             std::string goal = goal_raw ? std::string(goal_raw) : "";
             std::string reason = reason_raw ? std::string(reason_raw) : "";
+            std::string pipeline = pipeline_raw ? std::string(pipeline_raw) : "analyst";
             if (goal.size() > 50) goal = goal.substr(0, 50) + "...";
 
             std::cout << "  #" << id
                       << "  " << (state ? state : "?")
+                      << " [" << pipeline << "]"
                       << "  round " << round << "/" << max_r
                       << "  $" << spent << "/$" << budget
                       << "  " << goal;
@@ -124,6 +127,8 @@ static void print_usage(const char* prog) {
               << "  " << prog << " --config <path> status                     List conversations\n"
               << "  " << prog << " --config <path> resume --conversation <id> Resume paused\n"
               << "  " << prog << " --config <path> close --conversation <id>  Close conversation\n"
+              << "  " << prog << " --config <path> gate --approve --conversation <id>  Approve execution\n"
+              << "  " << prog << " --config <path> gate --reject --conversation <id>   Reject execution\n"
               << "\nOptions:\n"
               << "  --config <path>      Path to quorum.yaml (required)\n"
               << "  --verbose            Enable verbose logging\n"
@@ -156,7 +161,8 @@ static void init_schema(sui::quorum::Database& db) {
         "  spent_usd REAL NOT NULL DEFAULT 0.0,"
         "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
         "  completed_at TEXT,"
-        "  paused_reason TEXT"
+        "  paused_reason TEXT,"
+        "  pipeline TEXT NOT NULL DEFAULT 'analyst'"
         ")"
     );
     db.execute(
@@ -188,6 +194,7 @@ static void init_schema(sui::quorum::Database& db) {
     // Errors silently if columns already exist (exec_raw logs + continues).
     db.execute("ALTER TABLE tasks ADD COLUMN conversation_id INTEGER REFERENCES conversations(id)");
     db.execute("ALTER TABLE tasks ADD COLUMN session_id TEXT");
+    db.execute("ALTER TABLE conversations ADD COLUMN pipeline TEXT NOT NULL DEFAULT 'analyst'");
 }
 
 // Insert a new task into the queue. Returns the task id.
@@ -402,6 +409,8 @@ int main(int argc, char* argv[]) {
     int conv_max_rounds = -1;         // sentinel — will use config default
     int64_t conv_id_arg = 0;
     std::string goal_text;
+    bool gate_approve = false;
+    bool gate_reject = false;
 
     if (subcommand == "converse") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
@@ -416,6 +425,14 @@ int main(int argc, char* argv[]) {
     } else if (subcommand == "resume" || subcommand == "close") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
             if (sub_args[i] == "--conversation" && i + 1 < sub_args.size()) {
+                conv_id_arg = std::stoll(sub_args[++i]);
+            }
+        }
+    } else if (subcommand == "gate") {
+        for (size_t i = 0; i < sub_args.size(); ++i) {
+            if (sub_args[i] == "--approve") gate_approve = true;
+            else if (sub_args[i] == "--reject") gate_reject = true;
+            else if (sub_args[i] == "--conversation" && i + 1 < sub_args.size()) {
                 conv_id_arg = std::stoll(sub_args[++i]);
             }
         }
@@ -455,8 +472,13 @@ int main(int argc, char* argv[]) {
     }
     init_schema(db);
 
-    // Conversation engine — lightweight (Database& only), needed for subcommands
-    sui::quorum::ConversationEngine conversation_engine(db);
+    // Conversation engine — lightweight, needed for subcommands
+    sui::quorum::ConversationEngine conversation_engine(
+        db,
+        cfg.conversations.thinker_agent,
+        cfg.conversations.executor_agent,
+        cfg.conversations.reviewer_agent
+    );
 
     // ── Subcommand early exits (no PID lock, no daemon) ──────────────────
     if (subcommand == "status") {
@@ -479,6 +501,30 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    if (subcommand == "gate") {
+        if (conv_id_arg == 0) {
+            std::cerr << "ERROR: gate requires --conversation <id>\n";
+            return 1;
+        }
+        if (!gate_approve && !gate_reject) {
+            std::cerr << "ERROR: gate requires --approve or --reject\n";
+            return 1;
+        }
+        if (gate_approve && gate_reject) {
+            std::cerr << "ERROR: cannot both --approve and --reject\n";
+            return 1;
+        }
+
+        bool ok = conversation_engine.gate(conv_id_arg, gate_approve);
+        if (!ok) return 1;
+
+        if (gate_approve) {
+            std::cout << "Executor task queued for conversation " << conv_id_arg << ".\n";
+            std::cout << "Start or check the daemon to execute.\n";
+        }
+        return 0;
+    }
+
     // ── Banner + config summary (daemon paths only) ──────────────────────
     std::cout << "Quorum Daemon v0.2.0" << std::endl;
     std::cout << "====================" << std::endl;
@@ -493,7 +539,8 @@ int main(int argc, char* argv[]) {
     std::cout << "  Daily budget: $" << cfg.budget.daily_limit_usd << "\n";
     std::cout << "  Conversations: "
               << (cfg.conversations.enabled ? "enabled" : "disabled")
-              << " (budget: $" << cfg.conversations.default_budget_usd
+              << " (pipeline: " << cfg.conversations.pipeline
+              << ", budget: $" << cfg.conversations.default_budget_usd
               << ", max_rounds: " << cfg.conversations.default_max_rounds
               << ", human_gate: " << (cfg.conversations.human_gate ? "on" : "off")
               << ")\n";
@@ -520,7 +567,8 @@ int main(int argc, char* argv[]) {
                     std::cerr << "ERROR: converse requires a goal string\n";
                     return 1;
                 }
-                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds);
+                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds,
+                                                     cfg.conversations.pipeline);
                 std::cout << "Conversation " << id << " created.\n";
                 std::cout << "Daemon already running — it will pick up the conversation.\n";
             } else if (subcommand == "resume") {
@@ -578,7 +626,8 @@ int main(int argc, char* argv[]) {
             release_pid_lock(cfg.daemon.pid_file);
             return 1;
         }
-        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds);
+        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds,
+                                           cfg.conversations.pipeline);
         std::cout << "Conversation " << id << " created. Starting daemon...\n";
         // fall through to daemon loop
     } else if (subcommand == "resume") {

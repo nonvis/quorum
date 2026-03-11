@@ -7,7 +7,7 @@
 | 0 | Local Orchestration MVP | Complete (2026-03-06) |
 | 0.5 | mm-bot Observation Mode | Complete (2026-03-07) |
 | 0.7 | Conversation Mode | Complete (2026-03-08) |
-| 0.9 | Executor Agent Class | Planned |
+| 0.9 | Executor Pipeline | Complete (2026-03-11) |
 | 1 | Multi-Domain Expansion | Planned |
 
 ## Architecture
@@ -17,7 +17,7 @@ Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
     |
     |-- Scheduler (periodic task dispatch, 5s tick)
     |-- Consensus Engine (proposal lifecycle, multi-round review)
-    |-- Conversation Engine (T/D/R state machine, Phase 0.7)
+    |-- Conversation Engine (analyst + executor pipelines, human gate)
     +-- Budget Enforcer (hourly/daily caps, sequential dispatch)
          |
     +----+----+
@@ -33,14 +33,15 @@ Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
 | Mode | Trigger | Agent creates next task? |
 |------|---------|------------------------|
 | Task Queue | `scripts/seed_*.sh` | No — operator seeds all tasks |
-| Conversation | `quorum_daemon converse "goal"` | Yes — daemon state machine chains T->R->(E) |
+| Conversation (analyst) | `quorum_daemon converse "goal"` | Yes — T->R->Done |
+| Conversation (executor) | `quorum_daemon converse "goal"` | Yes — T->Gate->E->R->Done |
 
 ## Agent Classes
 
 | Class | Tools | Invoker behavior | Use case |
 |-------|-------|------------------|----------|
 | analyst (default) | Read-only (no Write/Edit) | `--disallowedTools "Write,Edit,NotebookEdit"` | Observation, analysis, review |
-| executor | Full tool access | No `--disallowedTools`, `cd target_dir &&` prefix | Code changes, deployments (Phase 0.9) |
+| executor | Full tool access | No `--disallowedTools`, `cd target_dir &&` prefix | Code changes, deployments |
 
 ## Build
 
@@ -77,6 +78,12 @@ brew install openssl@3 sqlite
 # Close a conversation
 ./build/quorum_daemon --config configs/quorum.yaml close --conversation 1
 
+# Approve execution at human gate
+./build/quorum_daemon --config configs/quorum.yaml gate --approve --conversation 1
+
+# Reject at human gate
+./build/quorum_daemon --config configs/quorum.yaml gate --reject --conversation 1
+
 # Start daemon only (Task Queue mode)
 ./build/quorum_daemon --config configs/quorum.yaml
 ```
@@ -88,7 +95,7 @@ brew install openssl@3 sqlite
 | File | Purpose |
 |------|---------|
 | main.cpp | Entry point, CLI subcommands, dispatch loop |
-| daemon/conversation.h | Conversation state machine (T/D/R pipeline) |
+| daemon/conversation.h | Conversation state machine (analyst + executor pipelines, human gate) |
 | daemon/consensus.h | Proposal lifecycle, multi-round review |
 | daemon/scheduler.h | Periodic task scheduling |
 | agent/invoker.h | claude -p subprocess, session resume, agent-class tool policy |

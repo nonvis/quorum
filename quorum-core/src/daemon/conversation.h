@@ -23,11 +23,16 @@ struct PauseCheck {
 
 class ConversationEngine {
 public:
-    explicit ConversationEngine(Database& db) : db_(db) {}
+    explicit ConversationEngine(Database& db,
+                                const std::string& thinker = "thinker",
+                                const std::string& executor = "executor",
+                                const std::string& reviewer = "reviewer")
+        : db_(db), thinker_agent_(thinker), executor_agent_(executor), reviewer_agent_(reviewer) {}
 
     // Start a new conversation. Returns conversation ID.
-    int64_t start(const std::string& goal, double budget_usd = 5.0, int max_rounds = 3) {
-        auto conv_id = db_.create_conversation(goal, budget_usd, max_rounds);
+    int64_t start(const std::string& goal, double budget_usd = 5.0, int max_rounds = 3,
+                  const std::string& pipeline = "analyst") {
+        auto conv_id = db_.create_conversation(goal, budget_usd, max_rounds, pipeline);
 
         auto session_id = generate_uuid();
 
@@ -37,18 +42,20 @@ public:
 
         db_.execute(
             "INSERT INTO tasks (agent, task_type, status, prompt, conversation_id, session_id) "
-            "VALUES ('thinker', 'think', 'pending', ?, ?, ?)",
+            "VALUES (?, 'think', 'pending', ?, ?, ?)",
             [&](sqlite3_stmt* stmt) {
-                sqlite3_bind_text(stmt, 1, prompt.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_int64(stmt, 2, conv_id);
-                sqlite3_bind_text(stmt, 3, session_id.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 1, thinker_agent_.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 2, prompt.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_int64(stmt, 3, conv_id);
+                sqlite3_bind_text(stmt, 4, session_id.c_str(), -1, SQLITE_TRANSIENT);
             }
         );
 
         db_.update_conversation_state(conv_id, "thinking");
 
         auto display = goal.size() > 60 ? goal.substr(0, 60) : goal;
-        std::cout << "[conversation " << conv_id << "] started — " << display << "\n";
+        std::cout << "[conversation " << conv_id << "] started (" << pipeline
+                  << ") — " << display << "\n";
 
         return conv_id;
     }
@@ -97,9 +104,7 @@ public:
             db_.complete_conversation(conv_id);
             return false;
         } else if (conv->state == "executing") {
-            // Phase 0.9 stub
-            db_.complete_conversation(conv_id);
-            return false;
+            return handle_executing(conv_id, *conv, parsed);
         } else if (conv->state == "evaluating") {
             // Phase 0.9 stub
             db_.complete_conversation(conv_id);
@@ -139,11 +144,12 @@ public:
             auto session_id = last_session_id.empty() ? generate_uuid() : last_session_id;
             db_.execute(
                 "INSERT INTO tasks (agent, task_type, status, prompt, conversation_id, session_id) "
-                "VALUES ('thinker', 'think', 'pending', ?, ?, ?)",
+                "VALUES (?, 'think', 'pending', ?, ?, ?)",
                 [&](sqlite3_stmt* stmt) {
-                    sqlite3_bind_text(stmt, 1, last_prompt.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_int64(stmt, 2, conversation_id);
-                    sqlite3_bind_text(stmt, 3, session_id.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(stmt, 1, thinker_agent_.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(stmt, 2, last_prompt.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_int64(stmt, 3, conversation_id);
+                    sqlite3_bind_text(stmt, 4, session_id.c_str(), -1, SQLITE_TRANSIENT);
                 }
             );
         } else if (last_task_type == "review") {
@@ -151,11 +157,25 @@ public:
             auto session_id = generate_uuid();
             db_.execute(
                 "INSERT INTO tasks (agent, task_type, status, prompt, conversation_id, session_id) "
-                "VALUES ('reviewer', 'review', 'pending', ?, ?, ?)",
+                "VALUES (?, 'review', 'pending', ?, ?, ?)",
                 [&](sqlite3_stmt* stmt) {
-                    sqlite3_bind_text(stmt, 1, last_prompt.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_int64(stmt, 2, conversation_id);
-                    sqlite3_bind_text(stmt, 3, session_id.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(stmt, 1, reviewer_agent_.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(stmt, 2, last_prompt.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_int64(stmt, 3, conversation_id);
+                    sqlite3_bind_text(stmt, 4, session_id.c_str(), -1, SQLITE_TRANSIENT);
+                }
+            );
+        } else if (last_task_type == "execute") {
+            db_.update_conversation_state(conversation_id, "executing");
+            auto session_id = last_session_id.empty() ? generate_uuid() : last_session_id;
+            db_.execute(
+                "INSERT INTO tasks (agent, task_type, status, prompt, conversation_id, session_id) "
+                "VALUES (?, 'execute', 'pending', ?, ?, ?)",
+                [&](sqlite3_stmt* stmt) {
+                    sqlite3_bind_text(stmt, 1, executor_agent_.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(stmt, 2, last_prompt.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_int64(stmt, 3, conversation_id);
+                    sqlite3_bind_text(stmt, 4, session_id.c_str(), -1, SQLITE_TRANSIENT);
                 }
             );
         } else {
@@ -180,14 +200,96 @@ public:
         std::cout << "[conversation " << conversation_id << "] closed by operator\n";
     }
 
+    // Approve or reject a conversation at the human gate (APPROVED state).
+    // Returns true on success.
+    bool gate(int64_t conversation_id, bool approve) {
+        auto conv = db_.get_conversation(conversation_id);
+        if (!conv || conv->state != "approved") {
+            std::cerr << "ERROR: conversation " << conversation_id
+                      << " is not in approved state (current: "
+                      << (conv ? conv->state : "not found") << ")\n";
+            return false;
+        }
+
+        if (!approve) {
+            db_.update_conversation_state(conversation_id, "closed");
+            std::cout << "[conversation " << conversation_id << "] rejected at human gate\n";
+            return true;
+        }
+
+        // Retrieve thinker's output to use as executor prompt
+        std::string proposal_content;
+        db_.query(
+            "SELECT result FROM tasks WHERE conversation_id = ? AND task_type = 'think' "
+            "ORDER BY id DESC LIMIT 1",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, conversation_id);
+            },
+            [&](sqlite3_stmt* stmt) {
+                auto r = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                if (r) proposal_content = r;
+            }
+        );
+
+        if (proposal_content.empty()) {
+            std::cerr << "ERROR: no thinker output found for conversation "
+                      << conversation_id << "\n";
+            return false;
+        }
+
+        // Create executor task
+        auto session_id = generate_uuid();
+        std::string prompt =
+            "# Implementation Task\n\n" + proposal_content +
+            "\n\n---\n\nImplement this plan. Follow the steps precisely. "
+            "When done, produce a SUMMARY block with: status (success/partial/failed), "
+            "files_changed, and notes.\n";
+
+        db_.execute(
+            "INSERT INTO tasks (agent, task_type, status, prompt, conversation_id, session_id) "
+            "VALUES (?, 'execute', 'pending', ?, ?, ?)",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_text(stmt, 1, executor_agent_.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 2, prompt.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_int64(stmt, 3, conversation_id);
+                sqlite3_bind_text(stmt, 4, session_id.c_str(), -1, SQLITE_TRANSIENT);
+            }
+        );
+
+        db_.update_conversation_state(conversation_id, "executing");
+        std::cout << "[conversation " << conversation_id
+                  << "] approved at human gate — dispatching executor\n";
+        return true;
+    }
+
 private:
     Database& db_;
+    std::string thinker_agent_ = "thinker";
+    std::string executor_agent_ = "executor";
+    std::string reviewer_agent_ = "reviewer";
 
     bool handle_thinking(int64_t conv_id, const ConversationRecord& conv, const ParsedOutput& parsed) {
         if (!parsed.proposals.empty()) {
             const auto& prop = parsed.proposals[0];
 
-            // Create reviewer task with fresh session_id
+            if (conv.pipeline == "executor") {
+                // Executor pipeline: THINKING → APPROVED (human gate)
+                db_.update_conversation_state(conv_id, "approved");
+                std::cout << "[conversation " << conv_id
+                          << "] thinking -> approved (awaiting human gate)"
+                          << " — proposal: " << prop.title << "\n";
+                std::cout << "\n=== PROPOSAL FOR REVIEW ===\n"
+                          << "Title: " << prop.title << "\n\n"
+                          << prop.content << "\n"
+                          << "===========================\n\n"
+                          << "To approve: quorum_daemon --config <path> gate --approve --conversation "
+                          << conv_id << "\n"
+                          << "To reject:  quorum_daemon --config <path> gate --reject --conversation "
+                          << conv_id << "\n\n";
+                return false;  // pauses — human must approve via gate CLI
+            }
+
+            // Analyst pipeline (unchanged): THINKING → REVIEWING
             auto session_id = generate_uuid();
             std::string prompt =
                 "# Proposal to Review\n\nTitle: " + prop.title +
@@ -197,11 +299,12 @@ private:
 
             db_.execute(
                 "INSERT INTO tasks (agent, task_type, status, prompt, conversation_id, session_id) "
-                "VALUES ('reviewer', 'review', 'pending', ?, ?, ?)",
+                "VALUES (?, 'review', 'pending', ?, ?, ?)",
                 [&](sqlite3_stmt* stmt) {
-                    sqlite3_bind_text(stmt, 1, prompt.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_int64(stmt, 2, conv_id);
-                    sqlite3_bind_text(stmt, 3, session_id.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(stmt, 1, reviewer_agent_.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(stmt, 2, prompt.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_int64(stmt, 3, conv_id);
+                    sqlite3_bind_text(stmt, 4, session_id.c_str(), -1, SQLITE_TRANSIENT);
                 }
             );
 
@@ -265,11 +368,12 @@ private:
 
                 db_.execute(
                     "INSERT INTO tasks (agent, task_type, status, prompt, conversation_id, session_id) "
-                    "VALUES ('thinker', 'think', 'pending', ?, ?, ?)",
+                    "VALUES (?, 'think', 'pending', ?, ?, ?)",
                     [&](sqlite3_stmt* stmt) {
-                        sqlite3_bind_text(stmt, 1, prompt.c_str(), -1, SQLITE_TRANSIENT);
-                        sqlite3_bind_int64(stmt, 2, conv_id);
-                        sqlite3_bind_text(stmt, 3, original_session_id.c_str(), -1, SQLITE_TRANSIENT);
+                        sqlite3_bind_text(stmt, 1, thinker_agent_.c_str(), -1, SQLITE_TRANSIENT);
+                        sqlite3_bind_text(stmt, 2, prompt.c_str(), -1, SQLITE_TRANSIENT);
+                        sqlite3_bind_int64(stmt, 3, conv_id);
+                        sqlite3_bind_text(stmt, 4, original_session_id.c_str(), -1, SQLITE_TRANSIENT);
                     }
                 );
 
@@ -298,6 +402,60 @@ private:
         std::cout << "[conversation " << conv_id
                   << "] closed — verdict: " << verdict << "\n";
         return false;
+    }
+
+    bool handle_executing(int64_t conv_id, const ConversationRecord& conv,
+                          const ParsedOutput& parsed) {
+        // Executor done → create reviewer task with executor's output context
+
+        // Get executor's result text (most recent execute task)
+        std::string executor_output;
+        db_.query(
+            "SELECT result FROM tasks WHERE conversation_id = ? AND task_type = 'execute' "
+            "ORDER BY id DESC LIMIT 1",
+            [&](sqlite3_stmt* stmt) { sqlite3_bind_int64(stmt, 1, conv_id); },
+            [&](sqlite3_stmt* stmt) {
+                auto r = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                if (r) executor_output = r;
+            }
+        );
+
+        // Get original thinker proposal (first think task's result)
+        std::string thinker_proposal;
+        db_.query(
+            "SELECT result FROM tasks WHERE conversation_id = ? AND task_type = 'think' "
+            "ORDER BY id ASC LIMIT 1",
+            [&](sqlite3_stmt* stmt) { sqlite3_bind_int64(stmt, 1, conv_id); },
+            [&](sqlite3_stmt* stmt) {
+                auto r = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                if (r) thinker_proposal = r;
+            }
+        );
+
+        // Build reviewer prompt with executor context
+        auto session_id = generate_uuid();
+        std::string prompt =
+            "# Code Review\n\n"
+            "An executor agent implemented the following plan. Review the changes.\n\n"
+            "## Original Plan\n\n" + thinker_proposal +
+            "\n\n## Executor Output\n\n" + executor_output +
+            "\n\n---\n\nReview the executor's work. Verify correctness and completeness. "
+            "Respond with a REVIEW block. Use verdict: approve or reject with reason.\n";
+
+        db_.execute(
+            "INSERT INTO tasks (agent, task_type, status, prompt, conversation_id, session_id) "
+            "VALUES (?, 'review', 'pending', ?, ?, ?)",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_text(stmt, 1, reviewer_agent_.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 2, prompt.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_int64(stmt, 3, conv_id);
+                sqlite3_bind_text(stmt, 4, session_id.c_str(), -1, SQLITE_TRANSIENT);
+            }
+        );
+
+        db_.update_conversation_state(conv_id, "reviewing");
+        std::cout << "[conversation " << conv_id << "] executing -> reviewing\n";
+        return true;
     }
 
     // ── Pause condition helpers ──────────────────────────────────────────────

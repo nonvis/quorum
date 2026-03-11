@@ -4,7 +4,7 @@
 
 Quorum is a **multi-agent orchestration framework**. A deterministic C++20 daemon orchestrates independent AI agents that coordinate through structured proposals and persist knowledge in local vaults.
 
-**Current phase: Phase 0.7 — Conversation Mode.** Pure local orchestration on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) are deferred indefinitely.
+**Current phase: Phase 0.9 — Executor Pipeline.** Pure local orchestration on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) are deferred indefinitely.
 
 **Tagline:** "Define your agents, point them at your project, let the daemon run."
 
@@ -193,14 +193,15 @@ data/knowledge/
 - **Synthesis**: a future knowledge-processing task reads `PROCESSING.md`, merges unprocessed inbox notes into `library/{topic}/findings.md`, and marks notes as `processed: true`
 - Agents see both VAULT_UPDATE and OBSERVATION in their output instructions (context assembler includes both block formats)
 
-### Conversation Mode (Phase 0.7)
+### Conversation Mode (Phase 0.7+)
 
-Conversation Mode seeds a single goal and lets the daemon drive a Thinker/Reviewer pipeline through a state machine. The `ConversationEngine` (`src/daemon/conversation.h`) manages state transitions, task creation, and budget enforcement per conversation.
+Conversation Mode seeds a single goal and lets the daemon drive a pipeline through a state machine. Two pipeline types are supported: **analyst** (Thinker → Reviewer → Done) and **executor** (Thinker → Human Gate → Executor → Reviewer → Done). The `ConversationEngine` (`src/daemon/conversation.h`) manages state transitions, task creation, and budget enforcement per conversation.
 
-**State machine:**
+**State machines:**
 
 ```
-INIT → THINKING → REVIEWING ──┬──→ APPROVED → DONE (Phase 0.7: no executor)
+Analyst pipeline (default):
+INIT → THINKING → REVIEWING ──┬──→ DONE
                       │        │
                  REVISE (round < max_rounds)
                       │        │
@@ -212,17 +213,38 @@ INIT → THINKING → REVIEWING ──┬──→ APPROVED → DONE (Phase 0.7:
                       ▼
                     CLOSED
 
+Executor pipeline:
+INIT → THINKING → APPROVED (human gate) → EXECUTING → REVIEWING → DONE
+                                 │                          │
+                              REJECTED                   REJECT
+                                 │                          │
+                                 ▼                          ▼
+                              CLOSED                     CLOSED
+
 Any state → PAUSED (budget exceeded, token anomaly, consecutive failures, or agent escalation)
 ```
 
 **Key types:**
-- `ConversationRecord` — struct in `storage/database.h` (id, goal, state, round, max_rounds, budget_usd, spent_usd)
-- `ConversationEngine` — header-only class in `daemon/conversation.h`. Depends only on `Database` and `OutputParser` types. No dependency on Invoker, VaultManager, or ConsensusEngine.
+- `ConversationRecord` — struct in `storage/database.h` (id, goal, state, round, max_rounds, budget_usd, spent_usd, pipeline)
+- `ConversationEngine` — header-only class in `daemon/conversation.h`. Constructor takes `Database&` + 3 optional agent name strings (thinker, executor, reviewer). Depends only on `Database` and `OutputParser` types. No dependency on Invoker, VaultManager, or ConsensusEngine.
 - `PauseCheck` — struct in `daemon/conversation.h` (should_pause, reason). Returned by `check_pause_conditions()`.
 
 **Database schema:**
-- `conversations` table: id, goal, state, round, max_rounds, budget_usd, spent_usd, created_at, completed_at, paused_reason
+- `conversations` table: id, goal, state, round, max_rounds, budget_usd, spent_usd, created_at, completed_at, paused_reason, pipeline
 - `tasks` table extended with: `conversation_id INTEGER REFERENCES conversations(id)`, `session_id TEXT`
+
+**Executor pipeline flow:**
+1. `start()` creates conversation with `pipeline="executor"`, seeds thinker task
+2. `handle_thinking()` detects executor pipeline → transitions to APPROVED state, prints proposal + gate instructions
+3. Operator runs `gate --approve --conversation <id>` → `gate()` creates executor task, transitions to EXECUTING
+4. `handle_executing()` collects executor output + original proposal → creates reviewer task, transitions to REVIEWING
+5. `handle_reviewing()` approve → DONE (same as analyst pipeline)
+
+**Human gate (`gate()` method):**
+- Validates conversation is in APPROVED state
+- `--approve`: retrieves thinker output, creates executor task (task_type='execute'), transitions to EXECUTING
+- `--reject`: transitions to CLOSED
+- CLI: `quorum_daemon --config <path> gate --approve/--reject --conversation <id>` (no PID lock, no daemon needed)
 
 **Session ID strategy (implemented in Invoker):**
 - Thinker: same session_id reused across all REVISE cycles — Invoker detects prior completed task with same session_id and uses `-r` to resume
@@ -304,7 +326,11 @@ conversations:
   enabled: true
   default_max_rounds: 3         # max T->R revision cycles per conversation
   default_budget_usd: 5.0       # per-conversation budget cap
-  human_gate: true               # require operator approval before executor (Phase 0.9)
+  human_gate: true               # require operator approval before executor runs
+  pipeline: analyst              # "analyst" or "executor"
+  thinker: thinker               # agent id for thinker role
+  executor: executor             # agent id for executor role
+  reviewer: reviewer             # agent id for reviewer role
 
 agents:
   - config: configs/agents/market_analyst.yaml
@@ -326,7 +352,7 @@ context_file: data/vaults/market_analyst/CONTEXT.md
 ```
 
 ```yaml
-# configs/agents/<agent>.yaml — agent config (executor, Phase 0.9)
+# configs/agents/<agent>.yaml — agent config (executor)
 id: code_executor
 agent_class: executor   # executor = full tool access (Write, Edit, NotebookEdit)
 name: "Code Executor"
@@ -336,7 +362,7 @@ executor:
   target_dir: ~/projects/myapp   # working directory for claude -p (supports ~/ expansion)
 ```
 
-**Agent classes:** `analyst` (read-only, default — `--disallowedTools` enforced), `executor` (full tool access, no `--disallowedTools` — Phase 0.9).
+**Agent classes:** `analyst` (read-only, default — `--disallowedTools` enforced), `executor` (full tool access, no `--disallowedTools`).
 
 **Config loading:** At startup, `load_config()` reads `quorum.yaml` agent list, then calls `load_agent_config()` for each entry. This parses the individual agent YAML into `AgentMetadata` structs (id, name, agent_class, config_path, vault_path, context_file, target_dir). The Invoker receives `AgentMetadata` at dispatch time to build the appropriate `claude -p` command.
 
@@ -365,11 +391,11 @@ executor:
 5. **Never skip the proposal protocol** — all material decisions go through create→review→approve→execute→evaluate
 6. **Never block the daemon event loop** — subprocess spawning must be non-blocking
 7. **Never run `claude -p` without token budget enforcement** — per-task cap + global daily cap
-8. **Never let analyst agents write files directly** — enforced via `--disallowedTools "Write,Edit,NotebookEdit"` for `agent_class: analyst`; all analyst output must be structured blocks in the response text; the daemon parses and routes them. Executor agents (`agent_class: executor`) are exempt and get full tool access (Phase 0.9).
+8. **Never let analyst agents write files directly** — enforced via `--disallowedTools "Write,Edit,NotebookEdit"` for `agent_class: analyst`; all analyst output must be structured blocks in the response text; the daemon parses and routes them. Executor agents (`agent_class: executor`) are exempt and get full tool access.
 
 ## Current Phase
 
-**Phase 0.7: Conversation Mode** — Pure local orchestration with goal-driven Thinker/Reviewer pipeline.
+**Phase 0.9: Executor Pipeline** — Dual-pipeline conversation mode (analyst + executor) with human gate CLI.
 
 Priority order:
 1. ~~C++ daemon skeleton~~ ✓ (main.cpp, signal handling, PID lock, config loading)
@@ -393,6 +419,7 @@ Priority order:
 19. ~~ConversationConfig~~ ✓ (`ConversationConfig` struct in `config.h` with `enabled`, `default_max_rounds`, `default_budget_usd`, `human_gate`; parsed from `conversations:` section in `quorum.yaml`; CLI `--budget`/`--max-rounds` use sentinel values, resolved to config defaults after load; startup banner shows conversation settings)
 20. ~~Agent class + terminology~~ ✓ (`agent_class: analyst` added to all 4 agent YAMLs; execution mode comments in `quorum.yaml`; dispatch comment in `main.cpp` updated for dual-mode awareness; `DEVELOPMENT.md` and `README.md` rewritten for local-first positioning; `Makefile` header updated)
 21. ~~AgentMetadata + executor support in Invoker~~ ✓ (`AgentRef` replaced with `AgentMetadata` struct in `config.h` — 7 fields: id, name, agent_class, config_path, vault_path, context_file, target_dir; `load_agent_config()` parses individual agent YAMLs at startup; `load_config()` calls it for each `- config:` entry; `invoke()` now takes `const AgentMetadata&` — conditionally omits `--disallowedTools` for executor agents, prepends `cd target_dir &&` with `~/` expansion; main.cpp looks up agent metadata before dispatch; startup banner lists each agent with its class; all 11 tests pass)
+22. ~~Executor pipeline + human gate~~ ✓ (`ConversationConfig` extended with `pipeline`, `thinker_agent`, `executor_agent`, `reviewer_agent` fields parsed from `conversations:` YAML; `ConversationRecord` + DB schema extended with `pipeline` column; `ConversationEngine` constructor takes configurable agent names (defaults preserve backward compat); `start()` accepts pipeline param; `handle_thinking()` branches: analyst → REVIEWING, executor → APPROVED (human gate); `gate()` method: validates APPROVED state, creates executor task, transitions to EXECUTING; `handle_executing()`: collects executor+thinker output, creates reviewer task; `resume()` supports `execute` task type; `gate` CLI subcommand: `--approve`/`--reject --conversation <id>`, no PID lock; `print_conversations()` shows pipeline; all hardcoded agent names replaced with member variables; all 11 tests pass)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 
@@ -431,6 +458,12 @@ cmake -B build && cmake --build build -j$(nproc)
 
 # Close a conversation (no PID lock, no daemon)
 ./build/quorum_daemon --config configs/quorum.yaml close --conversation 1
+
+# Approve executor at human gate (no PID lock, no daemon)
+./build/quorum_daemon --config configs/quorum.yaml gate --approve --conversation 1
+
+# Reject at human gate (no PID lock, no daemon)
+./build/quorum_daemon --config configs/quorum.yaml gate --reject --conversation 1
 
 # Agent invocation — analyst (what the daemon spawns, read-only tools)
 claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" --output-format json

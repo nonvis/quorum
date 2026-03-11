@@ -10,7 +10,7 @@ A deterministic C++20 daemon that orchestrates AI agents across different projec
 
 1. **You define agents** — YAML configs + CONTEXT.md files that tell each agent what to look at
 2. **You seed a goal** — `quorum_daemon converse "Analyze adverse selection and propose a fix"`
-3. **The daemon drives the pipeline** — Thinker proposes -> Reviewer validates -> (Executor implements)
+3. **The daemon drives the pipeline** — Thinker proposes -> Reviewer validates (analyst) or -> Human gate -> Executor implements -> Reviewer validates (executor)
 4. **Agents accumulate knowledge** — each agent has a persistent vault (filesystem markdown)
 
 The daemon is 100% deterministic. No LLM in the control loop. LLMs only run in agent invocations via `claude -p` subprocesses.
@@ -20,7 +20,7 @@ The daemon is 100% deterministic. No LLM in the control loop. LLMs only run in a
 ```
 Orchestrator Daemon (C++20, deterministic)
     |
-    |-- Conversation Engine (T/D/R state machine)
+    |-- Conversation Engine (analyst + executor pipelines)
     |-- Consensus Engine (proposal lifecycle)
     |-- Scheduler (periodic dispatch)
     +-- Budget Enforcer (hourly/daily/per-conversation caps)
@@ -48,6 +48,9 @@ make build
 # Check status
 ./build/quorum_daemon --config configs/quorum.yaml status
 
+# Approve executor at human gate (executor pipeline)
+./build/quorum_daemon --config configs/quorum.yaml gate --approve --conversation 1
+
 # Start daemon only (Task Queue mode — seed tasks separately)
 make run-verbose
 ```
@@ -72,7 +75,7 @@ Same daemon, different agent profiles. Each domain defines agent YAML configs, C
 
 ## Status
 
-Phase 0.7 — Conversation Mode complete. See [Development Guide](DEVELOPMENT.md) for details.
+Phase 0.9 — Executor Pipeline complete. See [Development Guide](DEVELOPMENT.md) for details.
 
 ## License
 

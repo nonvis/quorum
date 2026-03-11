@@ -69,7 +69,11 @@ struct ConversationConfig {
     bool enabled = true;
     int default_max_rounds = 3;
     double default_budget_usd = 5.0;
-    bool human_gate = true;    // Phase 0.9: require operator approval before executor runs
+    bool human_gate = true;    // require operator approval before executor runs
+    std::string pipeline = "analyst";          // "analyst" or "executor"
+    std::string thinker_agent = "thinker";     // agent id for thinker role
+    std::string executor_agent = "executor";   // agent id for executor role
+    std::string reviewer_agent = "reviewer";   // agent id for reviewer role
 };
 
 struct AgentMetadata {
@@ -297,6 +301,10 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
                 try { cfg.conversations.default_budget_usd = std::stod(val); } catch (...) {}
             }
             else if (key == "human_gate") cfg.conversations.human_gate = (val == "true");
+            else if (key == "pipeline") cfg.conversations.pipeline = val;
+            else if (key == "thinker") cfg.conversations.thinker_agent = val;
+            else if (key == "executor") cfg.conversations.executor_agent = val;
+            else if (key == "reviewer") cfg.conversations.reviewer_agent = val;
         }
     }
 
