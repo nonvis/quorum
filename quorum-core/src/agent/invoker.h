@@ -10,6 +10,7 @@
 #include <string_view>
 
 #include "storage/database.h"
+#include "utils/config.h"
 #include "utils/json.h"
 
 namespace sui::quorum {
@@ -49,7 +50,7 @@ public:
     }
 
     // Invoke a task by id. Reads prompt from DB, spawns claude -p, writes result back.
-    [[nodiscard]] InvocationResult invoke(int64_t task_id) {
+    [[nodiscard]] InvocationResult invoke(int64_t task_id, const AgentMetadata& agent_meta) {
         // Read prompt from tasks table
         std::string prompt;
         std::string agent;
@@ -111,9 +112,26 @@ public:
 
         // Build command: read prompt from file, pipe to claude -p
         // env -u CLAUDECODE prevents nesting detection when daemon runs inside a Claude Code session
-        auto cmd = "env -u CLAUDECODE cat " + temp_path
+        // Executor agents get full tool access; all others are read-only
+        std::string disallowed_tools_flag;
+        if (agent_meta.agent_class != "executor") {
+            disallowed_tools_flag = " --disallowedTools \"Write,Edit,NotebookEdit\"";
+        }
+
+        std::string cwd_prefix;
+        if (!agent_meta.target_dir.empty()) {
+            // Expand ~ to HOME
+            std::string dir = agent_meta.target_dir;
+            if (dir.starts_with("~/")) {
+                auto home = std::getenv("HOME");
+                if (home) dir = std::string(home) + dir.substr(1);
+            }
+            cwd_prefix = "cd " + dir + " && ";
+        }
+
+        auto cmd = cwd_prefix + "env -u CLAUDECODE cat " + temp_path
             + " | claude -p --dangerously-skip-permissions"
-            + " --disallowedTools \"Write,Edit,NotebookEdit\""
+            + disallowed_tools_flag
             + session_flag
             + " --output-format json 2>&1";
 
@@ -145,9 +163,9 @@ public:
                 }
 
                 // Retry without -r, with --session-id for fresh session
-                auto retry_cmd = "env -u CLAUDECODE cat " + temp_path
+                auto retry_cmd = cwd_prefix + "env -u CLAUDECODE cat " + temp_path
                     + " | claude -p --dangerously-skip-permissions"
-                    + " --disallowedTools \"Write,Edit,NotebookEdit\""
+                    + disallowed_tools_flag
                     + " --session-id " + task_session_id
                     + " --output-format json 2>&1";
 

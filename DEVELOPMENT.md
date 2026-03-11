@@ -37,10 +37,10 @@ Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
 
 ## Agent Classes
 
-| Class | Tools | Use case |
-|-------|-------|----------|
-| analyst | Read-only (no Write/Edit) | Observation, analysis, review |
-| executor | Full tool access | Code changes, deployments (Phase 0.9) |
+| Class | Tools | Invoker behavior | Use case |
+|-------|-------|------------------|----------|
+| analyst (default) | Read-only (no Write/Edit) | `--disallowedTools "Write,Edit,NotebookEdit"` | Observation, analysis, review |
+| executor | Full tool access | No `--disallowedTools`, `cd target_dir &&` prefix | Code changes, deployments (Phase 0.9) |
 
 ## Build
 
@@ -91,11 +91,11 @@ brew install openssl@3 sqlite
 | daemon/conversation.h | Conversation state machine (T/D/R pipeline) |
 | daemon/consensus.h | Proposal lifecycle, multi-round review |
 | daemon/scheduler.h | Periodic task scheduling |
-| agent/invoker.h | claude -p subprocess, session resume |
+| agent/invoker.h | claude -p subprocess, session resume, agent-class tool policy |
 | agent/output_parser.h | VAULT_UPDATE/PROPOSAL/REVIEW/OBSERVATION blocks |
 | agent/context_assembler.h | Prompt builder from vault files |
 | storage/database.h | SQLite wrapper (WAL, mutex, RAII) |
-| utils/config.h | YAML config parser |
+| utils/config.h | YAML config parser, AgentMetadata, load_agent_config() |
 | utils/uuid.h | UUID v4 generation for session IDs |
 
 ### Tests (quorum-core/tests/)

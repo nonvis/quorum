@@ -72,8 +72,14 @@ struct ConversationConfig {
     bool human_gate = true;    // Phase 0.9: require operator approval before executor runs
 };
 
-struct AgentRef {
+struct AgentMetadata {
+    std::string id;
+    std::string name;
+    std::string agent_class = "analyst";  // "analyst" or "executor"
     std::string config_path;
+    std::string vault_path;
+    std::string context_file;
+    std::string target_dir;               // executor only: working directory for claude -p
 };
 
 struct QuorumConfig {
@@ -85,7 +91,7 @@ struct QuorumConfig {
     ConsensusConfig consensus;
     BudgetConfig budget;
     ConversationConfig conversations;
-    std::vector<AgentRef> agents;
+    std::vector<AgentMetadata> agents;
 };
 
 namespace detail {
@@ -114,6 +120,64 @@ inline std::string strip_comment(const std::string& line) {
 
 } // namespace detail
 
+inline std::optional<AgentMetadata> load_agent_config(const std::string& path) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        std::cerr << "ERROR: Cannot open agent config: " << path << "\n";
+        return std::nullopt;
+    }
+
+    AgentMetadata agent;
+    agent.config_path = path;
+    std::string line;
+    std::string section;
+
+    while (std::getline(file, line)) {
+        line = detail::strip_comment(line);
+        if (line.empty()) continue;
+
+        size_t indent = 0;
+        while (indent < line.size() && line[indent] == ' ') ++indent;
+
+        auto trimmed = detail::trim(line);
+        if (trimmed.empty()) continue;
+        if (trimmed.starts_with("- ")) continue;  // skip list items
+
+        auto colon = trimmed.find(':');
+        if (colon == std::string::npos) continue;
+
+        auto key = detail::trim(trimmed.substr(0, colon));
+        auto val = detail::unquote(trimmed.substr(colon + 1));
+
+        // Section header (no value after colon)
+        if (val.empty()) {
+            section = key;
+            continue;
+        }
+
+        // Top-level fields (indent < 2)
+        if (indent < 2) {
+            if (key == "id") agent.id = val;
+            else if (key == "agent_class") agent.agent_class = val;
+            else if (key == "name") agent.name = val;
+            else if (key == "vault_path") agent.vault_path = val;
+            else if (key == "context_file") agent.context_file = val;
+        }
+
+        // Fields inside "executor" section
+        if (section == "executor") {
+            if (key == "target_dir") agent.target_dir = val;
+        }
+    }
+
+    if (agent.id.empty()) {
+        std::cerr << "ERROR: Agent config missing 'id' field: " << path << "\n";
+        return std::nullopt;
+    }
+
+    return agent;
+}
+
 inline std::optional<QuorumConfig> load_config(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) {
@@ -141,7 +205,12 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
             auto rest = detail::trim(trimmed.substr(2));
             if (rest.starts_with("config:")) {
                 auto val = detail::unquote(rest.substr(7));
-                cfg.agents.push_back({val});
+                auto agent = load_agent_config(val);
+                if (agent) {
+                    cfg.agents.push_back(*agent);
+                } else {
+                    std::cerr << "WARNING: Failed to load agent config: " << val << "\n";
+                }
             }
             continue;
         }

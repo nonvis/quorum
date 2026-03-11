@@ -486,6 +486,9 @@ int main(int argc, char* argv[]) {
     std::cout << "  Data dir:   " << cfg.daemon.data_dir << "\n";
     std::cout << "  Log level:  " << cfg.daemon.log_level << "\n";
     std::cout << "  Agents:     " << cfg.agents.size() << "\n";
+    for (const auto& a : cfg.agents) {
+        std::cout << "    - " << a.id << " (" << a.agent_class << ")\n";
+    }
     std::cout << "  Dispatch:   sequential (one task at a time)\n";
     std::cout << "  Daily budget: $" << cfg.budget.daily_limit_usd << "\n";
     std::cout << "  Conversations: "
@@ -559,8 +562,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Initialize vaults for all configured agents
-    for (const auto& agent_ref : cfg.agents) {
-        auto agent_id = fs::path(agent_ref.config_path).stem().string();
+    for (const auto& agent_meta : cfg.agents) {
+        auto& agent_id = agent_meta.id;
         bool ok = vault_manager.init_vault(agent_id);
         if (verbose) {
             std::cout << "  Vault init: " << agent_id
@@ -659,7 +662,16 @@ int main(int argc, char* argv[]) {
             std::cout << "[dispatch] invoking task " << task_id << "\n";
         }
 
-        auto result = invoker.invoke(task_id);
+        // Look up agent metadata by id
+        auto task_agent_name = get_task_agent(db, task_id);
+        sui::quorum::AgentMetadata task_agent_meta;
+        for (const auto& a : cfg.agents) {
+            if (a.id == task_agent_name) {
+                task_agent_meta = a;
+                break;
+            }
+        }
+        auto result = invoker.invoke(task_id, task_agent_meta);
 
         if (verbose) {
             if (result.success) {

@@ -106,10 +106,16 @@ The orchestrator daemon (`quorum_daemon`) **never** calls an LLM. All scheduling
 The daemon spawns Claude Code CLI as the agent runtime:
 
 ```
-daemon → assembles prompt (vault + task) → spawns `claude -p "..." --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" [--session-id <uuid> | -r <uuid>] --output-format json` → collects stdout → parses result → writes to vault → routes follow-up tasks
+daemon → assembles prompt (vault + task) → looks up AgentMetadata → spawns `claude -p` with class-appropriate flags → collects stdout → parses result → writes to vault → routes follow-up tasks
 ```
 
-**Session management:** The Invoker (`src/agent/invoker.h`) reads `session_id` from the `tasks` table. If a session_id is present:
+**Agent classes and tool policy:** The Invoker (`src/agent/invoker.h`) receives `AgentMetadata` (from `utils/config.h`) and conditionally builds the `claude -p` command:
+- **`analyst`** (default): `--disallowedTools "Write,Edit,NotebookEdit"` — read-only tools only (Read, Bash, Grep, Glob)
+- **`executor`**: no `--disallowedTools` flag — full tool access including Write, Edit, NotebookEdit
+- If `AgentMetadata::target_dir` is set, the command is prefixed with `cd <target_dir> &&` (with `~/` expansion via `$HOME`). This sets the working directory for executor agents.
+- Unknown or empty `agent_class` defaults to `"analyst"` (safe default via struct default initializer).
+
+**Session management:** The Invoker reads `session_id` from the `tasks` table. If a session_id is present:
 - **First use** (no prior completed task with that session_id) → `--session-id <uuid>` (creates a new named session)
 - **Subsequent use** (a completed task already used that session_id) → `-r <uuid>` (resumes the existing session)
 - **No session_id** (Task Queue mode) → no flag (fresh anonymous session, current behavior)
@@ -124,7 +130,7 @@ Task Queue mode tasks (no `conversation_id`) have NULL session_id and behave ide
 
 Agents must produce structured blocks (VAULT_UPDATE, OBSERVATION, PROPOSAL, SUMMARY) in their response text — never write files directly. This is enforced at three layers:
 
-1. **`--disallowedTools`** — the invoker passes `--disallowedTools "Write,Edit,NotebookEdit"` to `claude -p`, removing file-writing tools entirely from the agent's tool list. This is the hard enforcement layer — agents cannot write files even if they try. Agents retain Read, Bash, Grep, Glob.
+1. **`--disallowedTools`** — for `analyst` agents, the invoker passes `--disallowedTools "Write,Edit,NotebookEdit"` to `claude -p`, removing file-writing tools entirely from the agent's tool list. This is the hard enforcement layer — analyst agents cannot write files even if they try. **Exception:** `executor` agents (Phase 0.9) get full tool access and are expected to write files directly in their `target_dir`.
 2. **CONTEXT.md** — each agent's vault `CONTEXT.md` has a "## CRITICAL — Output Rules" section (between Role and Core Question) prohibiting file writes and requiring structured blocks.
 3. **Context assembler** — `src/agent/context_assembler.h` injects the same rules into every assembled prompt as a failsafe, between the "Current Task" and "Output Instructions" sections.
 
@@ -310,14 +316,29 @@ agents:
 ### Agent YAML Pattern
 
 ```yaml
-# configs/agents/<agent>.yaml — agent config
+# configs/agents/<agent>.yaml — agent config (analyst)
 id: market_analyst
 agent_class: analyst    # analyst = read-only tools, no Write/Edit/NotebookEdit
 name: "Market Analyst"
+vault_path: data/vaults/market_analyst/
+context_file: data/vaults/market_analyst/CONTEXT.md
 # ... schedule, triggers, context_budget, boundaries
 ```
 
-Agent classes: `analyst` (read-only, Phase 0), `executor` (full tool access, Phase 0.9). The `agent_class` field is informational only in Phase 0.7 — the invoker does not read it yet.
+```yaml
+# configs/agents/<agent>.yaml — agent config (executor, Phase 0.9)
+id: code_executor
+agent_class: executor   # executor = full tool access (Write, Edit, NotebookEdit)
+name: "Code Executor"
+vault_path: data/vaults/code_executor/
+context_file: data/vaults/code_executor/CONTEXT.md
+executor:
+  target_dir: ~/projects/myapp   # working directory for claude -p (supports ~/ expansion)
+```
+
+**Agent classes:** `analyst` (read-only, default — `--disallowedTools` enforced), `executor` (full tool access, no `--disallowedTools` — Phase 0.9).
+
+**Config loading:** At startup, `load_config()` reads `quorum.yaml` agent list, then calls `load_agent_config()` for each entry. This parses the individual agent YAML into `AgentMetadata` structs (id, name, agent_class, config_path, vault_path, context_file, target_dir). The Invoker receives `AgentMetadata` at dispatch time to build the appropriate `claude -p` command.
 
 ## Move Contract Conventions (Deferred — Phase 1+)
 
@@ -344,7 +365,7 @@ Agent classes: `analyst` (read-only, Phase 0), `executor` (full tool access, Pha
 5. **Never skip the proposal protocol** — all material decisions go through create→review→approve→execute→evaluate
 6. **Never block the daemon event loop** — subprocess spawning must be non-blocking
 7. **Never run `claude -p` without token budget enforcement** — per-task cap + global daily cap
-8. **Never let agents write files directly** — enforced via `--disallowedTools "Write,Edit,NotebookEdit"`; all output must be structured blocks in the response text; the daemon parses and routes them
+8. **Never let analyst agents write files directly** — enforced via `--disallowedTools "Write,Edit,NotebookEdit"` for `agent_class: analyst`; all analyst output must be structured blocks in the response text; the daemon parses and routes them. Executor agents (`agent_class: executor`) are exempt and get full tool access (Phase 0.9).
 
 ## Current Phase
 
@@ -371,6 +392,7 @@ Priority order:
 18. ~~Conversation pipeline integration test~~ ✓ (`tests/integration/test_conversation_pipeline.cpp` — 9 tests, 34 assertions, exercises full state machine end-to-end without `claude -p`: happy path, revise with session reuse, max rounds exhaustion, budget pause, consecutive failures pause, agent escalation pause, resume from paused, operator close, reject close; all 11 ctest targets pass)
 19. ~~ConversationConfig~~ ✓ (`ConversationConfig` struct in `config.h` with `enabled`, `default_max_rounds`, `default_budget_usd`, `human_gate`; parsed from `conversations:` section in `quorum.yaml`; CLI `--budget`/`--max-rounds` use sentinel values, resolved to config defaults after load; startup banner shows conversation settings)
 20. ~~Agent class + terminology~~ ✓ (`agent_class: analyst` added to all 4 agent YAMLs; execution mode comments in `quorum.yaml`; dispatch comment in `main.cpp` updated for dual-mode awareness; `DEVELOPMENT.md` and `README.md` rewritten for local-first positioning; `Makefile` header updated)
+21. ~~AgentMetadata + executor support in Invoker~~ ✓ (`AgentRef` replaced with `AgentMetadata` struct in `config.h` — 7 fields: id, name, agent_class, config_path, vault_path, context_file, target_dir; `load_agent_config()` parses individual agent YAMLs at startup; `load_config()` calls it for each `- config:` entry; `invoke()` now takes `const AgentMetadata&` — conditionally omits `--disallowedTools` for executor agents, prepends `cd target_dir &&` with `~/` expansion; main.cpp looks up agent metadata before dispatch; startup banner lists each agent with its class; all 11 tests pass)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 
@@ -410,8 +432,11 @@ cmake -B build && cmake --build build -j$(nproc)
 # Close a conversation (no PID lock, no daemon)
 ./build/quorum_daemon --config configs/quorum.yaml close --conversation 1
 
-# Agent invocation (what the daemon spawns)
+# Agent invocation — analyst (what the daemon spawns, read-only tools)
 claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" --output-format json
+
+# Agent invocation — executor (full tool access, with target_dir)
+cd ~/projects/myapp && claude -p "prompt" --dangerously-skip-permissions --output-format json
 
 # Agent invocation with session (conversation mode)
 claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" --session-id <uuid> --output-format json  # first use
