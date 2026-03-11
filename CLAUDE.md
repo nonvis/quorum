@@ -40,9 +40,7 @@ quorum/
 │   └── knowledge/               # Shared knowledge base (inbox/, library/, archive/)
 │       └── PROCESSING.md        # Instructions for knowledge synthesis agent
 ├── scripts/                     # Shell scripts (smoke tests, utilities)
-├── quorum-contracts/            # [DEFERRED] Move (OPEN SOURCE) — on-chain state machines
-├── quorum-ts/                   # [DEFERRED] TypeScript (OPEN SOURCE) — community-facing
-└── quorum-docs/                 # Documentation (OPEN SOURCE)
+└── docs/                        # Design documents
 ```
 
 ## Reference Codebase
