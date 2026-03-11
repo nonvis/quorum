@@ -39,13 +39,20 @@ quorum/
 │   ├── vaults/                  # Per-agent vaults (CONTEXT.md, knowledge/, inbox/)
 │   └── knowledge/               # Shared knowledge base (inbox/, library/, archive/)
 │       └── PROCESSING.md        # Instructions for knowledge synthesis agent
-├── quorum-web/                  # Bun + Hono API server (web dashboard backend)
+├── quorum-web/                  # Web dashboard (API + React frontend)
 │   ├── config.ts                # Paths resolved relative to repo root
-│   └── server/
-│       ├── index.ts             # Hono routes (REST + SSE)
-│       ├── db.ts                # Read-only SQLite via bun:sqlite
-│       ├── daemon.ts            # CLI wrapper (Bun.spawn → quorum_daemon)
-│       └── sse.ts               # SSE stream + auto-approve poller
+│   ├── server/
+│   │   ├── index.ts             # Hono routes (REST + SSE)
+│   │   ├── db.ts                # Read-only SQLite via bun:sqlite
+│   │   ├── daemon.ts            # CLI wrapper (Bun.spawn → quorum_daemon)
+│   │   └── sse.ts               # SSE stream + auto-approve poller
+│   └── client/                  # React + Tailwind (Vite, port 3101)
+│       └── src/
+│           ├── App.tsx           # Root layout (SSE + refresh)
+│           ├── api.ts            # Fetch wrappers for all endpoints
+│           ├── types.ts          # Conversation, Task, Stats interfaces
+│           ├── hooks/useSSE.ts   # EventSource hook for real-time updates
+│           └── components/       # StatsBanner, PromptInput, ConversationCard, etc.
 ├── .claude/commands/             # Claude Code skills (project scaffolding, ops)
 ├── scripts/                     # Shell scripts (smoke tests, utilities)
 └── docs/                        # Design documents

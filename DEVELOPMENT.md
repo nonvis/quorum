@@ -56,8 +56,9 @@ make run-verbose
 # Run tests
 make test
 
-# Start web API server
-make web-dev
+# Start web API server + React frontend
+make web-dev         # API on :3100
+make web-client      # React on :3101 (proxy → :3100)
 ```
 
 ### Dependencies (macOS)
@@ -68,7 +69,7 @@ brew install openssl@3 sqlite
 
 # Web dashboard
 brew install oven-sh/bun/bun   # or: curl -fsSL https://bun.sh/install | bash
-cd quorum-web && bun install
+cd quorum-web && bun install && cd client && bun install
 ```
 
 ## CLI
@@ -98,7 +99,7 @@ cd quorum-web && bun install
 
 ## Source Layout
 
-### Web API (quorum-web/)
+### Web API (quorum-web/server/)
 
 | File | Purpose |
 |------|---------|
@@ -107,6 +108,21 @@ cd quorum-web && bun install
 | server/db.ts | Read-only SQLite reader via bun:sqlite |
 | server/daemon.ts | CLI wrapper — Bun.spawn quorum_daemon subcommands |
 | server/sse.ts | SSE stream (2s poll) + auto-approve poller |
+
+### React Frontend (quorum-web/client/src/)
+
+| File | Purpose |
+|------|---------|
+| App.tsx | Root layout — SSE subscription, refresh, component wiring |
+| api.ts | Fetch wrappers for all REST endpoints |
+| types.ts | Conversation, Task, Stats interfaces |
+| hooks/useSSE.ts | EventSource hook for real-time conversation updates |
+| components/StatsBanner.tsx | Top bar — total cost, conversation counts |
+| components/PromptInput.tsx | Goal input with auto-approve checkbox |
+| components/ConversationCard.tsx | Expandable card — goal, state, tasks, cost |
+| components/StateBadge.tsx | Color-coded state label |
+| components/TaskTimeline.tsx | Task progression with status icons |
+| components/GateControls.tsx | Approve/reject buttons for human gate |
 
 ### Core Headers (quorum-core/src/)
 

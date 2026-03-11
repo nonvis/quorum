@@ -67,15 +67,17 @@ Same daemon, different agent profiles. Each domain defines agent YAML configs, C
 
 ## Web Dashboard
 
-A Bun + Hono API server that reads `quorum.db` (read-only) and shells out to the daemon CLI for mutations.
+API server (Hono + Bun) and React frontend (Vite + Tailwind). The server reads `quorum.db` read-only and shells out to the daemon CLI for mutations. The frontend shows conversations in real-time via SSE.
 
 ```bash
-cd quorum-web
-bun install
-bun run dev          # http://localhost:3100
+# Terminal 1 — API server
+cd quorum-web && bun install && bun run dev          # http://localhost:3100
+
+# Terminal 2 — React frontend
+cd quorum-web/client && bun install && bun run dev   # http://localhost:3101
 ```
 
-**Endpoints:**
+**API endpoints:**
 - `GET /api/conversations` — list all conversations
 - `GET /api/conversations/:id` — conversation detail with tasks
 - `GET /api/stats` — aggregate stats
@@ -83,6 +85,13 @@ bun run dev          # http://localhost:3100
 - `POST /api/converse` — start a conversation (via daemon CLI)
 - `POST /api/gate/:id/approve` / `reject` — human gate actions
 - `POST /api/close/:id` / `resume/:id` — conversation lifecycle
+
+**Frontend features:**
+- Dark theme (zinc-950), conversation cards with expandable task details
+- State badges (color-coded), task timeline with status icons
+- Gate approve/reject buttons when conversation is in APPROVED state
+- Prompt input with auto-approve checkbox
+- Real-time updates via SSE
 
 ## Project Structure
 

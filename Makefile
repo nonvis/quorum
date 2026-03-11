@@ -89,11 +89,17 @@ clean-all: clean clean-data ## Remove everything (build + data)
 
 # ── Web ─────────────────────────────────────────────────────
 
-web-install: ## Install web dashboard dependencies
-	cd quorum-web && bun install
+web-install: ## Install web dashboard dependencies (server + client)
+	cd quorum-web && bun install && cd client && bun install
 
-web-dev: ## Start web API server (dev mode with watch)
+web-dev: ## Start web API server (dev mode with watch, :3100)
 	cd quorum-web && bun run dev
+
+web-client: ## Start React frontend (dev mode, :3101 → proxy :3100)
+	cd quorum-web && bun run dev:client
+
+web-build: ## Build React frontend for production
+	cd quorum-web && bun run build:client
 
 web-start: ## Start web API server (production)
 	cd quorum-web && bun run start
