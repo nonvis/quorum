@@ -29,10 +29,13 @@ export default function App() {
     fetchStats().then(setStats);
   });
 
+  const ACTIVE_STATES = new Set(["init", "thinking", "approved", "executing", "reviewing"]);
+  const busy = conversations.some((c) => ACTIVE_STATES.has(c.state));
+
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
       <StatsBanner stats={stats} config={projectConfig} />
-      <PromptInput onSubmit={refresh} />
+      <PromptInput onSubmit={refresh} busy={busy} />
 
       <div className="px-6 pb-6">
         <h2 className="text-sm font-medium text-zinc-500 uppercase tracking-wide mb-3">
