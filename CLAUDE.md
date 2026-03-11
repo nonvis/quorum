@@ -4,7 +4,7 @@
 
 Quorum is a **multi-agent orchestration framework**. A deterministic C++20 daemon orchestrates independent AI agents that coordinate through structured proposals and persist knowledge in local vaults.
 
-**Current phase: Phase 0.9 — Executor Pipeline.** Pure local orchestration on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) are deferred indefinitely.
+**Current phase: Phase 1 — Multi-Domain Expansion.** Pure local orchestration on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) are deferred indefinitely.
 
 **Tagline:** "Define your agents, point them at your project, let the daemon run."
 
@@ -13,6 +13,13 @@ Quorum is a **multi-agent orchestration framework**. A deterministic C++20 daemo
 ```
 quorum/
 ├── CLAUDE.md                    ← You are here
+├── configs/                     # Project configs (one YAML per project)
+│   ├── mm-bot.yaml              # mm-bot project config (agents, budget, conversations)
+│   ├── hello-world.yaml         # hello-world verification project config
+│   ├── agents/
+│   │   ├── mm-bot/              # mm-bot agent YAMLs (market_analyst, bot_analyst, etc.)
+│   │   └── hello-world/         # hello-world agent YAMLs (thinker, executor, reviewer)
+│   └── tasks/                   # Task YAML definitions
 ├── quorum-core/                 # C++20 (CLOSED SOURCE) — orchestrator daemon
 │   ├── CMakeLists.txt
 │   ├── src/
@@ -27,10 +34,8 @@ quorum/
 │   │   ├── utils/               # HTTP (libcurl), JSON (manual), crypto (ed25519), config, UUID
 │   │   ├── sdk/                 # [DEFERRED] libquorum public API
 │   │   └── cli/                 # quorum binary CLI commands
-│   ├── tests/
-│   └── configs/                 # Agent YAML definitions, task YAML definitions
-│
-├── data/                        # Runtime data (not compiled)
+│   └── tests/
+├── data/                        # Runtime data (gitignored)
 │   ├── vaults/                  # Per-agent vaults (CONTEXT.md, knowledge/, inbox/)
 │   └── knowledge/               # Shared knowledge base (inbox/, library/, archive/)
 │       └── PROCESSING.md        # Instructions for knowledge synthesis agent
@@ -81,7 +86,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 
 # Run daemon
-./build/quorum_daemon --config configs/quorum.yaml
+./build/quorum_daemon --config configs/mm-bot.yaml
 
 # Run tests
 cd build && ctest --output-on-failure
@@ -311,7 +316,7 @@ auto result = db.query("SELECT * FROM metrics WHERE agent = ?", agent_id);
 ### Config Pattern
 
 ```yaml
-# configs/quorum.yaml — daemon config (key sections)
+# configs/mm-bot.yaml — daemon config (key sections)
 daemon:
   pid_file: /tmp/quorum.pid
   data_dir: ./data
@@ -333,10 +338,10 @@ conversations:
   reviewer: reviewer             # agent id for reviewer role
 
 agents:
-  - config: configs/agents/market_analyst.yaml
-  - config: configs/agents/bot_analyst.yaml
-  - config: configs/agents/engineer.yaml
-  - config: configs/agents/operator.yaml
+  - config: configs/agents/mm-bot/market_analyst.yaml
+  - config: configs/agents/mm-bot/bot_analyst.yaml
+  - config: configs/agents/mm-bot/engineer.yaml
+  - config: configs/agents/mm-bot/operator.yaml
 ```
 
 ### Agent YAML Pattern
@@ -395,7 +400,7 @@ executor:
 
 ## Current Phase
 
-**Phase 0.9: Executor Pipeline** — Dual-pipeline conversation mode (analyst + executor) with human gate CLI.
+**Phase 1: Multi-Domain Expansion** — Project-specific configs, hello-world verification pipeline.
 
 Priority order:
 1. ~~C++ daemon skeleton~~ ✓ (main.cpp, signal handling, PID lock, config loading)
@@ -420,6 +425,7 @@ Priority order:
 20. ~~Agent class + terminology~~ ✓ (`agent_class: analyst` added to all 4 agent YAMLs; execution mode comments in `quorum.yaml`; dispatch comment in `main.cpp` updated for dual-mode awareness; `DEVELOPMENT.md` and `README.md` rewritten for local-first positioning; `Makefile` header updated)
 21. ~~AgentMetadata + executor support in Invoker~~ ✓ (`AgentRef` replaced with `AgentMetadata` struct in `config.h` — 7 fields: id, name, agent_class, config_path, vault_path, context_file, target_dir; `load_agent_config()` parses individual agent YAMLs at startup; `load_config()` calls it for each `- config:` entry; `invoke()` now takes `const AgentMetadata&` — conditionally omits `--disallowedTools` for executor agents, prepends `cd target_dir &&` with `~/` expansion; main.cpp looks up agent metadata before dispatch; startup banner lists each agent with its class; all 11 tests pass)
 22. ~~Executor pipeline + human gate~~ ✓ (`ConversationConfig` extended with `pipeline`, `thinker_agent`, `executor_agent`, `reviewer_agent` fields parsed from `conversations:` YAML; `ConversationRecord` + DB schema extended with `pipeline` column; `ConversationEngine` constructor takes configurable agent names (defaults preserve backward compat); `start()` accepts pipeline param; `handle_thinking()` branches: analyst → REVIEWING, executor → APPROVED (human gate); `gate()` method: validates APPROVED state, creates executor task, transitions to EXECUTING; `handle_executing()`: collects executor+thinker output, creates reviewer task; `resume()` supports `execute` task type; `gate` CLI subcommand: `--approve`/`--reject --conversation <id>`, no PID lock; `print_conversations()` shows pipeline; all hardcoded agent names replaced with member variables; all 11 tests pass)
+23. ~~Multi-project config layout~~ ✓ (`configs/quorum.yaml` renamed to `configs/mm-bot.yaml`; agent YAMLs moved to `configs/agents/mm-bot/` subfolder; all references updated across 15 files; `configs/hello-world.yaml` + `configs/agents/hello-world/{thinker,executor,reviewer}.yaml` added as minimal T→E→R executor pipeline verification project; vault CONTEXT.md files created locally in `data/vaults/{thinker,executor,reviewer}/` — gitignored per convention)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 
@@ -439,31 +445,31 @@ Priority order:
 cmake -B build && cmake --build build -j$(nproc)
 
 # Run daemon (no subcommand — plain daemon mode)
-./build/quorum_daemon --config configs/quorum.yaml
+./build/quorum_daemon --config configs/mm-bot.yaml
 
 # Run with verbose logging
-./build/quorum_daemon --config configs/quorum.yaml --verbose
+./build/quorum_daemon --config configs/mm-bot.yaml --verbose
 
 # Start a conversation + daemon
-./build/quorum_daemon --config configs/quorum.yaml converse "Analyze market trends"
+./build/quorum_daemon --config configs/mm-bot.yaml converse "Analyze market trends"
 
 # Start with custom budget and max rounds
-./build/quorum_daemon --config configs/quorum.yaml converse --budget 3.0 --max-rounds 5 "goal text"
+./build/quorum_daemon --config configs/mm-bot.yaml converse --budget 3.0 --max-rounds 5 "goal text"
 
 # List all conversations (no PID lock, no daemon)
-./build/quorum_daemon --config configs/quorum.yaml status
+./build/quorum_daemon --config configs/mm-bot.yaml status
 
 # Resume a paused conversation (works with or without running daemon)
-./build/quorum_daemon --config configs/quorum.yaml resume --conversation 1
+./build/quorum_daemon --config configs/mm-bot.yaml resume --conversation 1
 
 # Close a conversation (no PID lock, no daemon)
-./build/quorum_daemon --config configs/quorum.yaml close --conversation 1
+./build/quorum_daemon --config configs/mm-bot.yaml close --conversation 1
 
 # Approve executor at human gate (no PID lock, no daemon)
-./build/quorum_daemon --config configs/quorum.yaml gate --approve --conversation 1
+./build/quorum_daemon --config configs/mm-bot.yaml gate --approve --conversation 1
 
 # Reject at human gate (no PID lock, no daemon)
-./build/quorum_daemon --config configs/quorum.yaml gate --reject --conversation 1
+./build/quorum_daemon --config configs/mm-bot.yaml gate --reject --conversation 1
 
 # Agent invocation — analyst (what the daemon spawns, read-only tools)
 claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" --output-format json

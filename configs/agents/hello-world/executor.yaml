@@ -1,0 +1,21 @@
+# Agent: Executor
+# ===============
+# Implements approved proposals with full tool access.
+# Runs in target_dir, writes code, compiles, tests.
+
+id: executor
+agent_class: executor
+name: "Executor"
+description: "Implements proposals — full tool access, writes and tests code"
+
+vault_path: data/vaults/executor/
+context_file: data/vaults/executor/CONTEXT.md
+
+executor:
+  target_dir: ~/projects/hello-world
+
+context_budget:
+  max_vault_files: 5
+  max_vault_tokens: 10000
+  always_include:
+    - CONTEXT.md

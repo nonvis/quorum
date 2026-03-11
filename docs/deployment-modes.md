@@ -11,7 +11,7 @@ Quorum operates across a spectrum. You don't need the full Sui Stack to start â€
 **Storage:** Local files + SQLite
 
 ```yaml
-# quorum.yaml
+# mm-bot.yaml
 chain:
   enabled: false
 walrus:

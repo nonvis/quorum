@@ -1,0 +1,18 @@
+# Agent: Thinker
+# ==============
+# Plans implementation steps for a given goal.
+# Produces PROPOSAL blocks for the executor to follow.
+
+id: thinker
+agent_class: analyst
+name: "Thinker"
+description: "Plans implementation — analyzes goals and produces step-by-step proposals"
+
+vault_path: data/vaults/thinker/
+context_file: data/vaults/thinker/CONTEXT.md
+
+context_budget:
+  max_vault_files: 5
+  max_vault_tokens: 10000
+  always_include:
+    - CONTEXT.md

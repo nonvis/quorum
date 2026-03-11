@@ -25,7 +25,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CORE_DIR="$ROOT_DIR/quorum-core"
 DATA_DIR="$ROOT_DIR/data"
 DB_PATH="$DATA_DIR/quorum.db"
-CONFIG_PATH="$ROOT_DIR/configs/quorum.yaml"
+CONFIG_PATH="$ROOT_DIR/configs/mm-bot.yaml"
 DAEMON_BIN="$CORE_DIR/build/quorum_daemon"
 KNOWLEDGE_DIR="$DATA_DIR/knowledge"
 

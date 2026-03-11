@@ -1,0 +1,29 @@
+# Hello World — Phase 1 Verification Config
+# ==========================================
+# Minimal config for testing the T->E->R executor pipeline.
+# Target: ~/projects/hello-world/
+
+daemon:
+  pid_file: /tmp/quorum-hello-world.pid
+  data_dir: ./data
+  log_level: info
+
+budget:
+  daily_limit_usd: 5.00
+  hourly_limit_usd: 2.00
+  task_timeout_seconds: 120
+
+conversations:
+  enabled: true
+  default_max_rounds: 3
+  default_budget_usd: 3.0
+  human_gate: true
+  pipeline: executor
+  thinker: thinker
+  executor: executor
+  reviewer: reviewer
+
+agents:
+  - config: configs/agents/hello-world/thinker.yaml
+  - config: configs/agents/hello-world/executor.yaml
+  - config: configs/agents/hello-world/reviewer.yaml

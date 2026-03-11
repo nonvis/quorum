@@ -43,13 +43,13 @@ brew install openssl@3 sqlite
 make build
 
 # Start a conversation
-./build/quorum_daemon --config configs/quorum.yaml converse "Analyze mm-bot spread performance"
+./build/quorum_daemon --config configs/mm-bot.yaml converse "Analyze mm-bot spread performance"
 
 # Check status
-./build/quorum_daemon --config configs/quorum.yaml status
+./build/quorum_daemon --config configs/mm-bot.yaml status
 
 # Approve executor at human gate (executor pipeline)
-./build/quorum_daemon --config configs/quorum.yaml gate --approve --conversation 1
+./build/quorum_daemon --config configs/mm-bot.yaml gate --approve --conversation 1
 
 # Start daemon only (Task Queue mode — seed tasks separately)
 make run-verbose

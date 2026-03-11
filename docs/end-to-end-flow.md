@@ -45,7 +45,7 @@ This creates:
 
 ```
 my-trading-agents/
-├── quorum.yaml              # Daemon config (chain, walrus, inference settings)
+├── mm-bot.yaml              # Daemon config (chain, walrus, inference settings)
 ├── agents/
 │   ├── market_analyst.yaml  # Agent role definition
 │   ├── bot_analyst.yaml
@@ -72,7 +72,7 @@ my-trading-agents/
 ```bash
 # LLM access (pick one or both)
 export ANTHROPIC_API_KEY=sk-ant-...          # Tier 2: frontier model
-# Or configure local LLM in quorum.yaml:
+# Or configure local LLM in mm-bot.yaml:
 #   inference.local.url: http://localhost:11434  (Ollama)
 
 # Sui wallet (for on-chain features)

@@ -8,7 +8,7 @@
 | 0.5 | mm-bot Observation Mode | Complete (2026-03-07) |
 | 0.7 | Conversation Mode | Complete (2026-03-08) |
 | 0.9 | Executor Pipeline | Complete (2026-03-11) |
-| 1 | Multi-Domain Expansion | Planned |
+| 1 | Multi-Domain Expansion | In Progress (2026-03-11) |
 
 ## Architecture
 
@@ -67,25 +67,25 @@ brew install openssl@3 sqlite
 
 ```bash
 # Start a conversation (creates goal + starts daemon)
-./build/quorum_daemon --config configs/quorum.yaml converse "Analyze spread performance"
+./build/quorum_daemon --config configs/mm-bot.yaml converse "Analyze spread performance"
 
 # List conversations
-./build/quorum_daemon --config configs/quorum.yaml status
+./build/quorum_daemon --config configs/mm-bot.yaml status
 
 # Resume a paused conversation
-./build/quorum_daemon --config configs/quorum.yaml resume --conversation 1
+./build/quorum_daemon --config configs/mm-bot.yaml resume --conversation 1
 
 # Close a conversation
-./build/quorum_daemon --config configs/quorum.yaml close --conversation 1
+./build/quorum_daemon --config configs/mm-bot.yaml close --conversation 1
 
 # Approve execution at human gate
-./build/quorum_daemon --config configs/quorum.yaml gate --approve --conversation 1
+./build/quorum_daemon --config configs/mm-bot.yaml gate --approve --conversation 1
 
 # Reject at human gate
-./build/quorum_daemon --config configs/quorum.yaml gate --reject --conversation 1
+./build/quorum_daemon --config configs/mm-bot.yaml gate --reject --conversation 1
 
 # Start daemon only (Task Queue mode)
-./build/quorum_daemon --config configs/quorum.yaml
+./build/quorum_daemon --config configs/mm-bot.yaml
 ```
 
 ## Source Layout

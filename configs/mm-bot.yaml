@@ -53,6 +53,9 @@ conversations:
   default_max_rounds: 3           # max T->R revision cycles per conversation
   default_budget_usd: 5.0         # per-conversation budget cap
   human_gate: true                # require operator approval before executor (Phase 0.9)
+  pipeline: analyst
+  thinker: market_analyst
+  reviewer: bot_analyst
 
 # Execution modes:
 #   Task Queue   — operator seeds tasks, agents execute (Phase 0.5)
@@ -60,7 +63,7 @@ conversations:
 # See: 01_Projects/Quorum/12 - Execution Modes.md
 
 agents:
-  - config: configs/agents/market_analyst.yaml
-  - config: configs/agents/bot_analyst.yaml
-  - config: configs/agents/engineer.yaml
-  - config: configs/agents/operator.yaml
+  - config: configs/agents/mm-bot/market_analyst.yaml
+  - config: configs/agents/mm-bot/bot_analyst.yaml
+  - config: configs/agents/mm-bot/engineer.yaml
+  - config: configs/agents/mm-bot/operator.yaml

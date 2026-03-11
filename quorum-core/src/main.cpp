@@ -130,7 +130,7 @@ static void print_usage(const char* prog) {
               << "  " << prog << " --config <path> gate --approve --conversation <id>  Approve execution\n"
               << "  " << prog << " --config <path> gate --reject --conversation <id>   Reject execution\n"
               << "\nOptions:\n"
-              << "  --config <path>      Path to quorum.yaml (required)\n"
+              << "  --config <path>      Path to config YAML (required, e.g. configs/mm-bot.yaml)\n"
               << "  --verbose            Enable verbose logging\n"
               << "  --budget <usd>       Per-conversation budget (default: 5.0)\n"
               << "  --max-rounds <n>     Max revision rounds (default: 3)\n"

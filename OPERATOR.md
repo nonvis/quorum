@@ -23,8 +23,8 @@ cmake --build build -j$(nproc)
 ### Run Daemon
 
 ```bash
-./build/quorum_daemon --config configs/quorum.yaml
-./build/quorum_daemon --config configs/quorum.yaml --verbose   # Verbose logging
+./build/quorum_daemon --config configs/mm-bot.yaml
+./build/quorum_daemon --config configs/mm-bot.yaml --verbose   # Verbose logging
 ```
 
 Daemon creates PID lock at `/tmp/quorum.pid`. Data directory: `./data/`.
@@ -73,7 +73,7 @@ sqlite3 data/quorum.db "SELECT SUM(input_tokens), SUM(output_tokens), SUM(cost_u
 |----------|------|
 | `data/quorum.db` | SQLite: task queue, token tracking, proposal state |
 | `data/vaults/{agent}/` | Agent vaults: CONTEXT.md, knowledge/, experiments/, decisions/, inbox/ |
-| `configs/quorum.yaml` | Daemon config |
+| `configs/mm-bot.yaml` | Daemon config |
 | `configs/agents/*.yaml` | Agent definitions |
 | `/tmp/quorum.pid` | PID lock file |
 

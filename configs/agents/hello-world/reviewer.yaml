@@ -1,0 +1,18 @@
+# Agent: Reviewer
+# ===============
+# Reviews executor output. Checks correctness and completeness.
+# Produces REVIEW blocks with approve/reject verdict.
+
+id: reviewer
+agent_class: analyst
+name: "Reviewer"
+description: "Reviews code changes — verifies implementation matches the plan"
+
+vault_path: data/vaults/reviewer/
+context_file: data/vaults/reviewer/CONTEXT.md
+
+context_budget:
+  max_vault_files: 5
+  max_vault_tokens: 10000
+  always_include:
+    - CONTEXT.md

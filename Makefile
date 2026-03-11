@@ -9,7 +9,7 @@
 BUILD_DIR    := build
 BUILD_TYPE   := Release
 NPROC        := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-CONFIG       := configs/quorum.yaml
+CONFIG       := configs/mm-bot.yaml
 SUI_NETWORK  := testnet
 
 # ── Help ─────────────────────────────────────────────────────
