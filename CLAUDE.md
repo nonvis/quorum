@@ -39,6 +39,7 @@ quorum/
 │   ├── vaults/                  # Per-agent vaults (CONTEXT.md, knowledge/, inbox/)
 │   └── knowledge/               # Shared knowledge base (inbox/, library/, archive/)
 │       └── PROCESSING.md        # Instructions for knowledge synthesis agent
+├── .claude/commands/             # Claude Code skills (project scaffolding, ops)
 ├── scripts/                     # Shell scripts (smoke tests, utilities)
 └── docs/                        # Design documents
 ```
@@ -486,3 +487,13 @@ claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,
 # Troubleshooting: clear stale SQLite WAL/SHM if daemon sees wrong data
 rm -f data/quorum.db-wal data/quorum.db-shm
 ```
+
+## Claude Code Skills
+
+Interactive skills in `.claude/commands/` — use `/skill-name` in Claude Code:
+
+| Skill | Purpose |
+|-------|---------|
+| `/quorum-setup` | Scaffold a new project or initialize data/ for an existing config |
+
+Skills replace shell scripts for project scaffolding. They can ask questions, read existing configs for patterns, validate what they create, and adapt — no rigid script to maintain.
