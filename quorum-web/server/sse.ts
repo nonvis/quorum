@@ -86,6 +86,9 @@ export function createSSEStream(): ReadableStream {
             const convs = getConversations();
             const data = JSON.stringify({ type: "update", changes, conversations: convs });
             controller.enqueue(`data: ${data}\n\n`);
+          } else {
+            // Keepalive to prevent idle timeout
+            controller.enqueue(`: keepalive\n\n`);
           }
 
           lastSnapshot = current;

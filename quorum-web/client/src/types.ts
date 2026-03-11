@@ -35,3 +35,9 @@ export interface Stats {
   active_tasks: number;
   active_conversations: number;
 }
+
+export interface ProjectConfig {
+  target_dir: string | null;
+  pipeline: string | null;
+  config_path: string;
+}

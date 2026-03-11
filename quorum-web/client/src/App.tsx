@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
-import type { Conversation, Stats } from "./types";
-import { fetchConversations, fetchStats } from "./api";
+import type { Conversation, Stats, ProjectConfig } from "./types";
+import { fetchConversations, fetchStats, fetchConfig } from "./api";
 import { useSSE } from "./hooks/useSSE";
 import { StatsBanner } from "./components/StatsBanner";
 import { PromptInput } from "./components/PromptInput";
@@ -9,6 +9,7 @@ import { ConversationCard } from "./components/ConversationCard";
 export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [projectConfig, setProjectConfig] = useState<ProjectConfig | null>(null);
 
   const refresh = useCallback(async () => {
     const [convs, st] = await Promise.all([fetchConversations(), fetchStats()]);
@@ -19,6 +20,7 @@ export default function App() {
   // Initial load
   useEffect(() => {
     refresh();
+    fetchConfig().then(setProjectConfig);
   }, [refresh]);
 
   // SSE for real-time updates
@@ -29,7 +31,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
-      <StatsBanner stats={stats} />
+      <StatsBanner stats={stats} config={projectConfig} />
       <PromptInput onSubmit={refresh} />
 
       <div className="px-6 pb-6">

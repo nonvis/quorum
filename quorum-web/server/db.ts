@@ -3,7 +3,16 @@ import { config } from "../config";
 
 // Open in readonly mode — all writes go through daemon CLI
 const db = new Database(config.dbPath, { readonly: true });
-db.exec("PRAGMA journal_mode=WAL");
+
+// Fresh connection for cross-process reads (WAL snapshot isolation)
+export function freshQuery<T>(sql: string, params?: any[]): T[] {
+  const fresh = new Database(config.dbPath, { readonly: true });
+  const result = params
+    ? fresh.query(sql).all(...params) as T[]
+    : fresh.query(sql).all() as T[];
+  fresh.close();
+  return result;
+}
 
 export interface Conversation {
   id: number;

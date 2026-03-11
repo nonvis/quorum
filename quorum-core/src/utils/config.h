@@ -14,6 +14,7 @@ struct DaemonConfig {
     std::string data_dir = "./data";
     std::string log_level = "info";
     std::string knowledge_dir = "./data/knowledge";
+    std::string target_dir;                // project-level working directory for agents
 };
 
 struct ChainConfig {
@@ -83,7 +84,7 @@ struct AgentMetadata {
     std::string config_path;
     std::string vault_path;
     std::string context_file;
-    std::string target_dir;               // executor only: working directory for claude -p
+    std::string target_dir;               // working directory for claude -p (inherits from daemon.target_dir)
 };
 
 struct QuorumConfig {
@@ -244,6 +245,7 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
             else if (key == "data_dir") cfg.daemon.data_dir = val;
             else if (key == "log_level") cfg.daemon.log_level = val;
             else if (key == "knowledge_dir") cfg.daemon.knowledge_dir = val;
+            else if (key == "target_dir") cfg.daemon.target_dir = val;
         } else if (section == "chain") {
             if (key == "network") cfg.chain.network = val;
             else if (key == "rpc_url") cfg.chain.rpc_url = val;
@@ -305,6 +307,15 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
             else if (key == "thinker") cfg.conversations.thinker_agent = val;
             else if (key == "executor") cfg.conversations.executor_agent = val;
             else if (key == "reviewer") cfg.conversations.reviewer_agent = val;
+        }
+    }
+
+    // Apply project-level target_dir as default for agents that don't override
+    if (!cfg.daemon.target_dir.empty()) {
+        for (auto& agent : cfg.agents) {
+            if (agent.target_dir.empty()) {
+                agent.target_dir = cfg.daemon.target_dir;
+            }
         }
     }
 

@@ -530,6 +530,9 @@ int main(int argc, char* argv[]) {
     std::cout << "====================" << std::endl;
     std::cout << "  Network:    " << cfg.chain.network << "\n";
     std::cout << "  Data dir:   " << cfg.daemon.data_dir << "\n";
+    if (!cfg.daemon.target_dir.empty()) {
+        std::cout << "  Target dir: " << cfg.daemon.target_dir << "\n";
+    }
     std::cout << "  Log level:  " << cfg.daemon.log_level << "\n";
     std::cout << "  Agents:     " << cfg.agents.size() << "\n";
     for (const auto& a : cfg.agents) {

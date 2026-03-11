@@ -1,4 +1,4 @@
-import type { Conversation, Task, Stats } from "./types";
+import type { Conversation, Task, Stats, ProjectConfig } from "./types";
 
 const BASE = "/api";
 
@@ -14,6 +14,11 @@ export async function fetchConversation(id: number): Promise<Conversation & { ta
 
 export async function fetchStats(): Promise<Stats> {
   const res = await fetch(`${BASE}/stats`);
+  return res.json();
+}
+
+export async function fetchConfig(): Promise<ProjectConfig> {
+  const res = await fetch(`${BASE}/config`);
   return res.json();
 }
 

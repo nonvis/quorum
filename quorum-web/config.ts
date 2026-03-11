@@ -1,7 +1,7 @@
 import { resolve } from "path";
 
 // Resolve paths relative to quorum repo root (one level up from quorum-web/)
-const repoRoot = resolve(import.meta.dir, "..");
+export const repoRoot = resolve(import.meta.dir, "..");
 
 export const config = {
   port: 3100,

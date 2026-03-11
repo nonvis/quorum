@@ -7,6 +7,7 @@ daemon:
   pid_file: /tmp/quorum-hello-world.pid
   data_dir: ./data
   log_level: info
+  target_dir: ~/projects/hello-world
 
 budget:
   daily_limit_usd: 5.00

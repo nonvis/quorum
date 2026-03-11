@@ -11,9 +11,6 @@ description: "Implements proposals — full tool access, writes and tests code"
 vault_path: data/vaults/executor/
 context_file: data/vaults/executor/CONTEXT.md
 
-executor:
-  target_dir: ~/projects/hello-world
-
 context_budget:
   max_vault_files: 5
   max_vault_tokens: 10000
