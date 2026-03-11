@@ -329,6 +329,37 @@ private:
             reasoning = parsed.reviews[0].reasoning;
             // Lowercase the verdict
             for (auto& c : verdict) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        } else {
+            // Fallback: scan raw output for verdict when parser missed the REVIEW block
+            // (e.g., reviewer used markdown list format instead of code fence)
+            auto raw = parsed.raw.empty() ? parsed.free_text : parsed.raw;
+            // Lowercase copy for matching
+            std::string lower;
+            lower.reserve(raw.size());
+            for (auto c : raw) lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+            // Look for verdict patterns: "verdict: approve", "**verdict:** approve", etc.
+            for (auto pattern : {"verdict: ", "verdict:** "}) {
+                auto pos = lower.find(pattern);
+                if (pos != std::string::npos) {
+                    auto start = pos + std::string(pattern).size();
+                    auto end = lower.find_first_of("\n\r,", start);
+                    auto val = raw.substr(start, end == std::string::npos ? std::string::npos : end - start);
+                    // Trim
+                    while (!val.empty() && (val.front() == ' ' || val.front() == '*')) val.erase(val.begin());
+                    while (!val.empty() && (val.back() == ' ' || val.back() == '*')) val.pop_back();
+                    if (!val.empty()) {
+                        for (auto& c : val) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        if (val == "approve" || val == "approved" || val == "accept") verdict = "approve";
+                        else if (val == "revise" || val == "revision") verdict = "revise";
+                        else if (val == "escalate") verdict = "escalate";
+                        else verdict = "reject";
+                        std::cout << "[conversation " << conv_id
+                                  << "] verdict extracted from raw output: " << verdict << "\n";
+                    }
+                    break;
+                }
+            }
         }
 
         if (verdict == "approve") {
