@@ -314,10 +314,16 @@ private:
             return true;
         }
 
-        // No proposals — close
-        db_.update_conversation_state(conv_id, "closed");
-        std::cout << "[conversation " << conv_id
-                  << "] closed — thinker produced no proposals\n";
+        // No proposals — if thinker produced a direct answer, mark done; otherwise close
+        if (!parsed.summary.empty() || !parsed.free_text.empty()) {
+            db_.complete_conversation(conv_id);
+            std::cout << "[conversation " << conv_id
+                      << "] done — thinker answered directly (no proposal needed)\n";
+        } else {
+            db_.update_conversation_state(conv_id, "closed");
+            std::cout << "[conversation " << conv_id
+                      << "] closed — thinker produced no output\n";
+        }
         return false;
     }
 
