@@ -74,6 +74,18 @@ public:
             return {.success = false, .error = err};
         }
 
+        // Prepend CONTEXT.md if the agent has one and it's not already in the prompt
+        if (!agent_meta.context_file.empty()) {
+            std::ifstream ctx(agent_meta.context_file);
+            if (ctx.is_open()) {
+                std::string context{std::istreambuf_iterator<char>(ctx),
+                                    std::istreambuf_iterator<char>()};
+                if (!context.empty()) {
+                    prompt = "# Agent Context\n\n" + context + "\n\n---\n\n" + prompt;
+                }
+            }
+        }
+
         // Write prompt to temp file to avoid shell escaping issues
         auto temp_path = "/tmp/quorum_prompt_" + std::to_string(task_id) + ".txt";
         {
