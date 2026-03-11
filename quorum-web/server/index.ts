@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { config, repoRoot } from "../config";
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import {
   getConversations,
   getConversation,
@@ -43,16 +43,82 @@ app.get("/api/stats", (c) => {
 });
 
 app.get("/api/config", (c) => {
-  // Parse target_dir and pipeline from YAML config
   try {
     const yaml = readFileSync(config.configPath, "utf-8");
+
+    // Parse daemon section
     const targetDir = yaml.match(/^\s+target_dir:\s*(.+)/m)?.[1]?.trim() ?? null;
-    const pipeline = yaml.match(/^\s+pipeline:\s*(.+)/m)?.[1]?.trim() ?? null;
+    const pidFile = yaml.match(/^\s+pid_file:\s*(.+)/m)?.[1]?.trim() ?? null;
+    const dataDir = yaml.match(/^\s+data_dir:\s*(.+)/m)?.[1]?.trim() ?? null;
+    const logLevel = yaml.match(/^\s+log_level:\s*(.+)/m)?.[1]?.trim() ?? null;
+
+    // Parse budget section
     const dailyBudget = parseFloat(yaml.match(/^\s+daily_limit_usd:\s*(.+)/m)?.[1] ?? "0") || null;
+    const hourlyBudget = parseFloat(yaml.match(/^\s+hourly_limit_usd:\s*(.+)/m)?.[1] ?? "0") || null;
+    const taskTimeout = parseInt(yaml.match(/^\s+task_timeout_seconds:\s*(.+)/m)?.[1] ?? "0") || null;
+
+    // Parse conversations section
+    const pipeline = yaml.match(/^\s+pipeline:\s*(.+)/m)?.[1]?.trim() ?? null;
     const convBudget = parseFloat(yaml.match(/^\s+default_budget_usd:\s*(.+)/m)?.[1] ?? "0") || null;
-    return c.json({ target_dir: targetDir, pipeline, daily_budget_usd: dailyBudget, conv_budget_usd: convBudget, config_path: config.configPath });
+    const maxRounds = parseInt(yaml.match(/^\s+default_max_rounds:\s*(.+)/m)?.[1] ?? "0") || null;
+    const humanGate = yaml.match(/^\s+human_gate:\s*(.+)/m)?.[1]?.trim() === "true";
+
+    // Parse agents
+    const agentConfigs = [...yaml.matchAll(/^\s+-\s*config:\s*(.+)/gm)].map((m) => m[1].trim());
+
+    return c.json({
+      config_path: config.configPath,
+      daemon: { target_dir: targetDir, pid_file: pidFile, data_dir: dataDir, log_level: logLevel },
+      budget: { daily_limit_usd: dailyBudget, hourly_limit_usd: hourlyBudget, task_timeout_seconds: taskTimeout },
+      conversations: { pipeline, default_budget_usd: convBudget, default_max_rounds: maxRounds, human_gate: humanGate },
+      agents: agentConfigs,
+    });
   } catch {
-    return c.json({ target_dir: null, pipeline: null, daily_budget_usd: null, conv_budget_usd: null, config_path: config.configPath });
+    return c.json({
+      config_path: config.configPath,
+      daemon: { target_dir: null, pid_file: null, data_dir: null, log_level: null },
+      budget: { daily_limit_usd: null, hourly_limit_usd: null, task_timeout_seconds: null },
+      conversations: { pipeline: null, default_budget_usd: null, default_max_rounds: null, human_gate: false },
+      agents: [],
+    });
+  }
+});
+
+app.post("/api/config", async (c) => {
+  const updates = await c.req.json<Record<string, string | number | boolean>>();
+
+  try {
+    let yaml = readFileSync(config.configPath, "utf-8");
+
+    // Map of field names to YAML keys
+    const fieldMap: Record<string, string> = {
+      target_dir: "target_dir",
+      log_level: "log_level",
+      daily_limit_usd: "daily_limit_usd",
+      hourly_limit_usd: "hourly_limit_usd",
+      task_timeout_seconds: "task_timeout_seconds",
+      default_budget_usd: "default_budget_usd",
+      default_max_rounds: "default_max_rounds",
+      human_gate: "human_gate",
+      pipeline: "pipeline",
+    };
+
+    for (const [field, value] of Object.entries(updates)) {
+      const yamlKey = fieldMap[field];
+      if (!yamlKey) continue;
+
+      // Replace the value in the YAML (preserving indentation)
+      const regex = new RegExp(`^(\\s+${yamlKey}:\\s*)(.+)$`, "m");
+      if (regex.test(yaml)) {
+        yaml = yaml.replace(regex, `$1${value}`);
+      }
+    }
+
+    writeFileSync(config.configPath, yaml);
+
+    return c.json({ success: true });
+  } catch (e) {
+    return c.json({ error: "Failed to update config" }, 500);
   }
 });
 
@@ -114,7 +180,7 @@ app.post("/api/gate/:id/approve", async (c) => {
   const id = c.req.param("id");
 
   // If proposal text provided, update the thinker's task result before approving
-  const body = await c.req.json<{ proposal?: string }>().catch(() => ({}));
+  const body = await c.req.json<{ proposal?: string }>().catch(() => ({} as { proposal?: string }));
   if (body.proposal) {
     dbWrite(
       "UPDATE tasks SET result = ? WHERE id = (SELECT id FROM tasks WHERE conversation_id = ? AND task_type = 'think' AND status = 'done' ORDER BY id DESC LIMIT 1)",
@@ -157,6 +223,27 @@ app.post("/api/resume/:id", async (c) => {
   console.log(`[resume] spawning daemon for conversation ${id}`);
   spawnDaemon("resume", "--conversation", id);
   return c.json({ success: true });
+});
+
+app.post("/api/conversations/:id/budget", async (c) => {
+  const id = Number(c.req.param("id"));
+  const body = await c.req.json<{ budget_usd: number }>();
+  if (!body.budget_usd || body.budget_usd <= 0) {
+    return c.json({ error: "budget_usd must be positive" }, 400);
+  }
+  dbWrite("UPDATE conversations SET budget_usd = ? WHERE id = ?", [body.budget_usd, id]);
+
+  // If conversation was paused due to budget, auto-resume
+  const conv = freshQuery<{ state: string; paused_reason: string | null }>(
+    "SELECT state, paused_reason FROM conversations WHERE id = ?",
+    [id]
+  );
+  if (conv[0]?.state === "paused" && conv[0]?.paused_reason?.includes("budget")) {
+    console.log(`[budget] conversation ${id} budget increased to $${body.budget_usd}, auto-resuming`);
+    spawnDaemon("resume", "--conversation", String(id));
+  }
+
+  return c.json({ success: true, budget_usd: body.budget_usd });
 });
 
 // -- Start --

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import type { Conversation, Task } from "../types";
-import { fetchConversation } from "../api";
+import { fetchConversation, updateBudget } from "../api";
 import { StateBadge } from "./StateBadge";
 import { TaskTimeline } from "./TaskTimeline";
 import { GateControls } from "./GateControls";
@@ -14,6 +14,7 @@ export function ConversationCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [budgetInput, setBudgetInput] = useState("");
   const c = conversation;
 
   useEffect(() => {
@@ -51,7 +52,10 @@ export function ConversationCard({
           <p className="text-white truncate">{c.goal}</p>
         </div>
         <div className="text-right text-sm text-zinc-400 shrink-0">
-          <div className="font-mono">${c.spent_usd.toFixed(2)}</div>
+          <div className="font-mono">
+            ${c.spent_usd.toFixed(2)}
+            <span className="text-zinc-500"> / ${c.budget_usd.toFixed(2)}</span>
+          </div>
           <div className="text-xs">{c.pipeline}</div>
         </div>
       </div>
@@ -71,6 +75,42 @@ export function ConversationCard({
         >
           <span className="text-orange-400 text-sm">Awaiting your decision</span>
           <GateControls conversationId={c.id} proposalText={proposalText} onAction={onAction} />
+        </div>
+      )}
+
+      {/* Budget increase for paused conversations */}
+      {c.state === "paused" && (
+        <div
+          className="mt-3 flex items-center gap-3"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span className="text-amber-400 text-sm">Paused{c.paused_reason ? `: ${c.paused_reason}` : ""}</span>
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-zinc-500 text-xs">Budget $</span>
+            <input
+              type="number"
+              step="0.5"
+              min={c.budget_usd}
+              value={budgetInput}
+              onChange={(e) => setBudgetInput(e.target.value)}
+              placeholder={c.budget_usd.toFixed(2)}
+              className="w-20 px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-white text-sm font-mono focus:outline-none focus:border-zinc-500"
+            />
+            <button
+              onClick={async () => {
+                const val = parseFloat(budgetInput);
+                if (val > 0) {
+                  await updateBudget(c.id, val);
+                  setBudgetInput("");
+                  onAction();
+                }
+              }}
+              disabled={!budgetInput || parseFloat(budgetInput) <= 0}
+              className="px-3 py-1 bg-amber-600 text-white rounded text-sm font-medium hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Increase & Resume
+            </button>
+          </div>
         </div>
       )}
 

@@ -37,9 +37,23 @@ export interface Stats {
 }
 
 export interface ProjectConfig {
-  target_dir: string | null;
-  pipeline: string | null;
-  daily_budget_usd: number | null;
-  conv_budget_usd: number | null;
   config_path: string;
+  daemon: {
+    target_dir: string | null;
+    pid_file: string | null;
+    data_dir: string | null;
+    log_level: string | null;
+  };
+  budget: {
+    daily_limit_usd: number | null;
+    hourly_limit_usd: number | null;
+    task_timeout_seconds: number | null;
+  };
+  conversations: {
+    pipeline: string | null;
+    default_budget_usd: number | null;
+    default_max_rounds: number | null;
+    human_gate: boolean;
+  };
+  agents: string[];
 }

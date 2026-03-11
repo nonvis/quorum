@@ -5,11 +5,13 @@ import { useSSE } from "./hooks/useSSE";
 import { StatsBanner } from "./components/StatsBanner";
 import { PromptInput } from "./components/PromptInput";
 import { ConversationCard } from "./components/ConversationCard";
+import { ConfigPanel } from "./components/ConfigPanel";
 
 export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [projectConfig, setProjectConfig] = useState<ProjectConfig | null>(null);
+  const [showConfig, setShowConfig] = useState(false);
 
   const refresh = useCallback(async () => {
     const [convs, st] = await Promise.all([fetchConversations(), fetchStats()]);
@@ -34,7 +36,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
-      <StatsBanner stats={stats} config={projectConfig} />
+      <StatsBanner stats={stats} config={projectConfig} onSettingsClick={() => setShowConfig(true)} />
       <PromptInput onSubmit={refresh} busy={busy} />
 
       <div className="px-6 pb-6">
@@ -52,6 +54,7 @@ export default function App() {
           )}
         </div>
       </div>
+      {showConfig && <ConfigPanel onClose={() => { setShowConfig(false); fetchConfig().then(setProjectConfig); }} />}
     </div>
   );
 }

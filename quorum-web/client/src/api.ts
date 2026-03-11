@@ -54,3 +54,21 @@ export async function resumeConversation(id: number) {
   const res = await fetch(`${BASE}/resume/${id}`, { method: "POST" });
   return res.json();
 }
+
+export async function updateBudget(id: number, budget_usd: number) {
+  const res = await fetch(`${BASE}/conversations/${id}/budget`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ budget_usd }),
+  });
+  return res.json();
+}
+
+export async function updateConfig(updates: Record<string, string | number | boolean>) {
+  const res = await fetch(`${BASE}/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  return res.json();
+}
