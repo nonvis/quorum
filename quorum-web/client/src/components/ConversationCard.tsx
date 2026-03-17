@@ -3,7 +3,7 @@ import type { Conversation, Task } from "../types";
 import { fetchConversation, updateBudget } from "../api";
 import { StateBadge } from "./StateBadge";
 import { TaskTimeline } from "./TaskTimeline";
-import { GateControls } from "./GateControls";
+import { RespondControls } from "./RespondControls";
 
 export function ConversationCard({
   conversation,
@@ -23,18 +23,13 @@ export function ConversationCard({
     }
   }, [expanded, c.id, c.state]);
 
-  // Auto-expand if in approved state (needs user action)
-  const showGate = c.state === "approved";
-
-  // Find the thinker's result for proposal display
-  const thinkerTask = tasks.find((t) => t.task_type === "think" && t.status === "done");
-  const proposalText = thinkerTask?.result;
+  const showRespond = c.state === "waiting_for_human";
 
   return (
     <div
       className={`border rounded-lg p-4 cursor-pointer transition-colors ${
-        showGate
-          ? "border-orange-600 bg-orange-950/20"
+        showRespond
+          ? "border-blue-600 bg-blue-950/20"
           : "border-zinc-800 bg-zinc-900 hover:border-zinc-700"
       }`}
       onClick={() => setExpanded(!expanded)}
@@ -45,7 +40,7 @@ export function ConversationCard({
           <div className="flex items-center gap-2 mb-1">
             <span className="text-zinc-500 text-sm">#{c.id}</span>
             <StateBadge state={c.state} />
-            {c.paused_reason && (
+            {c.state === "paused" && c.paused_reason && (
               <span className="text-amber-400 text-xs truncate">({c.paused_reason})</span>
             )}
           </div>
@@ -56,7 +51,12 @@ export function ConversationCard({
             ${c.spent_usd.toFixed(2)}
             <span className="text-zinc-500"> / ${c.budget_usd.toFixed(2)}</span>
           </div>
-          <div className="text-xs">{c.pipeline}</div>
+          {c.current_agent && (
+            <div className="text-xs">
+              {c.state === "active" && <span className="text-blue-400">&rarr; </span>}
+              {c.current_agent}
+            </div>
+          )}
         </div>
       </div>
 
@@ -67,14 +67,14 @@ export function ConversationCard({
         </div>
       )}
 
-      {/* Gate controls */}
-      {showGate && (
-        <div
-          className="mt-3 flex items-center justify-between"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <span className="text-orange-400 text-sm">Awaiting your decision</span>
-          <GateControls conversationId={c.id} proposalText={proposalText} onAction={onAction} />
+      {/* Respond controls (waiting_for_human) */}
+      {showRespond && (
+        <div className="mt-3" onClick={(e) => e.stopPropagation()}>
+          <RespondControls
+            conversationId={c.id}
+            leaderMessage={c.paused_reason}
+            onAction={onAction}
+          />
         </div>
       )}
 
@@ -144,16 +144,6 @@ export function ConversationCard({
               )}
             </div>
           ))}
-        </div>
-      )}
-
-      {/* Proposal preview (when approved, not expanded) */}
-      {showGate && !expanded && proposalText && (
-        <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-          <pre className="text-zinc-400 text-xs bg-zinc-950 rounded p-2 max-h-32 overflow-y-auto whitespace-pre-wrap">
-            {proposalText.slice(0, 500)}
-            {proposalText.length > 500 ? "..." : ""}
-          </pre>
         </div>
       )}
     </div>

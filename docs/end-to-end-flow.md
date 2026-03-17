@@ -448,7 +448,7 @@ The dashboard shows:
 - **Real-time updates** — SSE stream from the API server. Agent output appears as it happens.
 - **Human interaction** — when a conversation is `waiting_for_human`, the card shows the question and a response input.
 - **Task timeline** — every agent invocation with token counts, cost, and duration.
-- **Approve/reject controls** — for conversations with human gates enabled.
+- **Respond controls** — when a conversation is `waiting_for_human`, a text input lets you reply to the leader agent.
 
 ---
 

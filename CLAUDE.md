@@ -42,7 +42,7 @@ quorum/
 │   │   ├── index.ts             # Hono routes (REST + SSE)
 │   │   ├── db.ts                # Read-only SQLite via bun:sqlite
 │   │   ├── daemon.ts            # CLI wrapper (Bun.spawn → quorum_daemon)
-│   │   └── sse.ts               # SSE stream + auto-approve poller
+│   │   └── sse.ts               # SSE stream (change-detection poller)
 │   └── client/                  # React + Tailwind (Vite, port 3101)
 │       └── src/
 │           ├── App.tsx           # Root layout (SSE + refresh)
@@ -190,7 +190,7 @@ Agents also produce VAULT_UPDATE blocks for persistent findings written to their
 
 Conversation Mode seeds a single goal and lets the daemon coordinate a team of agents. The `ConversationEngine` (`src/daemon/conversation.h`) manages state transitions and budget enforcement per conversation.
 
-**NOTE:** The legacy analyst/executor pipeline state machines were stripped in Phase 2 task #0. HANDOFF block parsing was added in task #1. KNOWLEDGE block parsing and `knowledge_ledger` table were added in task #2. The ConversationEngine is currently stubbed — `on_task_complete()` is a no-op returning `false`. Team mode routing (using parsed HANDOFF blocks) and knowledge ledger integration will be wired in task #3.
+**NOTE:** Legacy pipelines were stripped in task #0. HANDOFF parsing in task #1. KNOWLEDGE parsing + ledger in task #2. Team mode ConversationEngine with generic ball-passing loop in task #3. Team roster injection into agent prompts in task #4. Web dashboard updated for team mode in task #5 (removed gate/pipeline/auto-approve, added respond controls for `waiting_for_human`, updated states to active/waiting_for_human/done/closed/paused).
 
 **States:** `active`, `waiting_for_human`, `done`, `closed`, `paused` (enum `ConvState`).
 
@@ -361,9 +361,9 @@ Phase 2 tasks:
 0. ~~Strip legacy pipelines~~ ✓ (removed analyst/executor pipeline state machines from ConversationEngine, removed router.h, removed consensus/observations/proposals processing from main loop, removed gate CLI subcommand, removed pipeline field from ConversationRecord/DB schema, stubbed on_task_complete(), deleted 8 files incl. legacy tests/scripts, 9 tests pass)
 1. ~~HANDOFF block parsing~~ ✓ (added HandoffBlock struct, std::optional<HandoffBlock> in ParsedOutput, registered HANDOFF in all 3 detection points + dispatch_block, content fallback for free-text prompts, last-HANDOFF-wins semantics, 9 test cases in test_handoff_parser.cpp, 10 tests pass)
 2. ~~KNOWLEDGE block parsing + knowledge_ledger~~ ✓ (added KnowledgeBlock struct, std::vector<KnowledgeBlock> in ParsedOutput, registered KNOWLEDGE in all 3 detection points + dispatch_block, content fallback for free-text, push_back semantics, knowledge_ledger SQLite table with append/get/count methods in database.h, 8 parser tests + 3 ledger tests, 12 tests pass)
-3. Generic conversation loop — rewrite ConversationEngine with team mode ball-passing via HANDOFF blocks
-4. Team roster injection — inject agent roster into leader's context
-5. Human interaction — respond CLI subcommand, waiting_for_human state
+3. ~~Generic conversation loop~~ ✓ (ConversationEngine rewritten with team mode ball-passing via HANDOFF blocks, on_task_complete() routes to next agent or human, budget/round enforcement, default_path fallback)
+4. ~~Team roster injection~~ ✓ (context assembler injects agent roster and routing instructions into leader/team prompts)
+5. ~~Web dashboard team mode~~ ✓ (removed gate/pipeline/auto-approve from server+client, added POST /api/respond/:id endpoint, added RespondControls component for waiting_for_human state, updated StateBadge to team mode states, updated ConfigPanel with leader/default_path fields, deleted GateControls.tsx, 12 files changed + 1 created + 1 deleted)
 6. Config parser — parse leader, default_path, role, skill_file from YAML
 7. State simplification — clean up ConvState transitions for team mode
 8. Agent generator — scaffold new agent configs from archetypes

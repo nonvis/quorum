@@ -1,8 +1,6 @@
 import { useState } from "react";
 import { startConversation } from "../api";
 
-const ACTIVE_STATES = new Set(["init", "thinking", "approved", "executing", "reviewing"]);
-
 export function PromptInput({
   onSubmit,
   busy,
@@ -11,7 +9,6 @@ export function PromptInput({
   busy: boolean;
 }) {
   const [goal, setGoal] = useState("");
-  const [autoApprove, setAutoApprove] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const disabled = loading || busy;
@@ -21,7 +18,7 @@ export function PromptInput({
     if (!goal.trim() || disabled) return;
     setLoading(true);
     try {
-      await startConversation(goal.trim(), autoApprove);
+      await startConversation(goal.trim());
       setGoal("");
       onSubmit();
     } finally {
@@ -40,15 +37,6 @@ export function PromptInput({
           className="flex-1 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500 disabled:opacity-50"
           disabled={disabled}
         />
-        <label className="flex items-center gap-2 text-sm text-zinc-400 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={autoApprove}
-            onChange={(e) => setAutoApprove(e.target.checked)}
-            className="rounded"
-          />
-          Auto-approve
-        </label>
         <button
           type="submit"
           disabled={!goal.trim() || disabled}

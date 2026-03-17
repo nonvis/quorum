@@ -19,8 +19,8 @@ export function ConfigPanel({ onClose }: { onClose: () => void }) {
         task_timeout_seconds: String(c.budget.task_timeout_seconds ?? ""),
         default_budget_usd: String(c.conversations.default_budget_usd ?? ""),
         default_max_rounds: String(c.conversations.default_max_rounds ?? ""),
-        pipeline: c.conversations.pipeline ?? "",
-        human_gate: String(c.conversations.human_gate),
+        leader: c.conversations.leader ?? "",
+        default_path: c.conversations.default_path ?? "",
       });
     });
   }, []);
@@ -30,9 +30,7 @@ export function ConfigPanel({ onClose }: { onClose: () => void }) {
     try {
       const updates: Record<string, string | number | boolean> = {};
       for (const [key, value] of Object.entries(form)) {
-        if (key === "human_gate") {
-          updates[key] = value === "true";
-        } else if (["daily_limit_usd", "hourly_limit_usd", "task_timeout_seconds", "default_budget_usd", "default_max_rounds"].includes(key)) {
+        if (["daily_limit_usd", "hourly_limit_usd", "task_timeout_seconds", "default_budget_usd", "default_max_rounds"].includes(key)) {
           const num = parseFloat(value);
           if (!isNaN(num)) updates[key] = num;
         } else {
@@ -62,9 +60,7 @@ export function ConfigPanel({ onClose }: { onClose: () => void }) {
         />
       ) : (
         <span className="text-white text-sm font-mono">
-          {field === "human_gate"
-            ? (config.conversations.human_gate ? "true" : "false")
-            : (form[field] || "\u2014")}
+          {form[field] || "\u2014"}
         </span>
       )}
     </div>
@@ -147,10 +143,10 @@ export function ConfigPanel({ onClose }: { onClose: () => void }) {
         {/* Conversations section */}
         <div className="px-5 py-3">
           <h3 className="text-zinc-500 text-xs uppercase tracking-wide mb-2">Conversations</h3>
-          <Field label="Pipeline" field="pipeline" />
+          <Field label="Leader" field="leader" />
+          <Field label="Default Path" field="default_path" />
           <Field label="Default Budget (USD)" field="default_budget_usd" type="number" />
           <Field label="Max Rounds" field="default_max_rounds" type="number" />
-          <Field label="Human Gate" field="human_gate" />
         </div>
 
         {/* Agents section */}

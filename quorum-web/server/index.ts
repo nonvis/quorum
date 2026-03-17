@@ -12,7 +12,7 @@ import {
   type Conversation,
 } from "./db";
 import { execDaemon, spawnDaemon, cleanupStaleDaemon } from "./daemon";
-import { createSSEStream, markAutoApprove } from "./sse";
+import { createSSEStream } from "./sse";
 
 const app = new Hono();
 
@@ -58,10 +58,10 @@ app.get("/api/config", (c) => {
     const taskTimeout = parseInt(yaml.match(/^\s+task_timeout_seconds:\s*(.+)/m)?.[1] ?? "0") || null;
 
     // Parse conversations section
-    const pipeline = yaml.match(/^\s+pipeline:\s*(.+)/m)?.[1]?.trim() ?? null;
+    const leader = yaml.match(/^\s+leader:\s*(.+)/m)?.[1]?.trim() ?? null;
+    const defaultPath = yaml.match(/^\s+default_path:\s*(.+)/m)?.[1]?.trim() ?? null;
     const convBudget = parseFloat(yaml.match(/^\s+default_budget_usd:\s*(.+)/m)?.[1] ?? "0") || null;
     const maxRounds = parseInt(yaml.match(/^\s+default_max_rounds:\s*(.+)/m)?.[1] ?? "0") || null;
-    const humanGate = yaml.match(/^\s+human_gate:\s*(.+)/m)?.[1]?.trim() === "true";
 
     // Parse agents
     const agentConfigs = [...yaml.matchAll(/^\s+-\s*config:\s*(.+)/gm)].map((m) => m[1].trim());
@@ -70,7 +70,7 @@ app.get("/api/config", (c) => {
       config_path: config.configPath,
       daemon: { target_dir: targetDir, pid_file: pidFile, data_dir: dataDir, log_level: logLevel },
       budget: { daily_limit_usd: dailyBudget, hourly_limit_usd: hourlyBudget, task_timeout_seconds: taskTimeout },
-      conversations: { pipeline, default_budget_usd: convBudget, default_max_rounds: maxRounds, human_gate: humanGate },
+      conversations: { leader, default_path: defaultPath, default_budget_usd: convBudget, default_max_rounds: maxRounds },
       agents: agentConfigs,
     });
   } catch {
@@ -78,7 +78,7 @@ app.get("/api/config", (c) => {
       config_path: config.configPath,
       daemon: { target_dir: null, pid_file: null, data_dir: null, log_level: null },
       budget: { daily_limit_usd: null, hourly_limit_usd: null, task_timeout_seconds: null },
-      conversations: { pipeline: null, default_budget_usd: null, default_max_rounds: null, human_gate: false },
+      conversations: { leader: null, default_path: null, default_budget_usd: null, default_max_rounds: null },
       agents: [],
     });
   }
@@ -99,8 +99,8 @@ app.post("/api/config", async (c) => {
       task_timeout_seconds: "task_timeout_seconds",
       default_budget_usd: "default_budget_usd",
       default_max_rounds: "default_max_rounds",
-      human_gate: "human_gate",
-      pipeline: "pipeline",
+      leader: "leader",
+      default_path: "default_path",
     };
 
     for (const [field, value] of Object.entries(updates)) {
@@ -138,7 +138,7 @@ app.get("/api/events", (c) => {
 // -- Write endpoints (via daemon CLI) --
 
 app.post("/api/converse", async (c) => {
-  const body = await c.req.json<{ goal: string; autoApprove?: boolean }>();
+  const body = await c.req.json<{ goal: string }>();
   if (!body.goal) return c.json({ error: "goal is required" }, 400);
 
   // Record current max ID before spawning
@@ -166,40 +166,17 @@ app.post("/api/converse", async (c) => {
     }
   }
 
-  if (conversationId && body.autoApprove) {
-    markAutoApprove(conversationId);
-  }
-
   return c.json({
     success: true,
     conversationId,
   });
 });
 
-app.post("/api/gate/:id/approve", async (c) => {
+app.post("/api/respond/:id", async (c) => {
   const id = c.req.param("id");
-
-  // If proposal text provided, update the thinker's task result before approving
-  const body = await c.req.json<{ proposal?: string }>().catch(() => ({} as { proposal?: string }));
-  if (body.proposal) {
-    dbWrite(
-      "UPDATE tasks SET result = ? WHERE id = (SELECT id FROM tasks WHERE conversation_id = ? AND task_type = 'think' AND status = 'done' ORDER BY id DESC LIMIT 1)",
-      [body.proposal, Number(id)]
-    );
-    console.log(`[gate] updated proposal for conversation ${id}`);
-  }
-
-  const result = await execDaemon("gate", "--approve", "--conversation", id);
-  return c.json({
-    success: result.success,
-    output: result.stdout,
-    error: result.stderr || undefined,
-  });
-});
-
-app.post("/api/gate/:id/reject", async (c) => {
-  const id = c.req.param("id");
-  const result = await execDaemon("gate", "--reject", "--conversation", id);
+  const body = await c.req.json<{ text: string }>();
+  if (!body.text?.trim()) return c.json({ error: "text is required" }, 400);
+  const result = await execDaemon("respond", "--conversation", id, body.text);
   return c.json({
     success: result.success,
     output: result.stdout,

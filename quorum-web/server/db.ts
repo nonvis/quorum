@@ -32,7 +32,8 @@ export interface Conversation {
   created_at: string;
   completed_at: string | null;
   paused_reason: string | null;
-  pipeline: string;
+  current_agent: string | null;
+  path_index: number;
 }
 
 export interface Task {

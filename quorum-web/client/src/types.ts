@@ -9,7 +9,7 @@ export interface Conversation {
   created_at: string;
   completed_at: string | null;
   paused_reason: string | null;
-  pipeline: string;
+  current_agent: string | null;
   tasks?: Task[];
 }
 
@@ -50,10 +50,10 @@ export interface ProjectConfig {
     task_timeout_seconds: number | null;
   };
   conversations: {
-    pipeline: string | null;
+    leader: string | null;
+    default_path: string | null;
     default_budget_usd: number | null;
     default_max_rounds: number | null;
-    human_gate: boolean;
   };
   agents: string[];
 }

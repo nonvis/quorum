@@ -31,7 +31,7 @@ export default function App() {
     fetchStats().then(setStats);
   });
 
-  const ACTIVE_STATES = new Set(["init", "thinking", "approved", "executing", "reviewing"]);
+  const ACTIVE_STATES = new Set(["active", "waiting_for_human"]);
   const busy = conversations.some((c) => ACTIVE_STATES.has(c.state));
 
   return (

@@ -19,9 +19,9 @@ export function StatsBanner({
             {config.daemon.target_dir}
           </span>
         )}
-        {config?.conversations.pipeline && (
+        {config?.conversations.leader && (
           <span className="text-xs text-zinc-500">
-            {config.conversations.pipeline}
+            leader: {config.conversations.leader}
           </span>
         )}
       </div>

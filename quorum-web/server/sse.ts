@@ -1,12 +1,4 @@
 import { getConversations, type Conversation } from "./db";
-import { execDaemon } from "./daemon";
-
-// Track auto-approve conversations (in-memory)
-const autoApproveSet = new Set<number>();
-
-export function markAutoApprove(conversationId: number) {
-  autoApproveSet.add(conversationId);
-}
 
 // Poll interval in ms
 const POLL_INTERVAL = 2000;
@@ -23,32 +15,6 @@ function getSnapshot(): Map<number, string> {
   return snap;
 }
 
-// Check for auto-approve candidates and execute
-async function checkAutoApprove() {
-  for (const convId of autoApproveSet) {
-    const convs = getConversations();
-    const conv = convs.find((c) => c.id === convId);
-    if (!conv) {
-      autoApproveSet.delete(convId);
-      continue;
-    }
-    if (conv.state === "approved") {
-      console.log(`[auto-approve] conversation ${convId} — executing gate --approve`);
-      const result = await execDaemon("gate", "--approve", "--conversation", String(convId));
-      if (result.success) {
-        console.log(`[auto-approve] conversation ${convId} — approved`);
-      } else {
-        console.error(`[auto-approve] conversation ${convId} — failed: ${result.stderr}`);
-      }
-      autoApproveSet.delete(convId);
-    }
-    // Clean up if conversation is terminal
-    if (["done", "closed"].includes(conv.state)) {
-      autoApproveSet.delete(convId);
-    }
-  }
-}
-
 // Create SSE stream for a client
 export function createSSEStream(): ReadableStream {
   let interval: Timer;
@@ -63,9 +29,6 @@ export function createSSEStream(): ReadableStream {
 
       interval = setInterval(async () => {
         try {
-          // Check auto-approve
-          await checkAutoApprove();
-
           // Detect changes
           const current = getSnapshot();
           const changes: Array<{ id: number; state: string; prev: string | undefined }> = [];

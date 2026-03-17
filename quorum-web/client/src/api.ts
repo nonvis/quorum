@@ -22,26 +22,21 @@ export async function fetchConfig(): Promise<ProjectConfig> {
   return res.json();
 }
 
-export async function startConversation(goal: string, autoApprove = false) {
+export async function startConversation(goal: string) {
   const res = await fetch(`${BASE}/converse`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ goal, autoApprove }),
+    body: JSON.stringify({ goal }),
   });
   return res.json();
 }
 
-export async function gateApprove(id: number, proposal?: string) {
-  const res = await fetch(`${BASE}/gate/${id}/approve`, {
+export async function respondToLeader(id: number, text: string) {
+  const res = await fetch(`${BASE}/respond/${id}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(proposal ? { proposal } : {}),
+    body: JSON.stringify({ text }),
   });
-  return res.json();
-}
-
-export async function gateReject(id: number) {
-  const res = await fetch(`${BASE}/gate/${id}/reject`, { method: "POST" });
   return res.json();
 }
 
