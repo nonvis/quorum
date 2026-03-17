@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,12 +34,18 @@ struct ParsedObservation {
     std::string content;
 };
 
+struct HandoffBlock {
+    std::string to;      // agent_id, "human", or "done"
+    std::string prompt;  // instructions for next agent (may be empty)
+};
+
 struct ParsedOutput {
     std::string summary;                     // contents of SUMMARY block (empty if absent)
     std::vector<VaultUpdate> vault_updates;  // VAULT_UPDATE blocks
     std::vector<Proposal>    proposals;      // PROPOSAL blocks
     std::vector<Review>      reviews;        // REVIEW blocks
     std::vector<ParsedObservation> observations;  // OBSERVATION blocks
+    std::optional<HandoffBlock> handoff;     // team mode routing (last HANDOFF wins)
     std::string free_text;                   // everything outside structured blocks
     std::string raw;                         // original unmodified output
 };
@@ -47,7 +54,7 @@ struct ParsedOutput {
 
 // Parses structured blocks from agent output.
 //
-// Recognized block types: VAULT_UPDATE, PROPOSAL, REVIEW, OBSERVATION, SUMMARY
+// Recognized block types: VAULT_UPDATE, PROPOSAL, REVIEW, OBSERVATION, SUMMARY, HANDOFF
 //
 // Three accepted formats (in order of precedence):
 //
@@ -166,7 +173,7 @@ public:
                         auto ft = trim(line);
                         bool skip = false;
                         for (const char* t : {"VAULT_UPDATE", "PROPOSAL",
-                             "OBSERVATION", "SUMMARY", "REVIEW"}) {
+                             "OBSERVATION", "SUMMARY", "REVIEW", "HANDOFF"}) {
                             if (ft == t) {
                                 if (block_type.empty()) {
                                     block_type = t;
@@ -202,7 +209,8 @@ public:
     // (vault update, proposal, or review) that the daemon should act on.
     [[nodiscard]] bool has_actionable_output(const ParsedOutput& p) const {
         return !p.vault_updates.empty() || !p.proposals.empty() ||
-               !p.reviews.empty() || !p.observations.empty();
+               !p.reviews.empty() || !p.observations.empty() ||
+               p.handoff.has_value();
     }
 
 private:
@@ -301,7 +309,8 @@ private:
         line.remove_prefix(3);
         auto type = trim(line);
         if (type == "VAULT_UPDATE" || type == "PROPOSAL" ||
-            type == "REVIEW"       || type == "SUMMARY"  || type == "OBSERVATION") {
+            type == "REVIEW"       || type == "SUMMARY"  ||
+            type == "OBSERVATION"  || type == "HANDOFF") {
             return type;
         }
         return {};
@@ -360,7 +369,7 @@ private:
 
         // Check if remainder starts with a known type followed by non-alpha or end
         for (const char* t : {"VAULT_UPDATE", "PROPOSAL",
-             "OBSERVATION", "SUMMARY", "REVIEW"}) {
+             "OBSERVATION", "SUMMARY", "REVIEW", "HANDOFF"}) {
             std::string_view type_sv(t);
             if (line.size() >= type_sv.size() &&
                 line.substr(0, type_sv.size()) == type_sv) {
@@ -585,6 +594,28 @@ private:
             }
             // agent and task_type are filled by the daemon, not parsed
             out.observations.push_back(std::move(obs));
+
+        } else if (type == "HANDOFF") {
+            auto bag = parse_kv(lines);
+            HandoffBlock h;
+            h.to = bag.get_str("to");
+            h.prompt = bag.get_str("prompt");
+            // Content fallback: if no explicit prompt field, use remaining lines
+            if (h.prompt.empty() && !lines.empty()) {
+                std::string content;
+                for (const auto& l : lines) {
+                    auto tl = trim(std::string_view(l));
+                    if (tl.size() >= 3 && tl.substr(0, 3) == "to:") continue;
+                    if (!content.empty()) content += '\n';
+                    content += l;
+                }
+                while (!content.empty() && content.back() == '\n')
+                    content.pop_back();
+                h.prompt = std::move(content);
+            }
+            if (!h.to.empty()) {
+                out.handoff = std::move(h);  // last HANDOFF wins
+            }
         }
     }
 };

@@ -146,7 +146,7 @@ Task Queue mode tasks (no `conversation_id`) have NULL session_id and behave ide
 
 ### Agent Output Rules (Defense-in-Depth)
 
-Agents must produce structured blocks (VAULT_UPDATE, OBSERVATION, PROPOSAL, SUMMARY) in their response text — never write files directly. This is enforced at three layers:
+Agents must produce structured blocks (VAULT_UPDATE, OBSERVATION, PROPOSAL, SUMMARY, HANDOFF) in their response text — never write files directly. This is enforced at three layers:
 
 1. **`--disallowedTools`** — for `analyst` agents, the invoker passes `--disallowedTools "Write,Edit,NotebookEdit"` to `claude -p`, removing file-writing tools entirely from the agent's tool list. This is the hard enforcement layer — analyst agents cannot write files even if they try. **Exception:** `executor` agents (Phase 0.9) get full tool access and are expected to write files directly in their `target_dir`.
 2. **CONTEXT.md** — each agent's vault `CONTEXT.md` has a "## CRITICAL — Output Rules" section (between Role and Core Question) prohibiting file writes and requiring structured blocks.
@@ -215,7 +215,7 @@ data/knowledge/
 
 Conversation Mode seeds a single goal and lets the daemon coordinate a team of agents. The `ConversationEngine` (`src/daemon/conversation.h`) manages state transitions and budget enforcement per conversation.
 
-**NOTE:** The legacy analyst/executor pipeline state machines were stripped in Phase 2 task #0. The ConversationEngine is currently stubbed — `on_task_complete()` is a no-op returning `false`. Team mode routing will be reimplemented in task #3.
+**NOTE:** The legacy analyst/executor pipeline state machines were stripped in Phase 2 task #0. HANDOFF block parsing was added in task #1. The ConversationEngine is currently stubbed — `on_task_complete()` is a no-op returning `false`. Team mode routing (using parsed HANDOFF blocks) will be reimplemented in task #2.
 
 **States:** `active`, `waiting_for_human`, `done`, `closed`, `paused` (enum `ConvState`).
 
@@ -366,7 +366,7 @@ Phase 1 completed items (preserved for reference):
 3. ~~Invoker rewrite~~ ✓ (spawns `claude -p`, captures JSON output, writes token/cost to DB)
 4. ~~SQLite task queue~~ ✓ (pending/active/done states with token tracking)
 5. ~~Context assembler~~ ✓
-6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / OBSERVATION / SUMMARY blocks)
+6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / OBSERVATION / SUMMARY / HANDOFF blocks)
 7. ~~Token budget enforcement~~ ✓ (per-task cap + hourly cap with rolling window)
 8. ~~End-to-end dispatch verified~~ ✓
 9. ~~Conversation schema + CRUD~~ ✓
@@ -379,8 +379,9 @@ Phase 1 completed items (preserved for reference):
 
 Phase 2 tasks:
 0. ~~Strip legacy pipelines~~ ✓ (removed analyst/executor pipeline state machines from ConversationEngine, removed router.h, removed consensus/observations/proposals processing from main loop, removed gate CLI subcommand, removed pipeline field from ConversationRecord/DB schema, stubbed on_task_complete(), deleted 8 files incl. legacy tests/scripts, 9 tests pass)
-1. Team mode ConversationEngine — reimplemented state machine with flexible agent teams
-2. Team mode integration tests
+1. ~~HANDOFF block parsing~~ ✓ (added HandoffBlock struct, std::optional<HandoffBlock> in ParsedOutput, registered HANDOFF in all 3 detection points + dispatch_block, content fallback for free-text prompts, last-HANDOFF-wins semantics, 9 test cases in test_handoff_parser.cpp, 10 tests pass)
+2. Team mode ConversationEngine — reimplemented state machine with flexible agent teams
+3. Team mode integration tests
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 
