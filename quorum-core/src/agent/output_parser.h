@@ -39,6 +39,11 @@ struct HandoffBlock {
     std::string prompt;  // instructions for next agent (may be empty)
 };
 
+struct KnowledgeBlock {
+    std::string topic;    // what this observation is about
+    std::string content;  // the observation, insight, or decision
+};
+
 struct ParsedOutput {
     std::string summary;                     // contents of SUMMARY block (empty if absent)
     std::vector<VaultUpdate> vault_updates;  // VAULT_UPDATE blocks
@@ -46,6 +51,7 @@ struct ParsedOutput {
     std::vector<Review>      reviews;        // REVIEW blocks
     std::vector<ParsedObservation> observations;  // OBSERVATION blocks
     std::optional<HandoffBlock> handoff;     // team mode routing (last HANDOFF wins)
+    std::vector<KnowledgeBlock> knowledge;   // knowledge ledger entries
     std::string free_text;                   // everything outside structured blocks
     std::string raw;                         // original unmodified output
 };
@@ -54,7 +60,7 @@ struct ParsedOutput {
 
 // Parses structured blocks from agent output.
 //
-// Recognized block types: VAULT_UPDATE, PROPOSAL, REVIEW, OBSERVATION, SUMMARY, HANDOFF
+// Recognized block types: VAULT_UPDATE, PROPOSAL, REVIEW, OBSERVATION, SUMMARY, HANDOFF, KNOWLEDGE
 //
 // Three accepted formats (in order of precedence):
 //
@@ -173,7 +179,8 @@ public:
                         auto ft = trim(line);
                         bool skip = false;
                         for (const char* t : {"VAULT_UPDATE", "PROPOSAL",
-                             "OBSERVATION", "SUMMARY", "REVIEW", "HANDOFF"}) {
+                             "OBSERVATION", "SUMMARY", "REVIEW", "HANDOFF",
+                             "KNOWLEDGE"}) {
                             if (ft == t) {
                                 if (block_type.empty()) {
                                     block_type = t;
@@ -310,7 +317,8 @@ private:
         auto type = trim(line);
         if (type == "VAULT_UPDATE" || type == "PROPOSAL" ||
             type == "REVIEW"       || type == "SUMMARY"  ||
-            type == "OBSERVATION"  || type == "HANDOFF") {
+            type == "OBSERVATION"  || type == "HANDOFF"  ||
+            type == "KNOWLEDGE") {
             return type;
         }
         return {};
@@ -369,7 +377,8 @@ private:
 
         // Check if remainder starts with a known type followed by non-alpha or end
         for (const char* t : {"VAULT_UPDATE", "PROPOSAL",
-             "OBSERVATION", "SUMMARY", "REVIEW", "HANDOFF"}) {
+             "OBSERVATION", "SUMMARY", "REVIEW", "HANDOFF",
+             "KNOWLEDGE"}) {
             std::string_view type_sv(t);
             if (line.size() >= type_sv.size() &&
                 line.substr(0, type_sv.size()) == type_sv) {
@@ -615,6 +624,27 @@ private:
             }
             if (!h.to.empty()) {
                 out.handoff = std::move(h);  // last HANDOFF wins
+            }
+
+        } else if (type == "KNOWLEDGE") {
+            auto bag = parse_kv(lines);
+            KnowledgeBlock k;
+            k.topic = bag.get_str("topic");
+            k.content = bag.get_str("content");
+            // Content fallback: if no explicit content field, use all lines as content
+            if (k.content.empty() && !lines.empty()) {
+                std::string fallback;
+                for (const auto& l : lines) {
+                    auto tl = trim(std::string_view(l));
+                    if (tl.substr(0, 6) == "topic:") continue;
+                    if (!fallback.empty()) fallback += '\n';
+                    fallback += l;
+                }
+                while (!fallback.empty() && fallback.back() == '\n') fallback.pop_back();
+                k.content = std::move(fallback);
+            }
+            if (!k.content.empty()) {
+                out.knowledge.push_back(std::move(k));
             }
         }
     }

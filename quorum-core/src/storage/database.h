@@ -262,6 +262,59 @@ public:
         bool committed_ = false;
     };
 
+    // ── Knowledge Ledger ────────────────────────────────────────────────
+    int64_t append_knowledge(int64_t cycle_id, const std::string& agent_id,
+                             int turn_number, const std::string& topic,
+                             const std::string& content) {
+        execute(
+            "INSERT INTO knowledge_ledger (cycle_id, agent_id, turn_number, topic, content) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, cycle_id);
+                sqlite3_bind_text(stmt, 2, agent_id.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_int(stmt, 3, turn_number);
+                if (topic.empty()) {
+                    sqlite3_bind_null(stmt, 4);
+                } else {
+                    sqlite3_bind_text(stmt, 4, topic.c_str(), -1, SQLITE_TRANSIENT);
+                }
+                sqlite3_bind_text(stmt, 5, content.c_str(), -1, SQLITE_TRANSIENT);
+            }
+        );
+        return last_insert_id();
+    }
+
+    std::string get_cycle_knowledge(int64_t cycle_id) {
+        std::string result;
+        query(
+            "SELECT agent_id, turn_number, topic, content FROM knowledge_ledger "
+            "WHERE cycle_id = ? ORDER BY turn_number, id",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, cycle_id);
+            },
+            [&](sqlite3_stmt* stmt) {
+                auto agent = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                auto turn = sqlite3_column_int(stmt, 1);
+                auto topic_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+                auto content_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+                result += "## Turn " + std::to_string(turn);
+                if (agent) result += std::string(" (") + agent + ")";
+                result += "\n";
+                if (topic_ptr) result += std::string("**Topic:** ") + topic_ptr + "\n";
+                if (content_ptr) result += std::string(content_ptr) + "\n";
+                result += "\n";
+            }
+        );
+        return result;
+    }
+
+    int64_t count_cycle_knowledge(int64_t cycle_id) {
+        return query_int(
+            "SELECT COUNT(*) FROM knowledge_ledger WHERE cycle_id = " +
+            std::to_string(cycle_id)
+        );
+    }
+
     sqlite3* handle() { return db_; }
 
 private:
