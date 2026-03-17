@@ -10,6 +10,8 @@
 
 #include <sqlite3.h>
 
+#include "utils/uuid.h"
+
 namespace sui::quorum {
 
 struct ConversationRecord {
@@ -20,6 +22,8 @@ struct ConversationRecord {
     int max_rounds{3};
     double budget_usd{5.0};
     double spent_usd{0.0};
+    std::string current_agent;  // who has the ball
+    int path_index{0};          // position in default_path
 };
 
 class Database {
@@ -121,8 +125,8 @@ public:
         ConversationRecord rec;
         bool found = false;
         query(
-            "SELECT id, goal, state, round, max_rounds, budget_usd, spent_usd "
-            "FROM conversations WHERE id = ?",
+            "SELECT id, goal, state, round, max_rounds, budget_usd, spent_usd, "
+            "current_agent, path_index FROM conversations WHERE id = ?",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_int64(stmt, 1, conv_id);
             },
@@ -137,6 +141,9 @@ public:
                 rec.max_rounds = sqlite3_column_int(stmt, 4);
                 rec.budget_usd = sqlite3_column_double(stmt, 5);
                 rec.spent_usd = sqlite3_column_double(stmt, 6);
+                auto ca = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7));
+                rec.current_agent = ca ? ca : "";
+                rec.path_index = sqlite3_column_int(stmt, 8);
             }
         );
         return found ? std::optional{rec} : std::nullopt;
@@ -313,6 +320,35 @@ public:
             "SELECT COUNT(*) FROM knowledge_ledger WHERE cycle_id = " +
             std::to_string(cycle_id)
         );
+    }
+
+    // ── Agent Sessions ──────────────────────────────────────────────────
+
+    std::string get_or_create_session(int64_t cycle_id, const std::string& agent_id) {
+        std::string session_id;
+        query(
+            "SELECT session_id FROM agent_sessions WHERE cycle_id = ? AND agent_id = ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, cycle_id);
+                sqlite3_bind_text(stmt, 2, agent_id.c_str(), -1, SQLITE_TRANSIENT);
+            },
+            [&](sqlite3_stmt* stmt) {
+                auto s = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                if (s) session_id = s;
+            }
+        );
+        if (!session_id.empty()) return session_id;
+
+        session_id = generate_uuid();
+        execute(
+            "INSERT INTO agent_sessions (cycle_id, agent_id, session_id) VALUES (?, ?, ?)",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, cycle_id);
+                sqlite3_bind_text(stmt, 2, agent_id.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 3, session_id.c_str(), -1, SQLITE_TRANSIENT);
+            }
+        );
+        return session_id;
     }
 
     sqlite3* handle() { return db_; }

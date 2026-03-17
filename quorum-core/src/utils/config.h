@@ -68,8 +68,10 @@ struct BudgetConfig {
 
 struct ConversationConfig {
     bool enabled = true;
-    int default_max_rounds = 3;
+    int default_max_rounds = 20;       // max turns per conversation
     double default_budget_usd = 5.0;
+    std::string leader;                // leader agent id (required for team mode)
+    std::vector<std::string> default_path;  // optional default routing sequence
 };
 
 struct AgentMetadata {
@@ -296,6 +298,24 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
             }
             else if (key == "default_budget_usd") {
                 try { cfg.conversations.default_budget_usd = std::stod(val); } catch (...) {}
+            }
+            else if (key == "leader") cfg.conversations.leader = val;
+            else if (key == "default_path") {
+                auto stripped = val;
+                if (!stripped.empty() && stripped.front() == '[') stripped.erase(stripped.begin());
+                if (!stripped.empty() && stripped.back() == ']') stripped.pop_back();
+                std::string item;
+                for (char c : stripped) {
+                    if (c == ',') {
+                        auto trimmed = detail::trim(item);
+                        if (!trimmed.empty()) cfg.conversations.default_path.push_back(trimmed);
+                        item.clear();
+                    } else {
+                        item += c;
+                    }
+                }
+                auto trimmed = detail::trim(item);
+                if (!trimmed.empty()) cfg.conversations.default_path.push_back(trimmed);
             }
         }
     }

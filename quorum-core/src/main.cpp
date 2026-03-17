@@ -73,7 +73,7 @@ static void print_conversations(sui::quorum::Database& db) {
     int count = 0;
     db.query(
         "SELECT id, goal, state, round, max_rounds, budget_usd, spent_usd, "
-        "created_at, paused_reason FROM conversations ORDER BY id DESC",
+        "created_at, paused_reason, current_agent FROM conversations ORDER BY id DESC",
         [&](sqlite3_stmt* stmt) {
             auto id = sqlite3_column_int64(stmt, 0);
             auto goal_raw = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
@@ -83,14 +83,17 @@ static void print_conversations(sui::quorum::Database& db) {
             auto budget = sqlite3_column_double(stmt, 5);
             auto spent = sqlite3_column_double(stmt, 6);
             auto reason_raw = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
+            auto current_raw = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
 
             std::string goal = goal_raw ? std::string(goal_raw) : "";
             std::string reason = reason_raw ? std::string(reason_raw) : "";
+            std::string current = current_raw ? std::string(current_raw) : "";
             if (goal.size() > 50) goal = goal.substr(0, 50) + "...";
 
             std::cout << "  #" << id
-                      << "  " << (state ? state : "?")
-                      << "  round " << round << "/" << max_r
+                      << "  " << (state ? state : "?");
+            if (!current.empty()) std::cout << " [" << current << "]";
+            std::cout << "  round " << round << "/" << max_r
                       << "  $" << spent << "/$" << budget
                       << "  " << goal;
             if (!reason.empty()) std::cout << "  (" << reason << ")";
@@ -121,6 +124,7 @@ static void print_usage(const char* prog) {
               << "  " << prog << " --config <path> status                     List conversations\n"
               << "  " << prog << " --config <path> resume --conversation <id> Resume paused\n"
               << "  " << prog << " --config <path> close --conversation <id>  Close conversation\n"
+              << "  " << prog << " --config <path> respond --conversation <id> \"text\"  Respond to human request\n"
               << "\nOptions:\n"
               << "  --config <path>      Path to config YAML (required, e.g. configs/mm-bot.yaml)\n"
               << "  --verbose            Enable verbose logging\n"
@@ -152,7 +156,9 @@ static void init_schema(sui::quorum::Database& db) {
         "  spent_usd REAL NOT NULL DEFAULT 0.0,"
         "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
         "  completed_at TEXT,"
-        "  paused_reason TEXT"
+        "  paused_reason TEXT,"
+        "  current_agent TEXT,"
+        "  path_index INTEGER NOT NULL DEFAULT 0"
         ")"
     );
     db.execute(
@@ -190,9 +196,20 @@ static void init_schema(sui::quorum::Database& db) {
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_knowledge_cycle ON knowledge_ledger(cycle_id)"
     );
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS agent_sessions ("
+        "  id          INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  cycle_id    INTEGER NOT NULL REFERENCES conversations(id),"
+        "  agent_id    TEXT NOT NULL,"
+        "  session_id  TEXT NOT NULL,"
+        "  UNIQUE(cycle_id, agent_id)"
+        ")"
+    );
     // Migration for existing databases
     db.execute("ALTER TABLE tasks ADD COLUMN conversation_id INTEGER REFERENCES conversations(id)");
     db.execute("ALTER TABLE tasks ADD COLUMN session_id TEXT");
+    db.execute("ALTER TABLE conversations ADD COLUMN current_agent TEXT");
+    db.execute("ALTER TABLE conversations ADD COLUMN path_index INTEGER NOT NULL DEFAULT 0");
 }
 
 // Count currently active (running) tasks
@@ -307,6 +324,7 @@ int main(int argc, char* argv[]) {
     int conv_max_rounds = -1;         // sentinel — will use config default
     int64_t conv_id_arg = 0;
     std::string goal_text;
+    std::string response_text;
 
     if (subcommand == "converse") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
@@ -318,10 +336,12 @@ int main(int argc, char* argv[]) {
                 goal_text = sub_args[i]; // last positional = goal
             }
         }
-    } else if (subcommand == "resume" || subcommand == "close") {
+    } else if (subcommand == "resume" || subcommand == "close" || subcommand == "respond") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
             if (sub_args[i] == "--conversation" && i + 1 < sub_args.size()) {
                 conv_id_arg = std::stoll(sub_args[++i]);
+            } else if (subcommand == "respond") {
+                response_text = sub_args[i];
             }
         }
     } else if (!subcommand.empty() && subcommand != "status") {
@@ -361,7 +381,7 @@ int main(int argc, char* argv[]) {
     init_schema(db);
 
     // Conversation engine — lightweight, needed for subcommands
-    sui::quorum::ConversationEngine conversation_engine(db);
+    sui::quorum::ConversationEngine conversation_engine(db, cfg.conversations, cfg.agents);
 
     // ── Subcommand early exits (no PID lock, no daemon) ──────────────────
     if (subcommand == "status") {
@@ -381,6 +401,25 @@ int main(int argc, char* argv[]) {
         }
         conversation_engine.close(conv_id_arg);
         std::cout << "Conversation " << conv_id_arg << " closed.\n";
+        return 0;
+    }
+
+    if (subcommand == "respond") {
+        if (conv_id_arg == 0) {
+            std::cerr << "ERROR: respond requires --conversation <id>\n";
+            return 1;
+        }
+        if (response_text.empty()) {
+            std::cerr << "ERROR: respond requires response text\n";
+            return 1;
+        }
+        bool ok = conversation_engine.respond(conv_id_arg, response_text);
+        if (!ok) {
+            std::cerr << "ERROR: conversation " << conv_id_arg
+                      << " cannot respond (not waiting_for_human?)\n";
+            return 1;
+        }
+        std::cout << "Response sent to conversation " << conv_id_arg << ".\n";
         return 0;
     }
 

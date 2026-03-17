@@ -41,7 +41,9 @@ static void init_conversations_table(sui::quorum::Database& db) {
         "  spent_usd REAL NOT NULL DEFAULT 0.0,"
         "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
         "  completed_at TEXT,"
-        "  paused_reason TEXT"
+        "  paused_reason TEXT,"
+        "  current_agent TEXT,"
+        "  path_index INTEGER NOT NULL DEFAULT 0"
         ")"
     );
 }
