@@ -6,12 +6,25 @@ A glossary of everything you need to understand to use Quorum effectively.
 
 ## Agent
 
-An agent is a **role, not a process**. It doesn't run continuously — it gets invoked by the daemon when its schedule triggers or an event fires. Each invocation is a single LLM call with assembled context.
+An agent is a **role, not a process**. It doesn't run continuously — the daemon invokes it via a `claude -p` subprocess when the ball reaches it. Each invocation is episodic: context in, structured output out, process exits.
 
-An agent is defined by three things:
-- **YAML config** (`agents/*.yaml`) — schedule, triggers, inference tier, context budget
+Quorum defines **6 archetypes** that determine what an agent can do:
+
+| Role | Count | Tool Access | Purpose |
+|------|-------|-------------|---------|
+| **leader** | exactly 1 | analyst | Receives user prompt, decomposes work, coordinates team, triggers scribe at end |
+| **thinker** | 1+ | analyst | Plans, designs, architects |
+| **doer** | 1+ | executor (full tools) | Executes code changes in target repo |
+| **reviewer** | 0+ | analyst | Validates work. Optional. |
+| **scribe** | 0+ | analyst | Consumes knowledge ledger, produces project notes for agents |
+| **librarian** | 0+ | analyst | Consumes knowledge ledger, produces human-facing docs |
+
+Role determines tool access. Doers get executor-class (`claude -p` with full tools). All others are analyst-class (`--disallowedTools "Write,Edit,NotebookEdit"`).
+
+An agent is defined by:
+- **YAML config** (`configs/agents/project/agent.yaml`) — role, description, vault path
 - **Vault CONTEXT.md** — who it is, what it knows, what it does and doesn't do
-- **Vault knowledge files** — accumulated findings, experiments, decisions
+- **Optional SKILL.md** — domain expertise, specialized instructions
 
 Between invocations, an agent has no state. Everything it "remembers" comes from its vault, which the daemon loads into the LLM prompt.
 
@@ -21,207 +34,138 @@ Between invocations, an agent has no state. Everything it "remembers" comes from
 
 ## Vault
 
-A vault is an **agent's memory on disk** — a folder of markdown files that grows over time.
+A vault is an **agent's working memory on disk** — a folder of files that grows over time.
 
 ```
-vaults/bot_analyst/
+data/vaults/{agent}/
 ├── CONTEXT.md          # Always loaded (role identity)
-├── knowledge/          # Conclusions and ongoing analysis
-├── experiments/        # Experiment designs and results
-├── decisions/          # Past proposal outcomes
-└── inbox/              # Items from other agents
+├── SKILL.md            # Optional (domain expertise)
+└── knowledge/          # Accumulated findings, scribe-produced notes
 ```
 
-The daemon's **context assembler** selects which vault files to include in each invocation, staying within the agent's token budget. CONTEXT.md always loads. Other files are selected by recency, relevance, and the `always_include` list.
+The daemon's context assembler selects which vault files to include in each invocation, staying within the agent's token budget. CONTEXT.md always loads. Other files are selected by recency and relevance.
 
-Vaults sync to **Walrus** for persistence and verifiability. Locally, they're plain markdown files you can read, edit, or seed manually.
+Vaults are local filesystem only. Plain files you can read, edit, or seed manually.
 
 **What makes vaults different from other agent memory:**
 - They're files, not embeddings — you can read them, version them, diff them
-- Agents write their own memory (structured output → vault updates)
-- Cross-agent reads require Seal authorization (no silent access)
-- Everything is content-addressed on Walrus (tamper-evident)
+- Scribe-produced notes feed back into vaults, creating a growth loop
+- The team roster (list of all agents) is injected into CONTEXT.md from config
 
 ---
 
-## Proposal
+## HANDOFF Protocol
 
-A proposal is a **structured request for a decision** that goes through multi-agent review before execution.
+The ball-passing mechanism that moves control between agents. One ball, always moving. Only one agent is active at any time (sequential dispatch).
 
-### Lifecycle
+An agent yields control by including a HANDOFF block in its output:
 
 ```
-DRAFT → REVIEWING → APPROVED → EXECUTED → EVALUATED
-                  → REJECTED
-                  → ESCALATED (human decides)
+```HANDOFF
+to: <agent_id | human | done>
+prompt: <instructions for the next agent>
+```
 ```
 
-### Anatomy
+**Routing priority:**
+1. HANDOFF block present → route to specified agent
+2. No HANDOFF, `default_path` configured → next in path
+3. No HANDOFF, no `default_path` → leader
+4. Destination uncertain → leader
 
-Every proposal declares:
-- **Author** — which agent created it
-- **Required reviewers** — which agents must approve (e.g., `[bot_analyst, engineer]`)
-- **Informed** — agents who see it but don't need to sign off
-- **Human gate** — whether human approval is needed after agent consensus
-- **Content** — the actual analysis and recommendation (stored on Walrus)
+**Special values:**
+- `human` — leader holds the ball and waits for operator input (`waiting_for_human` state)
+- `done` — cycle complete, conversation moves to `done` state
 
-### Why Proposals Exist
-
-Proposals prevent two failure modes:
-1. **Unilateral action** — a single agent making changes nobody validated
-2. **Implicit decisions** — changes happening without any record of why
-
-Even if you run a single agent, proposals create an auditable decision trail.
-
-### The 3-Round Rule
-
-A proposal gets at most 3 rounds of review. If reviewers still disagree after round 3, the proposal escalates to the human. This prevents infinite deliberation loops.
+The human only interacts with the leader. When user input is needed, the leader holds the ball.
 
 ---
 
-## Consensus
+## Knowledge Ledger
 
-Consensus is **agreement between required reviewers** on a proposal. It's tracked by the daemon's consensus engine (locally) and mirrored on Sui (on-chain).
+An **append-only SQLite table** that accumulates observations during a cycle. Replaces the old inbox/VAULT_UPDATE pipeline.
 
-### How It Works
+Agents optionally include KNOWLEDGE blocks in their output:
 
-1. Author submits proposal → status becomes REVIEWING
-2. Each required reviewer submits a verdict: **APPROVE**, **REVISE**, or **REJECT**
-3. If all approve → APPROVED
-4. If anyone says REVISE → author revises, next round begins
-5. If anyone says REJECT → REJECTED (with justification)
-6. If max rounds reached without agreement → ESCALATED to human
+```
+```KNOWLEDGE
+topic: <what this observation is about>
+content: <the observation, insight, or decision>
+```
+```
 
-### On-Chain Recording
+The ledger grows as agents contribute during a cycle. At the end, scribe(s) consume the full ledger to produce structured notes that feed back into agent vaults.
 
-Each verdict is a Sui transaction. The proposal is a shared Sui object whose state transitions are atomic (via PTB). This means:
-- Nobody can fake an approval after the fact
-- The timeline of reviews is cryptographically verifiable
-- The human approval is their wallet signature on a Sui transaction
+The ledger is per-cycle. Each cycle starts with a fresh ledger.
 
 ---
 
 ## Daemon
 
-The daemon is a **single long-running C++ process** that orchestrates everything. It has five components:
+A **deterministic C++20 process** that orchestrates agent invocations. It has three components:
 
 | Component | What It Does |
 |-----------|-------------|
-| **Scheduler** | Fires agent tasks on cron, timer, or event triggers |
-| **Router** | Maps tasks to agents, handles priority, prevents double-invocation |
-| **Consensus Engine** | Tracks proposal state machine, enforces round limits |
-| **Event Dispatcher** | Watches files, SQLite, and chain for changes |
-| **Message Bus** | In-process queue connecting all components |
+| **ConversationEngine** | Manages conversation state, dispatches agents, processes HANDOFF blocks |
+| **Scheduler** | Fires agent invocations based on ball-passing and default paths |
+| **Budget Enforcer** | Tracks token/cost usage, enforces per-cycle and per-agent limits |
 
-**Critical property:** The daemon is 100% deterministic. It never calls an LLM. All scheduling, routing, and consensus logic is pure compiled code. LLM calls happen only in the agent invocation layer, which the daemon triggers but does not participate in.
+**Critical property:** The daemon never calls an LLM. All routing, dispatching, and state management is pure compiled code. LLM calls happen only inside agent subprocesses (`claude -p`), which the daemon spawns but does not participate in.
 
 This means:
-- If the LLM is down, the daemon keeps running (just can't invoke agents)
-- If the chain is down, the daemon keeps running (queues transactions)
+- If the LLM provider is down, the daemon keeps running (just can't invoke agents)
 - Daemon behavior is reproducible and debuggable — no "the AI decided to skip this step"
+- Sequential dispatch: one agent at a time, no concurrency within a cycle
 
----
-
-## Inference Tiers
-
-Quorum uses a **cost-layered model** for all computation:
-
-| Tier | What | Cost | Used For |
-|------|------|------|----------|
-| **0** | Daemon rules | $0 | Scheduling, routing, consensus, event handling |
-| **1** | Local LLM | $0 (GPU power) | Routine scans, classification, status reports |
-| **2** | Frontier model | ~$0.05/call | Deep analysis, proposal authoring, code review |
-| **3** | Human | Priceless | Capital decisions, deadlocks, emergencies |
-
-The **model router** selects the tier based on task type (defined in agent YAML), never on LLM output. This keeps costs predictable.
-
-**Target ratio:** 90% Tier 1 (local), 10% Tier 2 (frontier). A typical four-agent system costs ~$10-15/month in LLM API fees.
-
----
-
-## Walrus
-
-[Walrus](https://walrus.site) is **decentralized blob storage** built on Sui. Quorum uses it for vault persistence.
-
-What Walrus provides that local files don't:
-- **Content addressing** — same content = same blob ID (tamper-evident)
-- **Versioning** — old versions persist, new versions don't overwrite
-- **Deletability** — unlike Arweave, you can clean up old data
-- **Programmable metadata** — each blob has a Sui object with agent, timestamp, category
-- **Seal integration** — encrypt blobs with access policies before storage
-
-In practice: your vault files live locally for speed, and sync to Walrus periodically for persistence and verification. If you lose your local disk, Walrus has everything.
-
----
-
-## Seal
-
-[Seal](https://docs.seal.mystenlabs.com) is **decentralized access control** via threshold encryption. Quorum uses it to enforce vault boundaries between agents.
-
-Without Seal, an agent could read any other agent's vault. With Seal:
-- Each agent's vault is encrypted with its own Seal policy
-- Cross-agent reads require an active proposal in REVIEWING status where the reader is a required reviewer
-- The access policy is a Move smart contract — not a config file someone can edit
-- Decryption requires cooperation from a threshold of Seal nodes
-
-**Practical implication:** When Bot Analyst reviews a Market Analyst proposal, it can temporarily read the relevant Market Analyst vault files. Once the proposal is no longer in REVIEWING, that access expires automatically.
-
----
-
-## Sui Layer
-
-The Sui blockchain stores three things:
-
-1. **Proposal objects** — shared objects with the full state machine lifecycle
-2. **Agent identities** — owned objects with track records (proposal count, review count)
-3. **Audit entries** — lightweight pointers to Walrus blobs with event metadata
-
-Heavy content (proposal text, review feedback, evaluation reports) lives on Walrus. Sui stores metadata and state transitions. This keeps on-chain costs negligible (~5-20 transactions/day, pennies).
-
-**PTB (Programmable Transaction Block):** Sui's mechanism for atomic multi-step operations. When a proposal is approved, one PTB atomically: updates the proposal status, records all reviewer signatures, logs the audit event, and authorizes execution. All succeed or none do.
+**Conversation states:** `active`, `waiting_for_human`, `done`, `closed`, `paused`
 
 ---
 
 ## Context Assembly
 
-The process of building an LLM prompt from an agent's vault, metrics, and task description.
+The process of building an LLM prompt from an agent's vault and task description.
 
 ```
 CONTEXT.md (always loaded)
++ SKILL.md (if present)
 + selected vault knowledge files (by recency and relevance)
-+ SQLite query results (recent metrics)
-+ task-specific instructions (from YAML prompt_template)
-+ proposal content (if reviewing)
++ team roster (injected from config)
++ task-specific instructions (HANDOFF prompt from previous agent)
 = Final prompt (within token budget)
 ```
 
-The context assembler respects the agent's `context_budget.max_vault_tokens` limit. If the vault has more content than fits, it prioritizes:
-1. Files in `always_include`
-2. Most recently modified files
-3. Files matching the current task's domain
-
-This is why context separation matters. A Market Analyst's 50,000-token budget is entirely devoted to market knowledge. An Engineer's 80,000-token budget is entirely devoted to code and architecture. Neither wastes tokens on the other's domain.
+Context separation matters. Each agent's budget is entirely devoted to its domain. A thinker's context is plans and architecture. A doer's context is code and implementation details. Neither wastes tokens on the other's domain.
 
 ---
 
-## Outcome Evaluation
+## Team Roster
 
-The **closed feedback loop** that makes agents smarter over time.
+The list of all agents in the current configuration, injected into each agent's context so it knows who it can hand off to.
 
-After a proposal is executed, the daemon schedules an evaluation (typically 48 hours later). The authoring agent compares its predictions against actual results:
+Defined in the conversation config:
 
+```yaml
+conversations:
+  leader: leader
+  max_turns: 20
+  default_path: [leader, thinker, doer, scribe]  # optional
+  agents: [leader, thinker, doer, reviewer, scribe]
 ```
-Predicted: "Reducing spread to 35 bps will increase fill rate by 15%"
-Actual:    "Fill rate increased 22%"
-Assessment: "Directionally correct, conservative on magnitude"
-```
 
-This evaluation is stored:
-- In the agent's vault (`decisions/proposal-X-eval.md`) — so it learns
-- On Walrus (full content) — for persistence
-- On Sui (hash + metadata) — for verifiability
+Each agent sees the roster and can address HANDOFF blocks to any listed agent by ID.
 
-Over time, each agent builds a **track record**: what fraction of its predictions were directionally correct, how far off the magnitude was, which types of proposals it's best at. This data is on-chain and verifiable by anyone.
+---
+
+## Scribe & Librarian
+
+Two archetypes that consume the knowledge ledger at the end of a cycle. Same mechanism, different audiences:
+
+- **Scribe** — produces structured notes for agent consumption. Output feeds back into agent vaults, building institutional memory over time.
+- **Librarian** — produces human-facing documentation. Output is formatted for the operator or developer to read.
+
+Both are analyst-class (no write access to code). Both read the full knowledge ledger accumulated during the cycle.
+
+The leader typically triggers the scribe as the last step before ending a cycle.
 
 ---
 
@@ -236,30 +180,13 @@ Week 1:  CONTEXT.md only (identity, no experience)
 
 Week 4:  CONTEXT.md + 10-15 knowledge files
          Output quality: moderate — domain-aware, references history
-         Vault: ~15 files, 5 evaluated proposals
+         Vault: ~15 files, scribe notes accumulating
 
 Week 12: CONTEXT.md + 30-50 knowledge files
-         Output quality: high — pattern-aware, calibrated predictions
-         Vault: ~50 files, 20+ evaluated proposals
-         Track record: ~80% directional accuracy
+         Output quality: high — pattern-aware, calibrated judgment
+         Vault: ~50 files, rich institutional memory
 ```
 
+The growth loop: agents produce KNOWLEDGE blocks during cycles, the scribe distills them into vault notes, those notes load into future invocations, producing better output and more nuanced KNOWLEDGE blocks.
+
 The vault is the agent's institutional memory. An agent with a rich vault produces dramatically better output than a fresh agent, even with the same CONTEXT.md and the same model.
-
----
-
-## Agent Quality Levers
-
-What the operator can tune to improve agent output:
-
-| Lever | Where | Effect |
-|-------|-------|--------|
-| CONTEXT.md clarity | Vault | Better role adherence, sharper boundaries |
-| Context budget | Agent YAML | More knowledge loaded per invocation |
-| Inference tier | Agent YAML | Frontier model for complex tasks |
-| always_include list | Agent YAML | Critical knowledge never dropped |
-| Seed knowledge | Vault files | Faster cold-start calibration |
-| Task prompt template | Task YAML | Better structured output |
-| Review strictness | Reviewer CONTEXT.md | Higher quality proposals through tougher review |
-
-**Key insight:** CONTEXT.md is the most impactful file in the system — more impactful than any code change.

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Quorum is a **multi-agent orchestration framework**. A deterministic C++20 daemon orchestrates independent AI agents that coordinate through structured proposals and persist knowledge in local vaults.
+Quorum is a **multi-agent orchestration framework**. A deterministic C++20 daemon orchestrates independent AI agents that coordinate through structured HANDOFF blocks and persist knowledge in local vaults.
 
 **Current phase: Phase 2 — Team Mode.** Pure local orchestration on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) are deferred indefinitely.
 
@@ -26,19 +26,16 @@ quorum/
 │   │   ├── main.cpp             # Daemon entry, signal handling, PID lock, CLI subcommands
 │   │   ├── daemon/              # Scheduler, message bus, events, conversation engine
 │   │   ├── agent/               # Claude Code invoker (claude -p), context assembler, output parser
-│   │   ├── knowledge/           # InboxWriter — writes OBSERVATION blocks to knowledge inbox
 │   │   ├── vault/               # Local vault manager (filesystem-based)
 │   │   ├── chain/               # [DEFERRED] Sui RPC client, proposals, audit, PTB
 │   │   ├── seal/                # [DEFERRED] Seal encrypt/decrypt, access policies
-│   │   ├── storage/             # SQLite (WAL mode) — task queue, token tracking, conversations
+│   │   ├── storage/             # SQLite (WAL mode) — task queue, token tracking, conversations, knowledge ledger
 │   │   ├── utils/               # HTTP (libcurl), JSON (manual), crypto (ed25519), config, UUID
 │   │   ├── sdk/                 # [DEFERRED] libquorum public API
 │   │   └── cli/                 # quorum binary CLI commands
 │   └── tests/
 ├── data/                        # Runtime data (gitignored)
-│   ├── vaults/                  # Per-agent vaults (CONTEXT.md, knowledge/, inbox/)
-│   └── knowledge/               # Shared knowledge base (inbox/, library/, archive/)
-│       └── PROCESSING.md        # Instructions for knowledge synthesis agent
+│   └── vaults/                  # Per-agent vaults (CONTEXT.md, knowledge/)
 ├── quorum-web/                  # Web dashboard (API + React frontend)
 │   ├── config.ts                # Paths resolved relative to repo root
 │   ├── server/
@@ -117,7 +114,7 @@ cd build && ctest --output-on-failure
 
 ### The Daemon Is Deterministic
 
-The orchestrator daemon (`quorum_daemon`) **never** calls an LLM. All scheduling, routing, consensus, and event handling is pure C++ logic. Agent invocations happen by spawning `claude -p` subprocesses (`src/agent/invoker.h`), triggered by the daemon's task dispatch loop.
+The orchestrator daemon (`quorum_daemon`) **never** calls an LLM. All scheduling, routing, and event handling is pure C++ logic. Agent invocations happen by spawning `claude -p` subprocesses (`src/agent/invoker.h`), triggered by the daemon's task dispatch loop.
 
 ### Agent Invocation (Phase 0)
 
@@ -146,7 +143,7 @@ Task Queue mode tasks (no `conversation_id`) have NULL session_id and behave ide
 
 ### Agent Output Rules (Defense-in-Depth)
 
-Agents must produce structured blocks (VAULT_UPDATE, OBSERVATION, PROPOSAL, SUMMARY, HANDOFF, KNOWLEDGE) in their response text — never write files directly. This is enforced at three layers:
+Agents must produce structured blocks (VAULT_UPDATE, SUMMARY, HANDOFF, KNOWLEDGE) in their response text — never write files directly. This is enforced at three layers:
 
 1. **`--disallowedTools`** — for `analyst` agents, the invoker passes `--disallowedTools "Write,Edit,NotebookEdit"` to `claude -p`, removing file-writing tools entirely from the agent's tool list. This is the hard enforcement layer — analyst agents cannot write files even if they try. **Exception:** `executor` agents (Phase 0.9) get full tool access and are expected to write files directly in their `target_dir`.
 2. **CONTEXT.md** — each agent's vault `CONTEXT.md` has a "## CRITICAL — Output Rules" section (between Role and Core Question) prohibiting file writes and requiring structured blocks.
@@ -165,19 +162,6 @@ The daemon enforces strictly sequential execution — one `claude -p` task at a 
 - **Rationale:** causal traceability (task B depends on task A's vault updates), budget predictability, session resume chaining, deterministic debugging
 - Critical for unattended overnight runs
 
-### Proposal State Machine
-
-```
-DRAFT(0) → REVIEWING(1) → APPROVED(2) → EXECUTED(5) → EVALUATED(6)
-                         → REJECTED(3)
-                         → ESCALATED(4)
-```
-
-- Max 3 rounds per proposal
-- Required reviewers declared at creation
-- All transitions tracked locally in SQLite (Phase 0)
-- On-chain transitions via PTB deferred to Phase 1+
-
 ### Vault System
 
 Each agent owns a vault: `data/vaults/{agent_name}/`
@@ -185,31 +169,22 @@ Each agent owns a vault: `data/vaults/{agent_name}/`
 ```
 data/vaults/{agent_name}/
 ├── CONTEXT.md          # Always loaded — role description + instructions
-├── knowledge/          # Accumulated analysis and conclusions
-├── experiments/        # Experiment designs and results
-├── decisions/          # Past decisions linked to proposals
-└── inbox/              # Items from other agents via proposal/consensus
+└── knowledge/          # Accumulated analysis and conclusions
 ```
 
-- Local filesystem only (Phase 0) — no Walrus sync
-- SQLite index for fast lookups
-- Cross-agent reads through proposal review process (local enforcement)
+- Local filesystem only — no Walrus sync
+- CONTEXT.md is the agent's identity and instructions
+- knowledge/ holds accumulated findings via VAULT_UPDATE blocks
 
 ### Knowledge System
 
-Agents produce OBSERVATION blocks (timestamped, accumulated, never overwritten) in addition to VAULT_UPDATE blocks (distilled beliefs, overwritten). Observations flow through a 3-zone knowledge pipeline:
+Agents produce KNOWLEDGE blocks during their turns. These are stored in the `knowledge_ledger` SQLite table (not the filesystem). The scribe agent consumes the ledger at the end of a conversation cycle to produce summaries.
 
-```
-data/knowledge/
-├── PROCESSING.md       # Instructions for the knowledge synthesis agent
-├── inbox/              # Raw observations from agents (timestamped markdown files)
-├── library/            # Synthesized findings by topic (findings.md per topic)
-└── archive/            # Superseded topics (>30 days old, all evidence outdated)
-```
+**Knowledge ledger schema** (in `storage/database.h`):
+- `knowledge_ledger` table: `id`, `cycle_id` (FK to conversations), `agent_id`, `turn_number`, `topic`, `content`, `created_at`
+- Methods: `append_knowledge()`, `get_cycle_knowledge()`, `count_cycle_knowledge()`
 
-- **InboxWriter** (`src/knowledge/inbox_writer.h`): daemon writes each OBSERVATION to `inbox/` as `{date}_{time}_{agent}_{task_type}.md` with YAML frontmatter (`agent`, `task_type`, `date`, `tags`, `processed: false`)
-- **Synthesis**: a future knowledge-processing task reads `PROCESSING.md`, merges unprocessed inbox notes into `library/{topic}/findings.md`, and marks notes as `processed: true`
-- Agents see both VAULT_UPDATE and OBSERVATION in their output instructions (context assembler includes both block formats)
+Agents also produce VAULT_UPDATE blocks for persistent findings written to their own `knowledge/` directory. KNOWLEDGE blocks are ephemeral (per-cycle); VAULT_UPDATE blocks are persistent (per-agent vault).
 
 ### Conversation Mode (Phase 2 — Team Mode)
 
@@ -239,7 +214,7 @@ Conversation Mode seeds a single goal and lets the daemon coordinate a team of a
 ### Storage (Phase 0)
 
 ```
-Local only:  SQLite task queue, token tracking, vault index, proposal state, conversations, knowledge ledger
+Local only:  SQLite task queue, token tracking, vault index, conversations, knowledge ledger
 Future:      Walrus (vault blobs), Sui (proposals, audit), Seal (access control)
 ```
 
@@ -293,14 +268,16 @@ budget:
 
 conversations:
   enabled: true
-  default_max_rounds: 3         # max revision cycles per conversation
-  default_budget_usd: 5.0       # per-conversation budget cap
+  leader: leader                              # agent id that receives the goal first
+  default_max_rounds: 20                      # repurposed as max_turns
+  default_budget_usd: 5.0                     # per-conversation budget cap
+  default_path: [leader, thinker, doer, scribe]  # optional default routing path
 
 agents:
-  - config: configs/agents/mm-bot/market_analyst.yaml
-  - config: configs/agents/mm-bot/bot_analyst.yaml
-  - config: configs/agents/mm-bot/engineer.yaml
-  - config: configs/agents/mm-bot/operator.yaml
+  - config: configs/agents/project/leader.yaml
+  - config: configs/agents/project/thinker.yaml
+  - config: configs/agents/project/doer.yaml
+  - config: configs/agents/project/scribe.yaml
 ```
 
 ### Agent YAML Pattern
@@ -308,25 +285,29 @@ agents:
 ```yaml
 # configs/agents/<agent>.yaml — agent config (analyst)
 id: market_analyst
-agent_class: analyst    # analyst = read-only tools, no Write/Edit/NotebookEdit
 name: "Market Analyst"
+role: thinker                    # archetype: leader, thinker, doer, reviewer, scribe, librarian
+agent_class: analyst             # analyst = read-only tools, no Write/Edit/NotebookEdit
+description: "Analyzes market structure and trading patterns"
 vault_path: data/vaults/market_analyst/
 context_file: data/vaults/market_analyst/CONTEXT.md
-# ... schedule, triggers, context_budget, boundaries
+skill_file: data/vaults/market_analyst/SKILL.md   # optional — domain-specific instructions
 ```
 
 ```yaml
 # configs/agents/<agent>.yaml — agent config (executor)
-id: code_executor
-agent_class: executor   # executor = full tool access (Write, Edit, NotebookEdit)
-name: "Code Executor"
-vault_path: data/vaults/code_executor/
-context_file: data/vaults/code_executor/CONTEXT.md
+id: move-dev
+name: "Move Developer"
+role: doer                       # doer role maps to executor agent_class
+agent_class: executor            # executor = full tool access (Write, Edit, NotebookEdit)
+description: "Writes Move smart contracts"
+vault_path: data/vaults/move-dev/
+context_file: data/vaults/move-dev/CONTEXT.md
 executor:
-  target_dir: ~/projects/myapp   # working directory for claude -p (supports ~/ expansion)
+  target_dir: ~/nonvis/my-project   # working directory for claude -p (supports ~/ expansion)
 ```
 
-**Agent classes:** `analyst` (read-only, default — `--disallowedTools` enforced), `executor` (full tool access, no `--disallowedTools`).
+**Agent classes:** `analyst` (read-only, default — `--disallowedTools` enforced), `executor` (full tool access, no `--disallowedTools`). Role determines class: doer = executor, all others = analyst.
 
 **Config loading:** At startup, `load_config()` reads the project config YAML (e.g. `mm-bot.yaml`) agent list, then calls `load_agent_config()` for each entry. This parses the individual agent YAML into `AgentMetadata` structs (id, name, agent_class, config_path, vault_path, context_file, target_dir). The Invoker receives `AgentMetadata` at dispatch time to build the appropriate `claude -p` command.
 
@@ -351,11 +332,9 @@ executor:
 1. **Never add LLM calls to the daemon control loop** — the orchestrator is deterministic
 2. **Never use nlohmann/json or any JSON library** — manual json.h only
 3. **Never use Boost** — for anything
-4. **Never allow direct vault writes across agents** — cross-agent access goes through proposal review
-5. **Never skip the proposal protocol** — all material decisions go through create→review→approve→execute→evaluate
-6. **Never block the daemon event loop** — subprocess spawning must be non-blocking
-7. **Never run `claude -p` without token budget enforcement** — per-task cap + global daily cap
-8. **Never let analyst agents write files directly** — enforced via `--disallowedTools "Write,Edit,NotebookEdit"` for `agent_class: analyst`; all analyst output must be structured blocks in the response text; the daemon parses and routes them. Executor agents (`agent_class: executor`) are exempt and get full tool access.
+4. **Never block the daemon event loop** — subprocess spawning must be non-blocking
+5. **Never run `claude -p` without token budget enforcement** — per-task cap + global daily cap
+6. **Never let analyst agents write files directly** — enforced via `--disallowedTools "Write,Edit,NotebookEdit"` for `agent_class: analyst`; all analyst output must be structured blocks in the response text; the daemon parses and routes them. Executor agents (`agent_class: executor`) are exempt and get full tool access.
 
 ## Current Phase
 
@@ -367,7 +346,7 @@ Phase 1 completed items (preserved for reference):
 3. ~~Invoker rewrite~~ ✓ (spawns `claude -p`, captures JSON output, writes token/cost to DB)
 4. ~~SQLite task queue~~ ✓ (pending/active/done states with token tracking)
 5. ~~Context assembler~~ ✓
-6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / OBSERVATION / SUMMARY / HANDOFF / KNOWLEDGE blocks)
+6. ~~Output parser~~ ✓ (HANDOFF / KNOWLEDGE / VAULT_UPDATE / SUMMARY blocks)
 7. ~~Token budget enforcement~~ ✓ (per-task cap + hourly cap with rolling window)
 8. ~~End-to-end dispatch verified~~ ✓
 9. ~~Conversation schema + CRUD~~ ✓
@@ -382,8 +361,14 @@ Phase 2 tasks:
 0. ~~Strip legacy pipelines~~ ✓ (removed analyst/executor pipeline state machines from ConversationEngine, removed router.h, removed consensus/observations/proposals processing from main loop, removed gate CLI subcommand, removed pipeline field from ConversationRecord/DB schema, stubbed on_task_complete(), deleted 8 files incl. legacy tests/scripts, 9 tests pass)
 1. ~~HANDOFF block parsing~~ ✓ (added HandoffBlock struct, std::optional<HandoffBlock> in ParsedOutput, registered HANDOFF in all 3 detection points + dispatch_block, content fallback for free-text prompts, last-HANDOFF-wins semantics, 9 test cases in test_handoff_parser.cpp, 10 tests pass)
 2. ~~KNOWLEDGE block parsing + knowledge_ledger~~ ✓ (added KnowledgeBlock struct, std::vector<KnowledgeBlock> in ParsedOutput, registered KNOWLEDGE in all 3 detection points + dispatch_block, content fallback for free-text, push_back semantics, knowledge_ledger SQLite table with append/get/count methods in database.h, 8 parser tests + 3 ledger tests, 12 tests pass)
-3. Team mode ConversationEngine — reimplemented state machine with flexible agent teams
-4. Team mode integration tests
+3. Generic conversation loop — rewrite ConversationEngine with team mode ball-passing via HANDOFF blocks
+4. Team roster injection — inject agent roster into leader's context
+5. Human interaction — respond CLI subcommand, waiting_for_human state
+6. Config parser — parse leader, default_path, role, skill_file from YAML
+7. State simplification — clean up ConvState transitions for team mode
+8. Agent generator — scaffold new agent configs from archetypes
+9. Integration tests — team mode end-to-end test suite
+10. E2E verification — full conversation loop with real agents
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 

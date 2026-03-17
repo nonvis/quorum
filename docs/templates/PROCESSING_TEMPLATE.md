@@ -1,79 +1,99 @@
-# Knowledge Base Processing Instructions
+# Scribe Processing Instructions
 
 <!--
-TEMPLATE for Quorum knowledge base librarian instructions.
-Copy this to data/knowledge/PROCESSING.md during quorum init or manual setup.
+TEMPLATE for Quorum scribe agent processing instructions.
+Copy this to data/vaults/{scribe_agent_id}/PROCESSING.md during project setup.
 Remove this comment block after copying.
 
-This file is loaded by the context assembler when dispatching inbox_process
-tasks. The librarian agent reads inbox/ notes, synthesizes them into
-library/ topic files, and marks inbox notes as processed.
+This file is loaded by the context assembler when dispatching the scribe agent
+at the end of a conversation cycle. The scribe reads the knowledge ledger,
+synthesizes entries into structured obsidian notes, and writes them to its vault.
 -->
 
-You are processing the knowledge base inbox. Your job:
+You are processing the **knowledge ledger** for this cycle. The ledger entries from all agents are provided below as context.
 
-1. Read each unprocessed note in inbox/
-2. For each note:
-   a. Identify the topic (e.g., adverse-selection, spread-capture, regime)
-   b. Check if library/{topic}/findings.md exists
-   c. If yes: merge new observations into the existing findings
-   d. If no: create a new topic folder and findings.md
-3. Update the inbox note's frontmatter: set processed: true
-4. If you discover cross-topic patterns, write them as new OBSERVATION blocks
+## Your Job
+
+1. Read all KNOWLEDGE entries from this cycle
+2. Group entries by topic — entries with the same or related `topic` slugs belong together
+3. Identify patterns across agents — when multiple agents observe related things, that's a signal worth capturing
+4. Produce structured obsidian notes that synthesize (not copy) the raw entries
+5. Focus on: **decisions made**, **insights discovered**, **open questions raised**
 
 ## Rules
 
-- Library findings.md files are OVERWRITTEN, not appended — always write the complete current understanding
-- Keep findings concise — current understanding only, not a changelog
-- Move library topics to archive/ if all evidence is >30 days old and superseded
-- Never delete inbox notes — only mark as processed
+- **Synthesize, don't copy.** Raw ledger entries are evidence. Your notes are distilled understanding.
+- **Focus on actionable insights.** Skip routine observations that don't change how the team operates.
+- **Link related topics.** Use `[[wikilinks]]` to connect notes that reference each other.
+- **Don't duplicate existing knowledge.** Check `knowledge/` for existing notes on the same topic. Update rather than create duplicates.
+- **One note per topic cluster.** If 5 ledger entries all relate to "deployment-config", produce one note, not five.
 
-## Library Note Format
+## Note Format
 
-Each library topic should follow this structure:
+Each note you produce must follow this structure:
 
 ```markdown
 ---
-topic: {topic-name}
-last_updated: {YYYY-MM-DD}
-observation_count: {N}
+topic: {topic-slug}
+date: {YYYY-MM-DD}
+cycle: {cycle_id}
+agents: [{agent_ids who contributed observations}]
+tags: [{relevant, topic, tags}]
 ---
 
-# {Topic Name} — Current Understanding
+# {Topic Name}
 
-## Pattern
-{What we know — distilled from all observations.}
+## Summary
+{2-3 sentence synthesis of what was learned this cycle.}
 
-## Evidence
-{Bullet list of supporting observations with dates.}
+## Key Findings
+{Bullet list of distilled insights. Each bullet should stand on its own.}
+
+## Decisions
+{Any decisions made or actions taken, with rationale.}
 
 ## Open Questions
-{What we don't know yet.}
+{What remains unresolved. These feed into the next cycle.}
+
+## Evidence
+{Brief references to the ledger entries that informed this note. Include agent id and entry gist.}
 ```
 
 ## Output Format
 
-Use structured blocks in your response text:
+Use `VAULT_UPDATE` blocks to write notes to your vault:
 
-- `VAULT_UPDATE` with path `library/{topic}/findings.md` — for new or updated topic files
-- `VAULT_UPDATE` with path to inbox note — to set `processed: true` in frontmatter
-- `OBSERVATION` — for cross-topic patterns discovered during synthesis
+```
+[VAULT_UPDATE]
+path: knowledge/{topic-slug}.md
+content: |
+  {Full note content following the format above}
+[/VAULT_UPDATE]
+```
+
+Produce one VAULT_UPDATE per topic note. If a `knowledge/{topic-slug}.md` already exists, your VAULT_UPDATE replaces it with the updated synthesis (include prior findings that are still relevant).
+
+End your response with a SUMMARY block listing the notes produced and any cross-topic patterns worth flagging.
 
 <!--
 DESIGN NOTES (remove after copying):
 
-1. This file is loaded once per inbox_process invocation. It does not
-   need to be small — it's only loaded for librarian tasks, not every
-   agent invocation.
+1. The scribe runs at the end of each conversation cycle. The daemon
+   collects all KNOWLEDGE blocks from the cycle's agents and passes
+   them as context alongside this file.
 
-2. The librarian uses an existing agent role (typically bot_analyst or
-   market_analyst). It gets this file as additional context on top of
-   its own CONTEXT.md.
+2. The scribe is analyst-class (read-only tools). It produces VAULT_UPDATE
+   blocks that the daemon writes to the scribe's vault on disk.
 
-3. Modify the topic examples and library note format to match your
-   domain. The structure above assumes a trading/DeFi context but
-   works for any domain.
+3. The knowledge ledger is stored in SQLite (knowledge_ledger table).
+   The daemon queries it and injects entries as text context — the scribe
+   does not query the database directly.
 
-4. Processing frequency is configured in the daemon scheduler
-   (default: daily or every 12h). Adjust based on inbox volume.
+4. Adjust the note format to match your domain. The structure above is
+   general-purpose but works well for technical projects, trading ops,
+   and research workflows.
+
+5. The scribe's vault notes become the team's institutional memory.
+   Other agents can reference them via the context assembler in future
+   cycles.
 -->

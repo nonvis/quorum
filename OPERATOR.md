@@ -1,98 +1,136 @@
 # Operator Manual — Quorum
 
-Multi-agent orchestration framework. C++20 daemon spawns `claude -p` processes, manages task queue, coordinates agents through filesystem vaults.
+Multi-agent orchestration daemon. C++20 daemon spawns `claude -p` subprocesses, manages conversations via team mode (ball-passing), coordinates agents through filesystem vaults and a knowledge ledger.
 
-Phase 0: pure local orchestration on MacBook. No blockchain, no Walrus.
+Phase 2: Team Mode. Local-first, single machine. No blockchain.
 
-## Scripts
+## Build
 
-| Script | Purpose | When to run |
-|--------|---------|-------------|
-| `scripts/smoke_test.sh` | End-to-end test: seed tasks → run daemon → validate results | After build, before deployment |
-| `scripts/data/` | Test data and fixtures | Used by smoke_test.sh |
+```bash
+# Dependencies (macOS)
+brew install openssl@3 sqlite
+
+# Build
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+
+# Run tests
+cd build && ctest --output-on-failure
+```
 
 ## Common Operations
 
-### Build
+### Start a Conversation
 
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
+# Basic — leader receives goal, team takes over
+./build/quorum_daemon --config configs/mm-bot.yaml converse "Analyze mm-bot spread performance"
+
+# With budget and turn limits
+./build/quorum_daemon --config configs/mm-bot.yaml converse --budget 3.0 --max-rounds 5 "goal"
 ```
 
-### Run Daemon
+### Check Status
+
+```bash
+./build/quorum_daemon --config configs/mm-bot.yaml status
+```
+
+### Respond to Leader
+
+When the leader is waiting for human input (`waiting_for_human` state):
+
+```bash
+./build/quorum_daemon --config configs/mm-bot.yaml respond --conversation 1 "response text"
+```
+
+### Resume a Paused Conversation
+
+```bash
+./build/quorum_daemon --config configs/mm-bot.yaml resume --conversation 1
+```
+
+### Close a Conversation
+
+```bash
+./build/quorum_daemon --config configs/mm-bot.yaml close --conversation 1
+```
+
+### Start Daemon Only
+
+Run without a conversation subcommand (processes existing queue):
 
 ```bash
 ./build/quorum_daemon --config configs/mm-bot.yaml
-./build/quorum_daemon --config configs/mm-bot.yaml --verbose   # Verbose logging
 ```
 
-Daemon creates PID lock at `/tmp/quorum.pid`. Data directory: `./data/`.
+## Web Dashboard
 
-### CLI Commands
+API server (Hono + Bun, port 3100) and React frontend (Vite + Tailwind, port 3101).
 
 ```bash
-./build/quorum daemon start
-./build/quorum daemon status
-./build/quorum agent list
-./build/quorum proposal create --title "..." --author market_analyst
-./build/quorum proposal status --id proposal-042
+# Terminal 1 — API server
+cd quorum-web && bun install && bun run dev          # http://localhost:3100
+
+# Terminal 2 — React frontend
+cd quorum-web/client && bun install && bun run dev   # http://localhost:3101
 ```
 
-### Check Status (After Overnight Runs)
+**API endpoints:**
 
-```bash
-./build/quorum status                  # Tasks completed, tokens spent, errors
-```
-
-### Smoke Test
-
-```bash
-# MUST be run from a regular terminal, NOT inside a claude session
-./scripts/smoke_test.sh
-```
-
-Seeds tasks, runs daemon with real `claude -p` invocations, validates results. Includes WAL/SHM cleanup.
-
-### Health Checks
-
-```bash
-# Check PID
-cat /tmp/quorum.pid && kill -0 $(cat /tmp/quorum.pid) 2>/dev/null && echo "running" || echo "stopped"
-
-# Query task queue
-sqlite3 data/quorum.db "SELECT id, status, agent, created_at FROM tasks ORDER BY created_at DESC LIMIT 10;"
-
-# Token usage
-sqlite3 data/quorum.db "SELECT SUM(input_tokens), SUM(output_tokens), SUM(cost_usd) FROM task_results WHERE date(created_at) = date('now');"
-```
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/conversations` | List all conversations |
+| GET | `/api/conversations/:id` | Conversation detail with tasks |
+| GET | `/api/stats` | Aggregate stats |
+| GET | `/api/events` | SSE stream (real-time updates) |
+| POST | `/api/converse` | Start a conversation |
+| POST | `/api/respond/:id` | Respond to leader |
+| POST | `/api/close/:id` | Close a conversation |
+| POST | `/api/resume/:id` | Resume a paused conversation |
 
 ## Data Locations
 
 | Location | What |
 |----------|------|
-| `data/quorum.db` | SQLite: task queue, token tracking, proposal state |
-| `data/vaults/{agent}/` | Agent vaults: CONTEXT.md, knowledge/, experiments/, decisions/, inbox/ |
-| `configs/mm-bot.yaml` | Daemon config |
-| `configs/agents/*.yaml` | Agent definitions |
+| `data/quorum.db` | SQLite: task queue, conversations, knowledge ledger |
+| `data/vaults/{agent}/` | Agent vaults: CONTEXT.md + knowledge/ |
+| `configs/*.yaml` | Project configs (daemon settings + agent team) |
+| `configs/agents/*.yaml` | Agent definitions (archetype, model, budget) |
 | `/tmp/quorum.pid` | PID lock file |
 
 ## Safety Features
 
-- **Per-task token cap**: kills `claude -p` if exceeded
-- **Global daily budget**: pauses all invocations when hit
-- **Max concurrent agents**: configurable (default 2-3)
-- **PID lock**: prevents duplicate daemons
+- **Per-task token cap**: kills `claude -p` subprocess if exceeded
+- **Hourly budget**: daemon pauses all invocations when hit
+- **Per-conversation budget + max turns**: set via `--budget` and `--max-rounds`
+- **Sequential dispatch**: one task at a time, no concurrent agent invocations
+- **PID lock**: prevents duplicate daemons on the same machine
+
+## Health Checks
+
+```bash
+# Check if daemon is running
+cat /tmp/quorum.pid && kill -0 $(cat /tmp/quorum.pid) 2>/dev/null && echo "running" || echo "stopped"
+
+# Query recent tasks
+sqlite3 data/quorum.db "SELECT id, status, agent, created_at FROM tasks ORDER BY created_at DESC LIMIT 10;"
+
+# Token usage (today)
+sqlite3 data/quorum.db "SELECT SUM(input_tokens), SUM(output_tokens), SUM(cost_usd) FROM task_results WHERE date(created_at) = date('now');"
+
+# Active conversations
+sqlite3 data/quorum.db "SELECT id, status, goal, created_at FROM conversations WHERE status != 'closed' ORDER BY created_at DESC;"
+```
 
 ## Known Issues
 
-- `claude -p` refuses to launch inside another Claude Code session (`CLAUDECODE` env var). Smoke test must run from a regular terminal.
-- Daemon marks tasks `done` even on non-zero exit (if stdout is non-empty). Exit-code validation pending.
+- `claude -p` refuses to launch inside another Claude Code session (`CLAUDECODE` env var). Must run from a regular terminal.
 - Buffered stdout when redirected to file — add `std::flush` for real-time tailing.
 
 ## Environment
 
-- **Runs on**: MacBook only (local)
+- **Runs on**: macOS (local, single machine)
 - **Runtime dependency**: `claude` CLI must be installed and authenticated
 - **DB**: `data/quorum.db` (SQLite, WAL mode)
 - **PID file**: `/tmp/quorum.pid`
@@ -103,6 +141,7 @@ sqlite3 data/quorum.db "SELECT SUM(input_tokens), SUM(output_tokens), SUM(cost_u
 |---------|-----|
 | "PID file exists" on start | `rm /tmp/quorum.pid` if process is dead |
 | Stale SQLite WAL/SHM | `rm -f data/quorum.db-wal data/quorum.db-shm` |
-| Smoke test fails inside claude | Run from a regular terminal, not inside `claude` CLI |
 | Agent invocation hangs | Check `claude` CLI auth; verify API key is valid |
 | Tasks stuck in pending | Check daemon log for invoker errors; verify token budget not exhausted |
+| Conversation stuck in `waiting_for_human` | Use `respond --conversation <id> "text"` to unblock |
+| Budget exhausted mid-conversation | Conversation pauses automatically; increase budget and `resume` |

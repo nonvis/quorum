@@ -6,169 +6,101 @@ Who interacts with Quorum, and what does the system look like from their perspec
 
 ## Overview
 
-| Stakeholder | Who | Primary Interface | Needs Quorum Software? |
-|-------------|-----|-------------------|------------------------|
-| **Operator** | Runs the daemon, configures agents, approves proposals | CLI + dashboard | Yes |
-| **Observer** | Views decisions and verifies agent track records | Dashboard + Sui explorer | No (on-chain data is self-sufficient) |
-| **Developer** | Builds custom agents, integrations, domain templates | YAML + CONTEXT.md + SDK | Yes |
-| **Agent** (system) | AI role invoked by daemon | Vault + structured output protocol | N/A (is part of the system) |
+| Stakeholder | Who | Primary Interface |
+|-------------|-----|-------------------|
+| **Operator** | Runs the daemon, configures agents, responds to leader | CLI |
+| **Developer** | Defines agents via YAML + CONTEXT.md | Config files + `quorum agent create` |
+| **Agent** (system) | AI role invoked by daemon via `claude -p` | Vault + HANDOFF/KNOWLEDGE protocol |
 
 ---
 
 ## Operator
 
-The human who owns the system. Configures agents, starts the daemon, approves human-gated proposals, and tunes agent behavior when output quality drifts.
+The human who owns the system. Starts the daemon, responds to the leader when it holds the ball (`waiting_for_human`), and tunes agent behavior when output quality drifts.
 
-### Daily Ritual (~15 min at steady state)
+### Daily Ritual (~5 min at steady state)
 
 ```bash
-quorum daemon status                     # Healthy?
-quorum proposal list --pending           # Anything awaiting approval?
-quorum proposal approve --id XXX         # Sign human-gated proposals
-quorum audit list --since yesterday      # Skim overnight activity
+quorum status                    # Daemon healthy? Any conversations active?
+quorum conversations             # Check for waiting_for_human state
+quorum respond "..."             # Answer leader's question if waiting
 ```
 
-### Key Insight
+No proposal approval workflow. No on-chain signing. The operator's job is to give the leader direction and occasionally refine agent configs.
 
-Operator engagement should **decrease** over time. Early days are high-touch (calibrating CONTEXT.md, reviewing every output). Steady state is low-touch (approve, skim, occasional tune).
+### Engagement Over Time
 
-### Operator Interface Needs
+Early days are high-touch: calibrating CONTEXT.md, reviewing every output, correcting agent behavior. Steady state is low-touch: respond to leader queries, skim scribe output, occasional config tune.
 
-| Need | Interface | When Available |
-|------|-----------|----------------|
-| Start/stop daemon | CLI | Phase 1 |
-| Approve/reject proposals | CLI → dashboard | Phase 1 → Phase 5 |
-| Read vault files | CLI → dashboard | Phase 1 → Phase 5 |
-| View agent stats | CLI → dashboard | Phase 1 → Phase 5 |
-| Notification of human-gated proposals | TBD | TBD |
-| Emergency pause/resume | CLI | Phase 1 |
-| Cost monitoring | Dashboard | Phase 5 |
-
-### Open Questions
-
-1. **Mobile approval:** Can operator approve from phone? (Sui wallet on mobile?)
-2. **Vacation mode:** Auto-approve low-risk proposals when operator is away?
-3. **Operator handoff:** Shared wallet or multi-sig for multiple operators?
-4. **Alert fatigue:** How to notify without over-notifying?
-
----
-
-## Observer
-
-Doesn't operate Quorum — **verifies** it. Looks at decisions after the fact and confirms the system operated correctly.
-
-### Who
-
-- Auditor reviewing compliance
-- Investor evaluating a Quorum-managed strategy
-- Grant reviewer assessing real usage
-- Counterparty verifying governance
-
-### What They See (No Quorum Software Required)
-
-Everything on Sui blockchain:
-
-```
-Proposal Objects     → state transitions, reviewer verdicts, timestamps, human signatures
-Agent Identity       → role, registration, proposal/review counts, track record
-Audit Log Entries    → event type, agent ID, timestamp, Walrus blob ID, content hash
-```
-
-Full content (proposal text, reviews, evaluations) on Walrus, verifiable against on-chain hashes.
-
-### Verification Flow
-
-```
-1. Get Sui package ID from operator
-2. Query proposal history on Sui explorer
-3. Check: approval rate, human involvement, track records
-4. Spot-check: fetch 3 proposals from Walrus, read full text, verify hashes
-5. Conclusion: transparent operation with human oversight
-```
-
-### Design Implications
-
-1. **Dashboard needs a read-only / public mode** — no operator credentials required
-2. **On-chain data must be self-descriptive** — readable without documentation
-3. **Track record computation must be deterministic** — same data → same accuracy, regardless of who computes
-4. **Walrus blob format should be documented** — observer tools can parse independently
+The goal is for the operator to interact less over time as agents accumulate knowledge and the team becomes more self-sufficient.
 
 ---
 
 ## Developer
 
-Builds **on** Quorum — custom agents, domain templates, integrations, or embeds Quorum into a larger product.
+Builds agents — either manually or using the `quorum agent create` generator, which interviews the user and produces config files.
 
 ### What They Create
 
-Three files define an agent:
+Three things define an agent:
 
-1. **Agent YAML** — schedule, triggers, inference tier, context budget, boundaries
-2. **Vault CONTEXT.md** — agent identity, knowledge scope, what it does and doesn't do
-3. **Task YAML** — inputs (SQLite, vault, HTTP), outputs (vault_update, proposal), prompt template
+1. **Agent YAML** (`configs/agents/project/agent.yaml`) — role (one of 6 archetypes), description, vault path
+2. **CONTEXT.md** (`data/vaults/{agent}/CONTEXT.md`) — agent identity, knowledge scope, behavioral boundaries
+3. **Optional SKILL.md** (`data/vaults/{agent}/SKILL.md`) — domain expertise, specialized instructions
 
 ### Developer Mental Model
 
 ```
 I write CONTEXT.md (who the agent is)
-I write YAML (when and how the agent runs)
-I write prompt templates (what the agent thinks about)
-I feed data into SQLite (what the agent sees)
-Quorum handles everything else: scheduling, consensus, storage, audit
+I write YAML (what role it plays, where its vault lives)
+I optionally write SKILL.md (domain expertise)
+Quorum handles everything else: dispatching, ball-passing, knowledge ledger, budget
 ```
 
-### Key Interfaces
+### The Generator Shortcut
 
-| Need | Interface | When Available |
-|------|-----------|----------------|
-| Define agents | YAML + CONTEXT.md | Phase 1 |
-| Test agents locally | CLI (`quorum agent invoke`) | Phase 1 |
-| Programmatic access | TypeScript SDK | Phase 5 |
-| Event subscriptions | TS SDK (WebSocket) | Phase 5 |
-| Domain templates | Template packaging system | Phase 5 |
+`quorum agent create` uses Claude Code to interview the developer and generate both the YAML config and CONTEXT.md. Useful for bootstrapping, but hand-editing is common as agents mature.
 
-### Open Questions
+### Key Insight
 
-1. **Agent testing harness:** Mock context + dry-run invocation without full daemon?
-2. **Prompt iteration workflow:** Edit CONTEXT.md → invoke → review output → repeat. Needs fast loop.
-3. **Plugin system:** Custom output block types beyond VAULT_UPDATE/PROPOSAL/REVIEW/SUMMARY?
-4. **Vault schema validation:** Enforce structure or stay free-form markdown?
-5. **Multi-language SDK:** Python for data science teams? Or TypeScript-only?
+CONTEXT.md is the highest-leverage file. A well-written CONTEXT.md with a mediocre model outperforms a poorly-written CONTEXT.md with a frontier model. The developer's primary skill is writing clear, specific agent instructions.
 
 ---
 
 ## Agent (System Stakeholder)
 
-The AI role invoked by the daemon. Has no continuity — each invocation is a fresh LLM call.
+The AI role invoked by the daemon. Has no continuity — each invocation is a fresh `claude -p` subprocess. One session per cycle.
 
 ### What It Experiences
 
 ```
-WAKE UP → read vault (identity + knowledge) → read fresh data → think → write output → CEASE
+SPAWN → read vault (identity + knowledge) → read task prompt → think → write output (HANDOFF + KNOWLEDGE) → EXIT
 ```
 
-### Its Only Persistence Mechanism
+### Its Persistence Mechanisms
 
-Writing to its vault via VAULT_UPDATE blocks. If it doesn't write, it forgets.
+Two ways an agent's work survives beyond its invocation:
+1. **KNOWLEDGE blocks** — appended to the cycle's knowledge ledger (SQLite)
+2. **Vault writes** (doer only) — direct file changes in the target repo
 
-### Cross-Agent Interaction
+### Cross-Agent Coordination
 
-Agents never talk directly. All interaction is mediated by the proposal protocol:
-- Author creates proposal
-- Reviewers evaluate via consensus engine
-- Author revises if requested
-- Cross-vault reads only during active review (Seal-authorized)
+Agents never talk directly. All coordination flows through HANDOFF blocks:
+- Agent A finishes work, includes `HANDOFF to: agent_b` with instructions
+- Daemon spawns Agent B with those instructions as the task prompt
+- Agent B does its work, hands off to the next agent or back to leader
+
+The leader orchestrates the sequence. Individual agents focus on their specialty.
 
 ### Growth Trajectory
 
-The vault IS the agent's value. A week-old agent with thin vault ≈ generic LLM. A month-old agent with rich vault ≈ domain expert with institutional memory.
+The vault IS the agent's value. A week-old agent with a thin vault is a generic LLM with a role label. A month-old agent with a rich vault — fed by scribe-distilled notes from dozens of cycles — is a domain expert with institutional memory.
 
 ---
 
-## Design Principles (Cross-Stakeholder)
+## Design Principles
 
-1. **Operator engagement decreases over time** — system becomes more autonomous as track records build
-2. **Observer needs zero trust** — verification through on-chain data, not through the operator or software
-3. **Developer defines three files** — everything else is framework responsibility
-4. **CONTEXT.md is the highest-leverage file** — more impactful than any code change in the system
-5. **Vault is the moat** — accumulated knowledge is what makes each Quorum instance valuable over time
+1. **Operator engagement decreases over time** — the system becomes more self-sufficient as agent vaults accumulate knowledge
+2. **Developer defines agent configs — everything else is framework responsibility** — no need to understand daemon internals to build effective agents
+3. **CONTEXT.md is the highest-leverage file** — more impactful than any code change in the system
+4. **Vault is the moat** — accumulated knowledge is what makes each Quorum instance valuable over time

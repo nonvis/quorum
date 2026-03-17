@@ -8,28 +8,27 @@ A deterministic C++20 daemon that orchestrates AI agents across different projec
 
 ## How It Works
 
-1. **You define agents** — YAML configs + CONTEXT.md files that tell each agent what to look at
+1. **You define agents** — YAML configs + CONTEXT.md files that tell each agent its role and what to look at
 2. **You seed a goal** — `quorum_daemon converse "Analyze adverse selection and propose a fix"`
-3. **The daemon drives the pipeline** — Thinker proposes -> Reviewer validates (analyst) or -> Human gate -> Executor implements -> Reviewer validates (executor)
-4. **Agents accumulate knowledge** — each agent has a persistent vault (filesystem markdown)
+3. **The daemon drives the team** — Leader receives the goal, agents pass the ball via HANDOFF blocks. One ball, always moving. Sequential dispatch, fully deterministic.
+4. **Agents accumulate knowledge** — Each turn appends to the knowledge ledger. Scribe(s) consume the ledger at the end and produce vault notes.
 
 The daemon is 100% deterministic. No LLM in the control loop. LLMs only run in agent invocations via `claude -p` subprocesses.
 
 ## Architecture
 
 ```
-Orchestrator Daemon (C++20, deterministic)
+Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
     |
-    |-- Conversation Engine (analyst + executor pipelines)
-    |-- Consensus Engine (proposal lifecycle)
-    |-- Scheduler (periodic dispatch)
-    +-- Budget Enforcer (hourly/daily/per-conversation caps)
+    |-- Conversation Engine (team mode — ball-passing via HANDOFF)
+    |-- Budget Enforcer (hourly caps, sequential dispatch)
+    +-- Scheduler (periodic tasks — health checks, vault snapshots)
          |
     +----+----+
-    | Agents  |  <- claude -p subprocesses (LLM here only)
+    | Agents  |  <- claude -p subprocesses (all LLM here)
     +----+----+
          |
-    SQLite --- task queue, conversations, proposals
+    SQLite --- task queue, conversations, knowledge ledger
     Vaults --- CONTEXT.md + knowledge/ per agent (filesystem)
 ```
 
@@ -40,34 +39,55 @@ Orchestrator Daemon (C++20, deterministic)
 brew install openssl@3 sqlite
 
 # Build
-make build
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
 
 # Start a conversation
 ./build/quorum_daemon --config configs/mm-bot.yaml converse "Analyze mm-bot spread performance"
 
+# With custom budget and turn limit
+./build/quorum_daemon --config configs/mm-bot.yaml converse --budget 3.0 --max-rounds 5 "goal"
+
 # Check status
 ./build/quorum_daemon --config configs/mm-bot.yaml status
 
-# Approve executor at human gate (executor pipeline)
-./build/quorum_daemon --config configs/mm-bot.yaml gate --approve --conversation 1
+# Respond to leader (when waiting for human input)
+./build/quorum_daemon --config configs/mm-bot.yaml respond --conversation 1 "response text"
 
-# Start daemon only (Task Queue mode — seed tasks separately)
-make run-verbose
+# Resume a paused conversation
+./build/quorum_daemon --config configs/mm-bot.yaml resume --conversation 1
+
+# Close a conversation
+./build/quorum_daemon --config configs/mm-bot.yaml close --conversation 1
+
+# Start daemon only (no conversation subcommand)
+./build/quorum_daemon --config configs/mm-bot.yaml
 ```
+
+## Agent Archetypes
+
+| Archetype | Role | Tools |
+|-----------|------|-------|
+| **leader** | Coordinator. Receives user goal, delegates to team, synthesizes results. | Limited (planning only) |
+| **thinker** | Planner. Analyzes problems, proposes approaches, produces structured plans. | Read-only |
+| **doer** | Executor. Implements changes — code, config, files. Full tool access. | Full |
+| **reviewer** | Validator. Reviews doer output for correctness. Optional in team. | Read-only |
+| **scribe** | Knowledge to Obsidian. Consumes knowledge ledger, produces vault notes. | Write (vault only) |
+| **librarian** | Knowledge to human docs. Consumes knowledge ledger, produces documentation. | Write (docs only) |
 
 ## Multi-Domain Customization
 
-Same daemon, different agent profiles. Each domain defines agent YAML configs, CONTEXT.md files, and seed knowledge.
+Same daemon, different agent teams. Each domain defines agent YAML configs, CONTEXT.md files, and seed knowledge.
 
-| Domain | Agents | Use Case |
-|--------|--------|----------|
-| Trading (mm-bot) | market_analyst, bot_analyst, engineer, operator | Optimize trading parameters, monitor P&L |
-| Development | product_researcher, code_quality, implementation, devops | Analyze codebases, propose improvements |
-| Infrastructure | ecosystem_monitor, storage_analyst, infra_operator | Monitor services, optimize resources |
+| Domain | Example Agents | Use Case |
+|--------|----------------|----------|
+| Trading (mm-bot) | leader, market_thinker, bot_doer, scribe | Optimize trading parameters, monitor P&L |
+| Development | leader, arch_thinker, impl_doer, reviewer, scribe | Analyze codebases, propose and implement improvements |
+| Infrastructure | leader, infra_thinker, ops_doer, scribe | Monitor services, optimize resources |
 
 ## Web Dashboard
 
-API server (Hono + Bun) and React frontend (Vite + Tailwind). The server reads `quorum.db` read-only and shells out to the daemon CLI for mutations. The frontend shows conversations in real-time via SSE.
+API server (Hono + Bun) and React frontend (Vite + Tailwind). Real-time updates via SSE.
 
 ```bash
 # Terminal 1 — API server
@@ -81,30 +101,25 @@ cd quorum-web/client && bun install && bun run dev   # http://localhost:3101
 - `GET /api/conversations` — list all conversations
 - `GET /api/conversations/:id` — conversation detail with tasks
 - `GET /api/stats` — aggregate stats
-- `GET /api/events` — SSE stream (2s poll, auto-approve support)
-- `POST /api/converse` — start a conversation (via daemon CLI)
-- `POST /api/gate/:id/approve` / `reject` — human gate actions
+- `GET /api/events` — SSE stream (real-time updates)
+- `POST /api/converse` — start a conversation
+- `POST /api/respond/:id` — respond to leader (when waiting for human)
 - `POST /api/close/:id` / `resume/:id` — conversation lifecycle
-
-**Frontend features:**
-- Dark theme (zinc-950), conversation cards with expandable task details
-- State badges (color-coded), task timeline with status icons
-- Gate approve/reject buttons when conversation is in APPROVED state
-- Prompt input with auto-approve checkbox
-- Real-time updates via SSE
 
 ## Project Structure
 
 | Directory | Purpose |
 |-----------|---------|
-| quorum-core/ | C++20 daemon (src, tests) |
-| quorum-web/ | Bun + Hono API server (web dashboard backend) |
-| configs/ | YAML configs for daemon + agents |
-| data/ | Runtime data — vaults, SQLite (gitignored) |
+| `quorum-core/` | C++20 daemon (src/, tests/) |
+| `quorum-web/` | Bun + Hono API server + React frontend (web dashboard) |
+| `configs/` | Project YAML configs + agent YAMLs |
+| `data/` | Runtime data — vaults, SQLite (gitignored) |
+| `docs/` | Design documents |
+| `.claude/commands/` | Claude Code skills |
 
 ## Status
 
-Phase 1 — Multi-Domain Expansion. See [Development Guide](DEVELOPMENT.md) for details.
+Phase 2 — Team Mode. See [Development Guide](DEVELOPMENT.md) for details.
 
 ## License
 

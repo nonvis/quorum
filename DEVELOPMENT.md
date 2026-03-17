@@ -7,35 +7,34 @@
 | 0 | Local Orchestration MVP | Complete (2026-03-06) |
 | 0.5 | mm-bot Observation Mode | Complete (2026-03-07) |
 | 0.7 | Conversation Mode | Complete (2026-03-08) |
-| 0.9 | Executor Pipeline | Complete (2026-03-11) |
-| 1 | Multi-Domain Expansion | In Progress (2026-03-11) |
-| 1b | Web Dashboard API | In Progress (2026-03-11) |
+| 1 | Executor Pipeline | Complete (2026-03-11) |
+| 1b | Web Dashboard | Complete (2026-03-11) |
+| 2 | Team Mode | In Progress |
 
 ## Architecture
 
 ```
 Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
     |
-    |-- Scheduler (periodic task dispatch, 5s tick)
-    |-- Consensus Engine (proposal lifecycle, multi-round review)
-    |-- Conversation Engine (analyst + executor pipelines, human gate)
-    +-- Budget Enforcer (hourly/daily caps, sequential dispatch)
+    |-- Conversation Engine (team mode — ball-passing via HANDOFF blocks)
+    |-- Budget Enforcer (hourly caps, sequential dispatch)
+    +-- Scheduler (periodic tasks)
          |
     +----+----+
     | Agents  |  <- claude -p subprocesses (all LLM here)
     +----+----+
          |
-    SQLite --- task queue, conversations, proposals, token tracking
-    Vaults --- filesystem (CONTEXT.md + knowledge/ per agent)
+    SQLite --- task queue, conversations, knowledge ledger
+    Vaults --- CONTEXT.md + knowledge/ per agent (filesystem)
 ```
 
-## Execution Modes
+## Execution
 
-| Mode | Trigger | Agent creates next task? |
-|------|---------|------------------------|
-| Task Queue | `scripts/seed_*.sh` | No — operator seeds all tasks |
-| Conversation (analyst) | `quorum_daemon converse "goal"` | Yes — T->R->Done |
-| Conversation (executor) | `quorum_daemon converse "goal"` | Yes — T->Gate->E->R->Done |
+**Team Mode only.** Old modes (Task Queue, Conversation analyst, Conversation executor) were replaced by team mode in Phase 2.
+
+`quorum_daemon converse "goal"` starts a conversation. The leader agent routes work to other agents via HANDOFF blocks. Each agent responds and hands off to the next agent in the chain.
+
+6 agent archetypes: leader, thinker, doer, reviewer, scribe, librarian.
 
 ## Agent Classes
 
@@ -43,6 +42,8 @@ Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
 |-------|-------|------------------|----------|
 | analyst (default) | Read-only (no Write/Edit) | `--disallowedTools "Write,Edit,NotebookEdit"` | Observation, analysis, review |
 | executor | Full tool access | No `--disallowedTools`, `cd target_dir &&` prefix | Code changes, deployments |
+
+Role determines class: doer = executor, all others = analyst.
 
 ## Build
 
@@ -58,7 +59,7 @@ make test
 
 # Start web API server + React frontend
 make web-dev         # API on :3100
-make web-client      # React on :3101 (proxy → :3100)
+make web-client      # React on :3101 (proxy -> :3100)
 ```
 
 ### Dependencies (macOS)
@@ -76,25 +77,19 @@ cd quorum-web && bun install && cd client && bun install
 
 ```bash
 # Start a conversation (creates goal + starts daemon)
-./build/quorum_daemon --config configs/mm-bot.yaml converse "Analyze spread performance"
+./build/quorum_daemon --config configs/project.yaml converse "Analyze spread performance"
 
 # List conversations
-./build/quorum_daemon --config configs/mm-bot.yaml status
+./build/quorum_daemon --config configs/project.yaml status
+
+# Respond to a conversation (human input)
+./build/quorum_daemon --config configs/project.yaml respond --conversation 1 "text"
 
 # Resume a paused conversation
-./build/quorum_daemon --config configs/mm-bot.yaml resume --conversation 1
+./build/quorum_daemon --config configs/project.yaml resume --conversation 1
 
 # Close a conversation
-./build/quorum_daemon --config configs/mm-bot.yaml close --conversation 1
-
-# Approve execution at human gate
-./build/quorum_daemon --config configs/mm-bot.yaml gate --approve --conversation 1
-
-# Reject at human gate
-./build/quorum_daemon --config configs/mm-bot.yaml gate --reject --conversation 1
-
-# Start daemon only (Task Queue mode)
-./build/quorum_daemon --config configs/mm-bot.yaml
+./build/quorum_daemon --config configs/project.yaml close --conversation 1
 ```
 
 ## Source Layout
@@ -129,13 +124,12 @@ cd quorum-web && bun install && cd client && bun install
 | File | Purpose |
 |------|---------|
 | main.cpp | Entry point, CLI subcommands, dispatch loop |
-| daemon/conversation.h | Conversation state machine (analyst + executor pipelines, human gate) |
-| daemon/consensus.h | Proposal lifecycle, multi-round review |
+| daemon/conversation.h | Conversation engine — team mode ball-passing (currently stub, being rewritten in task #3) |
 | daemon/scheduler.h | Periodic task scheduling |
 | agent/invoker.h | claude -p subprocess, session resume, agent-class tool policy |
-| agent/output_parser.h | VAULT_UPDATE/PROPOSAL/REVIEW/OBSERVATION blocks |
+| agent/output_parser.h | HANDOFF/KNOWLEDGE/VAULT_UPDATE/SUMMARY blocks |
 | agent/context_assembler.h | Prompt builder from vault files |
-| storage/database.h | SQLite wrapper (WAL, mutex, RAII) |
+| storage/database.h | SQLite wrapper (WAL, mutex, RAII), knowledge_ledger methods |
 | utils/config.h | YAML config parser, AgentMetadata, load_agent_config() |
 | utils/uuid.h | UUID v4 generation for session IDs |
 
@@ -143,13 +137,14 @@ cd quorum-web && bun install && cd client && bun install
 
 | File | Coverage |
 |------|----------|
-| unit/test_conversation.cpp | State transitions, session reuse (27 assertions) |
-| unit/test_escalation.cpp | Pause triggers, agent escalation (26 assertions) |
-| unit/test_session_resume.cpp | UUID format, uniqueness, -r flag (18 assertions) |
 | unit/test_output_parser.cpp | Block parsing, verdict normalization |
-| integration/test_pipeline.cpp | Full Task Queue pipeline (38 assertions) |
-| integration/test_conversation_pipeline.cpp | Full Conversation pipeline (34 assertions) |
-| integration/test_executor_pipeline.cpp | Full Executor pipeline (41 assertions) |
+| unit/test_handoff_parser.cpp | HANDOFF block parsing (9 cases, 22 assertions) |
+| unit/test_knowledge_parser.cpp | KNOWLEDGE block parsing (8 cases) |
+| unit/test_knowledge_ledger.cpp | Knowledge ledger DB operations (3 cases) |
+| unit/test_session_resume.cpp | UUID format, uniqueness, -r flag |
+| integration/test_team_pipeline.cpp | Placeholder for team mode tests |
+
+12 ctest targets currently passing.
 
 ## Design Notes
 
@@ -158,4 +153,4 @@ Detailed design lives in the second-brain vault:
 - 01_Projects/Quorum/00 - Quorum Dashboard.md — project index
 - 01_Projects/Quorum/01 - Architecture.md — architecture overview
 - 01_Projects/Quorum/11 - Conversation Mode.md — state machine design
-- 01_Projects/Quorum/12 - Execution Modes.md — mode taxonomy
+- 01_Projects/Quorum/Phase 2/ — Phase 2 task notes and thinker prompts

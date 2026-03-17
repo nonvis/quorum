@@ -1,173 +1,203 @@
 # Quorum — Domain Templates
 
-The four-role pattern (External Analysis, Internal Analysis, Building, Operating) applies to any domain with ongoing operations. This doc shows concrete mappings.
+Same daemon, different teams. This doc shows concrete team compositions for different domains using the six agent archetypes.
 
 ---
 
 ## The Pattern
 
-Every domain has:
+Every domain needs at minimum a **leader** and one specialist. The six archetypes determine what an agent can do; the CONTEXT.md and SKILL.md determine what it knows.
 
-| Role | Core Question | Looks At |
-|------|--------------|----------|
-| **External Analyst** | "What's happening out there?" | Market, competitors, trends, opportunities |
-| **Internal Analyst** | "How are we performing?" | Metrics, experiments, outcomes, optimization |
-| **Builder** | "How do we implement it?" | Code, design, architecture, safety |
-| **Operator** | "Is everything running?" | Processes, deployment, monitoring, incidents |
+| Archetype | Purpose | Tool Access | Required? |
+|-----------|---------|-------------|-----------|
+| **leader** | Receives user prompt, coordinates team, decides when done | Read-only | Exactly 1 |
+| **thinker** | Plans, designs, strategizes | Read-only | 1+ recommended |
+| **doer** | Writes code, runs commands, produces artifacts | Full tools | 1+ recommended |
+| **reviewer** | Validates work, catches bugs, enforces standards | Read-only | Optional |
+| **scribe** | Consumes knowledge ledger, writes project notes (Obsidian) | Write to notes dir | Optional |
+| **librarian** | Consumes knowledge ledger, writes human-facing docs | Write to docs dir | Optional |
 
-You can rename them, merge them (3 agents instead of 4), or split them further (5+ agents for complex domains). The framework doesn't care about names — it cares about distinct context requirements.
+**The key insight:** Role determines tool access. Specialization determines domain expertise. A `move-dev` doer and a `ts-dev` doer have the same tool permissions — full read/write/execute. What makes them different agents is their CONTEXT.md (role instructions) and SKILL.md (domain knowledge). Same archetype, different skill files, completely different agent.
 
 ---
 
-## Trading Operations (Default)
+## Trading Operations
 
-```
-Market Analyst  → Pool metrics, competitor spreads, volume patterns, macro signals
-Bot Analyst     → P&L, fill rates, parameter experiments, adverse selection
-Engineer        → C++ bot code, architecture, safety rails, latency
-Operator        → Process health, deployment, configs, incident response
+A team for optimizing a market-making bot. The leader coordinates analysis cycles, thinkers analyze markets and parameters, the doer implements config changes, and the scribe records strategy decisions.
+
+```yaml
+conversations:
+  leader: leader
+  max_turns: 20
+  default_path: [leader, defi-strategist, parameter-optimizer, move-dev, strategy-scribe]
+  agents: [leader, defi-strategist, parameter-optimizer, move-dev, strategy-scribe]
 ```
 
-**Typical proposal:** "Reduce base spread from 40 to 35 bps based on 2-week fill rate analysis"
-**Review flow:** Bot Analyst creates → Engineer reviews safety → Operator deploys
+| Agent ID | Archetype | Description |
+|----------|-----------|-------------|
+| `leader` | leader | Coordinates analysis cycles, decides when to act vs. observe |
+| `defi-strategist` | thinker | Analyzes pool metrics, competitor spreads, volume patterns, macro signals |
+| `parameter-optimizer` | thinker | Reviews P&L, fill rates, adverse selection — recommends parameter changes |
+| `move-dev` | doer | Implements config changes, writes Move modules, runs backtests |
+| `strategy-scribe` | scribe | Records strategy decisions, parameter change history, performance outcomes |
+
+**Example goal:** "Analyze DEEP/SUI pool performance over the last 7 days and recommend spread adjustments."
+
+**Flow:** Leader hands to defi-strategist (market analysis) then parameter-optimizer (parameter recommendation) then move-dev (implement config change) then strategy-scribe (record decision).
 
 ---
 
 ## Software Engineering
 
+A team for building and maintaining a codebase. Two doers with different specializations — one for TypeScript, one for Move — plus a security reviewer to catch vulnerabilities before merge.
+
 ```yaml
-# agents/product_researcher.yaml
-id: product_researcher
-schedule:
-  - type: periodic
-    interval_minutes: 1440
-    task: competitor_scan
-  - type: periodic
-    interval_minutes: 10080    # weekly
-    task: user_feedback_digest
+conversations:
+  leader: leader
+  max_turns: 25
+  default_path: [leader, architect, ts-dev, scribe]
+  agents: [leader, architect, ts-dev, move-dev, security-reviewer, api-scribe]
 ```
 
-```
-Product Researcher → User feedback (support tickets, NPS), competitor features, market trends
-Code Quality Agent → Test coverage, bug rates, performance benchmarks, dependency health
-Implementation Agent → Code writing, PR review, refactoring, design docs
-DevOps Agent → CI/CD pipeline, monitoring, deployment, uptime, incident response
-```
+| Agent ID | Archetype | Description |
+|----------|-----------|-------------|
+| `leader` | leader | Routes work to the right developer, manages multi-step implementations |
+| `architect` | thinker | Designs module structure, API contracts, data models |
+| `ts-dev` | doer | Writes TypeScript — backend services, API endpoints, tests |
+| `move-dev` | doer | Writes Move smart contracts, modules, and tests |
+| `security-reviewer` | reviewer | Reviews code for vulnerabilities, access control bugs, unsafe patterns |
+| `api-scribe` | scribe | Records API design decisions, architecture notes, change rationale |
 
-**Typical proposal:** "Refactor auth module — 3 high-severity bugs in last month, test coverage at 42%"
-**Review flow:** Code Quality creates → Implementation Agent reviews feasibility → DevOps reviews deployment risk
+**Example goal:** "Add a new REST endpoint for querying escrow status by address."
 
-**Data sources:**
-- Product Researcher: Zendesk API, G2 reviews, competitor changelog feeds
-- Code Quality: GitHub API (PR stats, test results), Sentry (error rates), Datadog
-- Implementation Agent: Git repo, CI build logs, architecture docs
-- DevOps: Kubernetes metrics, PagerDuty, deployment history
+**Flow:** Leader hands to architect (API design) then ts-dev (implement endpoint) then security-reviewer (validate) then api-scribe (document).
+
+**Multiple doers:** The leader decides which doer to hand off to based on the task. Move work goes to `move-dev`, TypeScript work to `ts-dev`. For cross-stack features, the leader chains them: architect designs, then move-dev implements the contract, then ts-dev implements the API layer.
 
 ---
 
-## Content Operations
+## Infrastructure / DevOps
 
-```
-Trend Analyst       → Social signals (Reddit, Twitter/X), SEO keyword trends, audience demographics
-Performance Analyst → Engagement metrics (CTR, time-on-page), conversion rates, A/B test results
-Content Creator     → Writing, editing, headline generation, asset creation
-Publishing Agent    → Scheduling, distribution (email, social, RSS), format conversion
+A team for managing servers, deployments, and operational health. Smaller team — the infra-planner combines strategic and tactical thinking.
+
+```yaml
+conversations:
+  leader: leader
+  max_turns: 15
+  default_path: [leader, infra-planner, ops-doer, architecture-scribe]
+  agents: [leader, infra-planner, ops-doer, architecture-scribe]
 ```
 
-**Typical proposal:** "Shift editorial calendar toward AI-regulation content — search volume up 340% this month"
-**Review flow:** Trend Analyst creates → Performance Analyst validates with engagement data → Content Creator assesses production capacity
+| Agent ID | Archetype | Description |
+|----------|-----------|-------------|
+| `leader` | leader | Triages operational issues, prioritizes work |
+| `infra-planner` | thinker | Plans capacity, designs network topology, evaluates tooling |
+| `ops-doer` | doer | Writes configs, runs deployments, executes maintenance tasks |
+| `architecture-scribe` | scribe | Records infrastructure decisions, runbooks, topology changes |
+
+**Example goal:** "Our fullnode is 200 blocks behind. Diagnose and fix."
+
+**Flow:** Leader hands to infra-planner (diagnose root cause) then ops-doer (implement fix — adjust configs, restart services) then architecture-scribe (record incident and resolution).
 
 ---
 
-## Research Lab
+## Research
 
-```
-Literature Scanner   → New papers (arXiv, PubMed), related work, methodology trends
-Experiment Analyst   → Results interpretation, statistical significance, replication assessment
-Code Scientist       → Experiment implementation, compute management, data pipelines
-Lab Manager          → Resource allocation, timeline tracking, grant reporting, compliance
+A team for running experiments and synthesizing findings. The methods-reviewer ensures statistical rigor before conclusions are recorded.
+
+```yaml
+conversations:
+  leader: leader
+  max_turns: 20
+  default_path: [leader, literature-reviewer, experiment-coder, methods-reviewer, findings-scribe]
+  agents: [leader, literature-reviewer, experiment-coder, methods-reviewer, findings-scribe]
 ```
 
-**Typical proposal:** "Replicate Smith et al. 2026 with our dataset — their approach outperforms our baseline by 12%"
-**Review flow:** Literature Scanner creates → Experiment Analyst validates methodology → Code Scientist estimates compute cost → Lab Manager checks resource availability
+| Agent ID | Archetype | Description |
+|----------|-----------|-------------|
+| `leader` | leader | Frames research questions, coordinates investigation cycles |
+| `literature-reviewer` | thinker | Reviews prior work, identifies gaps, proposes hypotheses |
+| `experiment-coder` | doer | Implements experiments, runs analysis scripts, produces visualizations |
+| `methods-reviewer` | reviewer | Validates statistical methods, checks for confounds, reviews significance |
+| `findings-scribe` | scribe | Synthesizes findings into structured research notes |
+
+**Example goal:** "Test whether our fill rate improves with asymmetric spread skew during high-volatility regimes."
+
+**Flow:** Leader hands to literature-reviewer (prior work on skew strategies) then experiment-coder (implement backtest, run analysis) then methods-reviewer (validate methodology and results) then findings-scribe (record findings).
 
 ---
 
-## Investment / Portfolio Management
+## Scaling: Team Sizes
 
-```
-Market Intelligence  → Macro indicators, sector rotation, earnings surprises, geopolitical events
-Portfolio Analyst    → Position P&L, risk metrics (VaR, Sharpe), correlation analysis, drawdown tracking
-Strategy Engineer    → Model implementation, backtesting, signal generation, execution logic
-Operations Agent    → Trade execution monitoring, reconciliation, compliance reporting, broker connectivity
+### Minimum Viable Team (2 agents)
+
+```yaml
+agents: [leader, doer]
+default_path: [leader, doer]
 ```
 
-**Typical proposal:** "Increase tech sector allocation from 25% to 30% — momentum indicators positive across 5 timeframes"
-**Review flow:** Market Intelligence creates → Portfolio Analyst reviews risk impact → Strategy Engineer validates against backtest → Human approves capital allocation
+Leader receives the goal, hands to doer, doer does the work, hands back to leader, leader marks done. No planning step, no review, no documentation. Good for simple tasks.
+
+### Standard Team (4 agents)
+
+```yaml
+agents: [leader, thinker, doer, scribe]
+default_path: [leader, thinker, doer, scribe]
+```
+
+Leader coordinates, thinker plans, doer executes, scribe documents. The workhorse configuration for most projects.
+
+### Full Team (6+ agents)
+
+```yaml
+agents: [leader, thinker-a, thinker-b, doer-a, doer-b, reviewer, scribe, librarian]
+default_path: [leader, thinker-a, doer-a, reviewer, scribe]
+```
+
+Multiple thinkers for different planning concerns (e.g., architecture + security). Multiple doers for different tech stacks (e.g., Move + TypeScript). Reviewer for quality gates. Scribe for internal notes, librarian for external docs.
+
+The `default_path` defines the happy path. The leader can override routing at any turn via HANDOFF blocks — sending work to `thinker-b` instead of `thinker-a`, or skipping the reviewer for trivial changes.
 
 ---
 
-## DevOps / Infrastructure
+## The Specialization Model
+
+Two agents with the same archetype differ only in their knowledge files:
 
 ```
-Threat Monitor       → CVE feeds, dependency vulnerabilities, attack pattern analysis
-Performance Analyst  → Latency percentiles, error rates, resource utilization, capacity planning
-Platform Engineer    → Infrastructure-as-code, service mesh config, database optimization
-Incident Commander   → Alert triage, runbook execution, post-mortem writing, on-call management
+move-dev (doer)                    ts-dev (doer)
+  CONTEXT.md: "You write Move"      CONTEXT.md: "You write TypeScript"
+  SKILL.md: Move patterns,          SKILL.md: Node.js patterns,
+    Sui object model,                 Express/Hono, testing with
+    testing with sui move test        vitest
+  target_dir: ~/my-move-project      target_dir: ~/my-ts-project
 ```
 
-**Typical proposal:** "Migrate Redis cluster to version 7.4 — 2 CVEs in current version, one critical"
-**Review flow:** Threat Monitor creates → Platform Engineer reviews migration plan → Performance Analyst validates benchmark results → Incident Commander confirms rollback procedure
+Both have full tool access (read, write, execute). Both emit KNOWLEDGE blocks. Both receive HANDOFF prompts the same way. The daemon treats them identically — it routes by agent ID, not by what they know.
+
+This means adding a new specialization is always the same steps:
+
+1. `quorum agent create --role doer --name python-dev --project my-project`
+2. Edit `CONTEXT.md` — describe the role
+3. Add a `SKILL.md` — paste in domain expertise (language idioms, framework patterns, API references)
+4. Add to project config `conversations.agents` list
+5. Restart daemon
 
 ---
 
-## Adapting the Template
+## Domain Mapping Table
 
-### Fewer Than 4 Agents
+How the six archetypes map across domains:
 
-If two roles look at the same data, merge them:
+| Archetype | Trading | Software | Infrastructure | Research |
+|-----------|---------|----------|----------------|----------|
+| **leader** | Coordinator | Coordinator | Coordinator | Coordinator |
+| **thinker** | DeFi Strategist, Parameter Optimizer | Architect | Infra Planner | Literature Reviewer |
+| **doer** | Move Developer | TS Dev, Move Dev | Ops Doer | Experiment Coder |
+| **reviewer** | — | Security Reviewer | — | Methods Reviewer |
+| **scribe** | Strategy Scribe | API Scribe | Architecture Scribe | Findings Scribe |
+| **librarian** | — | API Doc Writer | Runbook Writer | Paper Drafter |
 
-```
-# 3-agent setup for a small content team
-Researcher → combines trend analysis + performance metrics
-Creator    → content production
-Publisher  → distribution + monitoring
-```
+The leader is always the same archetype. Everything else is a configuration choice — which archetypes to include and what CONTEXT.md to give them.
 
-### More Than 4 Agents
-
-If one role has too many responsibilities, split it:
-
-```
-# 6-agent setup for a large trading desk
-Market Macro Analyst  → cross-market signals, rates, FX
-Market Micro Analyst  → per-venue order book analysis
-Strategy Analyst      → signal backtesting, factor analysis
-Risk Manager          → portfolio VaR, correlation, limits
-Engineer              → execution code, connectivity
-Operator              → deployment, monitoring, reconciliation
-```
-
-### The Merge/Split Test
-
-Ask: "Does this agent need fundamentally different context (knowledge loaded into its prompt) than that agent?"
-
-If yes → separate agents.
-If no → merge into one agent with broader responsibilities.
-
-Context separation is the point. Two agents looking at the same data from slightly different angles should be one agent.
-
----
-
-## Quick Reference: Domain Mapping Table
-
-| Domain | External | Internal | Builder | Operator |
-|--------|----------|----------|---------|----------|
-| Trading | Market Analyst | Bot Analyst | Engineer | Operator |
-| Software | Product Researcher | Code Quality | Implementation | DevOps |
-| Content | Trend Analyst | Performance Analyst | Creator | Publisher |
-| Research | Literature Scanner | Experiment Analyst | Code Scientist | Lab Manager |
-| Investment | Market Intelligence | Portfolio Analyst | Strategy Engineer | Operations |
-| DevOps | Threat Monitor | Performance Analyst | Platform Engineer | Incident Commander |
-
-This table demonstrates Quorum is **horizontal infrastructure**, not a single-use tool. The four-role pattern is the platform; domains are configurations.
+Quorum is horizontal infrastructure. The six archetypes are the platform; domains are configurations.

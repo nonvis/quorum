@@ -1,6 +1,6 @@
 # /quorum-setup — Interactive Project Scaffolder
 
-You are setting up a new Quorum project. Quorum is a C++20 daemon that orchestrates Claude Code CLI agents. Each project has a config YAML + agent configs + vault directories.
+You are setting up a new Quorum project. Quorum is a C++20 daemon that orchestrates Claude Code CLI agents in a team. Each project has a config YAML + agent configs + vault directories.
 
 ## Mode
 
@@ -10,7 +10,7 @@ Ask the user: **"Set up an existing project from its config, or create a new pro
 
 1. Ask which config: `ls configs/*.yaml` to show options
 2. Read the chosen config to discover agents (`agents: - config: ...` entries)
-3. For each agent, read its YAML to get `id`, `vault_path`, `context_file`, `agent_class`, `target_dir`
+3. For each agent, read its YAML to get `id`, `role`, `vault_path`, `context_file`, `agent_class`, `target_dir`
 4. Create missing directories and files (see Setup Steps below)
 
 ### Mode B: Create new project
@@ -19,9 +19,16 @@ Ask these questions one at a time:
 
 1. **Project name** — lowercase-hyphenated (e.g., `hello-world`, `code-reviewer`)
 2. **Description** — one sentence, what does this project do?
-3. **Pipeline type** — `analyst` (Thinker → Reviewer → Done) or `executor` (Thinker → Human Gate → Executor → Reviewer → Done)?
-4. **Agents** — for executor pipeline, default is thinker + executor + reviewer. Ask if they want to customize names or add agents.
-5. **Target directory** (executor pipeline only) — where should the executor agent work? (e.g., `~/projects/myapp`)
+3. **Team composition** — which agent roles does this project need?
+   - Available roles: `leader`, `thinker`, `doer`, `reviewer`, `scribe`, `librarian`
+   - Role determines tool access: `doer` = executor (full tools), all others = analyst (read-only)
+   - Minimum viable team: `thinker` + `doer` (thinker plans, doer executes)
+   - Common setups:
+     - **Analysis only**: `thinker` (+ optional `reviewer`)
+     - **Build team**: `thinker` + `doer` (+ optional `reviewer`)
+     - **Full team**: `leader` + `thinker` + `doer` + `reviewer` + `scribe`
+4. **Agent names** — for each role, ask for a descriptive agent name (e.g., `move-dev` for a doer, `arch-reviewer` for a reviewer)
+5. **Target directory** (doer agents only) — where should the doer agent work? (e.g., `~/projects/myapp`)
 
 Then create all configs + data.
 
@@ -36,27 +43,46 @@ mkdir -p data/vaults/{agent_id}/knowledge
 
 ### 2. CONTEXT.md
 If `data/vaults/{agent_id}/CONTEXT.md` doesn't exist:
-- For **analyst** agents: use `docs/templates/CONTEXT_TEMPLATE.md` as base, fill in agent name and role
-- For **executor** agents: create a minimal CONTEXT.md focused on implementation (no Output Rules section — executors write files directly)
-- For **reviewer** agents in executor pipeline: create a review-focused CONTEXT.md (check plan vs implementation)
+- Copy `docs/templates/CONTEXT_TEMPLATE.md` as base
+- Select the correct Output Rules variant based on the agent's role:
+  - **Analyst-class** (leader, thinker, reviewer, scribe, librarian): Variant A (read-only, structured blocks)
+  - **Doer-class** (doer): Variant B (full tool access)
+- Fill in agent name, role, and description
+- Remove the unused variant and template comment blocks
 
-### 3. Target directory (executor agents only)
+### 3. Target directory (doer agents only)
 If the agent YAML has `target_dir`, create it:
 ```bash
 mkdir -p {expanded_target_dir}
 ```
 
 ### 4. Project config YAML (new projects only)
-Create `configs/{project-name}.yaml` following the pattern in `configs/hello-world.yaml`:
+Create `configs/{project-name}.yaml` following the pattern in existing configs:
 - `daemon.pid_file`: `/tmp/quorum-{project-name}.pid`
 - `daemon.data_dir`: `./data`
 - `budget`: conservative defaults (daily $5, hourly $2, timeout 120s)
-- `conversations`: set pipeline, agent role names
 - `agents`: list of `- config:` paths
 
 ### 5. Agent config YAMLs (new projects only)
-Create `configs/agents/{project-name}/{agent_id}.yaml` for each agent.
-Follow the pattern in `configs/agents/hello-world/` for executor pipeline agents, or `configs/agents/mm-bot/` for analyst agents.
+Create `configs/agents/{project-name}/{agent_id}.yaml` for each agent:
+```yaml
+id: {agent_id}
+name: "{Agent Display Name}"
+role: {role}
+agent_class: {executor|analyst}
+description: "{One sentence description}"
+vault_path: data/vaults/{agent_id}/
+context_file: data/vaults/{agent_id}/CONTEXT.md
+# skill_file: path/to/SKILL.md  # optional
+# executor section only for doer agents:
+# executor:
+#   target_dir: ~/path/to/target
+```
+
+### 6. Scribe processing instructions (if scribe agent exists)
+If the team includes a scribe agent:
+- Copy `docs/templates/PROCESSING_TEMPLATE.md` to `data/vaults/{scribe_id}/PROCESSING.md`
+- Adjust domain-specific content as needed
 
 ## Validation
 
@@ -70,8 +96,9 @@ After setup, verify:
 ## Reference
 
 - Existing project configs: `configs/*.yaml`
-- Agent config examples: `configs/agents/mm-bot/`, `configs/agents/hello-world/`
+- Agent config examples: `configs/agents/`
 - CONTEXT.md template: `docs/templates/CONTEXT_TEMPLATE.md`
+- Scribe processing template: `docs/templates/PROCESSING_TEMPLATE.md`
 - Vault structure: `data/vaults/{agent_id}/` with `CONTEXT.md`, `knowledge/`
 
 ## Rules

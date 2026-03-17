@@ -2,663 +2,532 @@
 
 > What it looks like when everything works.
 
-This document walks through the complete Quorum experience from a cold start to a continuously operating multi-agent system with on-chain verification. The user has a Claude API key (or local LLM setup) and wants to run a team of AI agents that coordinate, accumulate knowledge, and make verifiable decisions.
+This document walks through the complete Quorum experience from a cold start to a running multi-agent team. The user has a Claude Pro/Max subscription (for `claude` CLI) and wants to orchestrate a team of AI agents that coordinate, accumulate knowledge, and produce artifacts.
 
 ---
 
 ## The 30-Second Mental Model
 
 ```
-You define agents → Daemon runs them on schedule → Agents propose changes
-→ Other agents review → Consensus reached → Action taken → Outcome measured
-→ Knowledge accumulates → Agents get smarter → Repeat forever
+You define a team → Start a conversation with a goal → Leader receives goal
+→ Agents pass the ball via HANDOFF blocks → Knowledge accumulates in a ledger
+→ Scribe writes notes at end → Done (or leader asks human for input)
 ```
 
-The daemon is a loop. Agents are stateless LLM calls that read from their vault, think, and write back. The vault is their memory. The blockchain is the receipt.
+The daemon is a deterministic C++20 process. Agents are `claude -p` subprocesses — stateless LLM calls that read context, think, and respond with structured blocks. One ball, always moving. One agent runs at a time. The daemon never calls an LLM itself; all intelligence lives in the agent layer.
 
 ---
 
-## Phase 1: Setup (~10 minutes)
+## Setup (~5 minutes)
 
-### Install
+### Build from Source
 
 ```bash
-# Option A: Binary (macOS/Linux)
-curl -fsSL https://quorum.dev/install.sh | sh
-
-# Option B: npm (wraps the binary)
-npm install -g @quorum/cli
-
-# Option C: Build from source
 git clone https://github.com/user/quorum && cd quorum
-make build
+
+# macOS dependencies
+brew install openssl sqlite
+
+# Build
+mkdir build && cd build
+cmake .. && make -j$(nproc)
+
+# Verify
+./quorum_daemon --help
 ```
 
-### Initialize a Project
+### Prerequisites
 
-```bash
-mkdir my-trading-agents && cd my-trading-agents
-quorum init
-```
+- **Claude CLI** — `claude` must be on your PATH. Install via `npm install -g @anthropic-ai/claude-code`.
+- **SQLite** — ships with macOS. Linux: `apt install libsqlite3-dev`.
+- **OpenSSL** — `brew install openssl` (macOS) or `apt install libssl-dev` (Linux).
 
-This creates:
-
-```
-my-trading-agents/
-├── mm-bot.yaml              # Daemon config (chain, walrus, inference settings)
-├── agents/
-│   ├── market_analyst.yaml  # Agent role definition
-│   ├── bot_analyst.yaml
-│   ├── engineer.yaml
-│   └── operator.yaml
-├── tasks/
-│   ├── routine_scan.yaml    # Task definitions with prompt templates
-│   └── deep_analysis.yaml
-├── vaults/
-│   ├── market_analyst/
-│   │   └── CONTEXT.md       # Agent's role instructions (always loaded)
-│   ├── bot_analyst/
-│   │   └── CONTEXT.md
-│   ├── engineer/
-│   │   └── CONTEXT.md
-│   └── operator/
-│       └── CONTEXT.md
-└── data/
-    └── quorum.db            # SQLite (created on first run)
-```
-
-### Configure Credentials
-
-```bash
-# LLM access (pick one or both)
-export ANTHROPIC_API_KEY=sk-ant-...          # Tier 2: frontier model
-# Or configure local LLM in mm-bot.yaml:
-#   inference.local.url: http://localhost:11434  (Ollama)
-
-# Sui wallet (for on-chain features)
-quorum wallet import --keystore ~/.sui/keystore
-# Or generate new:
-quorum wallet create
-
-# Walrus (for persistent vault storage)
-# Automatically configured for testnet; mainnet requires WAL tokens
-```
-
-At this point you have a working setup. No Sui wallet is strictly required — Quorum runs in **local-only mode** without on-chain features, storing everything in SQLite + local files. The blockchain layers are additive.
+No API keys to configure. Quorum spawns `claude -p` subprocesses, which use your existing Claude CLI authentication.
 
 ---
 
-## Phase 2: Define Your Domain (~20 minutes)
+## Define Your Team
 
-### Customize Agent Roles
+A Quorum project is a YAML config that declares a leader and a set of agents. Each agent gets a YAML file, a CONTEXT.md (role instructions), and optionally a SKILL.md (domain expertise).
 
-`quorum init` generates a four-agent template (Market Analyst, Bot Analyst, Engineer, Operator). You customize them for your domain by editing two things per agent:
-
-**1. The YAML config** — what the agent does operationally:
+### Project Config
 
 ```yaml
-# agents/market_analyst.yaml
-id: market_analyst
-name: "Market Analyst"
+# configs/move-project.yaml
 
-schedule:
-  - type: periodic
-    interval_minutes: 30          # Check markets every 30 min
-    task: routine_scan
-  - type: periodic
-    interval_minutes: 1440        # Deep dive once daily
-    task: deep_analysis
+daemon:
+  pid_file: /tmp/quorum.pid
+  data_dir: ./data
+  log_level: info
 
-triggers:
-  - event: new_pool_detected      # React to external events
-    task: pool_evaluation
+conversations:
+  leader: leader
+  max_turns: 20
+  default_path: [leader, thinker, doer, scribe]
+  agents: [leader, architect, move-dev, security-reviewer, scribe]
 
-inference_tier:
-  routine_scan: 1                 # Local LLM (free, fast)
-  deep_analysis: 2                # Frontier model ($$, thorough)
-  pool_evaluation: 2
+agents:
+  - config: configs/agents/move-project/leader.yaml
+  - config: configs/agents/move-project/architect.yaml
+  - config: configs/agents/move-project/move-dev.yaml
+  - config: configs/agents/move-project/security-reviewer.yaml
+  - config: configs/agents/move-project/scribe.yaml
 
-context_budget:
-  max_vault_tokens: 50000         # How much vault knowledge to load
-  always_include:
-    - CONTEXT.md
-    - knowledge/active-pools.md
+budget:
+  hourly_limit_usd: 2.00
+  daily_limit_usd: 10.00
+  task_timeout_seconds: 300
 ```
 
-**2. The vault CONTEXT.md** — who the agent is and what it knows:
+### Agent YAMLs
+
+Each agent declares its role, archetype, and context paths:
+
+```yaml
+# configs/agents/move-project/move-dev.yaml
+id: move-dev
+name: "Move Developer"
+role: doer
+agent_class: executor
+description: "Writes Move smart contracts"
+vault_path: data/vaults/move-dev/
+context_file: data/vaults/move-dev/CONTEXT.md
+skill_file: data/vaults/move-dev/SKILL.md
+executor:
+  target_dir: ~/nonvis/my-move-project
+```
+
+```yaml
+# configs/agents/move-project/architect.yaml
+id: architect
+name: "Architect"
+role: thinker
+agent_class: analyst
+description: "Plans module structure, designs APIs, reviews patterns"
+vault_path: data/vaults/architect/
+context_file: data/vaults/architect/CONTEXT.md
+```
+
+```yaml
+# configs/agents/move-project/security-reviewer.yaml
+id: security-reviewer
+name: "Security Reviewer"
+role: reviewer
+agent_class: analyst
+description: "Validates Move code for vulnerabilities and access-control bugs"
+vault_path: data/vaults/security-reviewer/
+context_file: data/vaults/security-reviewer/CONTEXT.md
+```
+
+### CONTEXT.md — Who the Agent Is
+
+Every agent loads its CONTEXT.md into every invocation. This is the agent's identity:
 
 ```markdown
-# Market Analyst — Agent Context
+# Move Developer — Agent Context
 
 ## Role
-You discover and evaluate market-making opportunities in DeFi markets.
-
-## You Look At
-- Pool metrics, volume, fees, order book depth
-- Competitor MM bots and their behavior
-- Market regime (CALM / MODERATE / VOLATILE / CRASH)
+You implement Move smart contracts on Sui. You write production-quality code,
+compile it, run tests, and fix issues until tests pass.
 
 ## You Produce
-- Pool analysis in knowledge/
-- Opportunity proposals when actionable
+- Move modules in sources/
+- Move tests in tests/
+- KNOWLEDGE blocks documenting design decisions
 
 ## You Do NOT
-- Write code, manage deployments, or tune parameters
+- Plan architecture (that's the architect)
+- Review your own code (that's the security reviewer)
+- Write documentation (that's the scribe)
 ```
 
-### Customize Tasks
+### Agent Generator
 
-Tasks define what an agent does when triggered. Each task has inputs (where to get data), outputs (what to produce), and a prompt template:
-
-```yaml
-# tasks/routine_scan.yaml
-id: routine_scan
-agent: market_analyst
-inference_tier: 1
-
-inputs:
-  - source: sqlite
-    query: "SELECT * FROM pool_metrics WHERE timestamp > ..."
-  - source: vault
-    path: knowledge/active-pools.md
-
-outputs:
-  - type: vault_update       # Write findings to vault
-  - type: proposal            # Create proposal if opportunity found
-
-prompt_template: |
-  You are the Market Analyst. Review the latest metrics...
-  {vault_knowledge}
-  {recent_metrics}
-  ...respond with VAULT_UPDATE or PROPOSAL blocks.
-```
-
-### Seed Initial Knowledge (Optional)
-
-Drop markdown files into agent vaults to give them starting knowledge:
+Instead of hand-writing agent configs, use the generator:
 
 ```bash
-# Give Market Analyst baseline pool info
-echo "## Active Pools\n- DEEP/SUI: 1 bps fee, ~$50K daily volume" \
-  > vaults/market_analyst/knowledge/active-pools.md
-
-# Give Bot Analyst current parameters
-echo "## Current Parameters\n- Base spread: 40 bps\n- Skew: 60 bps/unit" \
-  > vaults/bot_analyst/knowledge/parameters.md
+quorum agent create --role doer --name move-dev --project my-project
 ```
 
-This is optional — agents build their vaults organically over time. But seeding accelerates the first few cycles.
+This scaffolds the YAML config, CONTEXT.md, and vault directory structure. You then edit CONTEXT.md to add domain-specific instructions.
+
+### Example Team: Move Development
+
+```
+move-project/
+  configs/
+    move-project.yaml
+    agents/move-project/
+      leader.yaml         # coordinator — receives goal, routes work
+      architect.yaml      # thinker — plans module structure
+      move-dev.yaml       # doer — writes Move code (full tools)
+      security-reviewer.yaml  # reviewer — validates for vulnerabilities
+      scribe.yaml         # scribe — writes project notes from knowledge ledger
+  data/
+    vaults/
+      leader/CONTEXT.md
+      architect/CONTEXT.md
+      move-dev/CONTEXT.md
+      security-reviewer/CONTEXT.md
+      scribe/CONTEXT.md
+    quorum.db             # SQLite (created on first run)
+```
 
 ---
 
-## Phase 3: Start the Daemon
+## Start a Conversation
 
 ```bash
-quorum daemon start
+./build/quorum_daemon --config configs/move-project.yaml converse \
+  "Build a shared-object escrow module that lets two parties swap NFTs atomically"
 ```
 
-What happens:
+What the daemon prints:
 
 ```
 [14:00:00] Quorum daemon starting...
-[14:00:00] Loaded 4 agents: market_analyst, bot_analyst, engineer, operator
-[14:00:00] Loaded 2 task definitions: routine_scan, deep_analysis
+[14:00:00] Loaded 5 agents: leader, architect, move-dev, security-reviewer, scribe
 [14:00:00] SQLite database: data/quorum.db
-[14:00:00] Sui network: testnet (package: 0xabc...)
-[14:00:00] Walrus: enabled (testnet)
-[14:00:00] Scheduler: 6 periodic tasks registered
-[14:00:00] PID file: /tmp/quorum.pid
-[14:00:00] Daemon running. Dashboard: http://localhost:7470
+[14:00:00] Conversation 1 created — goal: "Build a shared-object escrow..."
+[14:00:00] Dispatching to leader...
 ```
 
-The daemon is now running a continuous loop. Here's what it does:
+The daemon creates a conversation, sets it to `active`, and hands the goal to the leader.
 
 ---
 
-## Phase 4: The Continuous Loop
+## The Team Mode Loop
 
-### 4a. Scheduled Agent Invocations
+One ball, always moving. Here is what a full cycle looks like.
 
-Every 30 minutes, the scheduler fires `routine_scan` for Market Analyst:
+### Step 1: Leader Receives Goal
 
-```
-[14:30:00] SCHEDULER → routine_scan (market_analyst)
-[14:30:00] CONTEXT_ASSEMBLER → Loading vault: CONTEXT.md, knowledge/active-pools.md
-[14:30:00] CONTEXT_ASSEMBLER → Loading metrics: 47 rows from pool_metrics
-[14:30:00] CONTEXT_ASSEMBLER → Prompt: 3,200 tokens
-[14:30:00] MODEL_ROUTER → Tier 1 (local LLM: llama3.1:8b)
-[14:30:02] INVOKER → Response: 850 tokens
-[14:30:02] OUTPUT_PARSER → Parsed: 1 VAULT_UPDATE, 0 PROPOSAL, 1 SUMMARY
-[14:30:02] VAULT → Updated: knowledge/active-pools.md (v12)
-[14:30:02] AUDIT → Logged: agent_invocation (local, 0 cost)
-```
-
-The agent read its vault, looked at fresh metrics, updated its knowledge file, and found nothing worth proposing. This is the quiet majority of cycles — knowledge slowly accumulates.
-
-### 4b. Agent Spots Something → Creates Proposal
-
-Once daily, the deep analysis runs with a frontier model:
+The leader reads the goal and decides who should work on it first. It responds with a HANDOFF block:
 
 ```
-[02:00:00] SCHEDULER → deep_analysis (market_analyst)
-[02:00:00] MODEL_ROUTER → Tier 2 (frontier: claude-sonnet-4-5)
-[02:00:28] OUTPUT_PARSER → Parsed: 1 VAULT_UPDATE, 1 PROPOSAL
-[02:00:28] PROPOSAL → Created: "Expand to SUI/USDC pool"
-           Author: market_analyst
-           Requires consensus: [bot_analyst, engineer]
-           Informed: [operator]
-           Status: DRAFT
+I've received the goal. This needs architectural planning before implementation.
+The architect should design the module structure, then the move developer
+can implement it.
+
+<<<HANDOFF>>>
+to: architect
+prompt: Design a shared-object escrow module for atomic NFT swaps on Sui.
+Define the module structure, entry functions, and shared object lifecycle.
+Consider: (1) how two parties discover and accept a swap, (2) how to handle
+partial fulfillment and cancellation, (3) object ownership vs shared objects.
+<<<END_HANDOFF>>>
 ```
 
-The Market Analyst noticed SUI/USDC volume increased 3× this week with only one competitor. It wrote a proposal recommending expansion.
+### Step 2: Thinker Plans
 
-### 4c. Proposal Enters Review
-
-The daemon detects a new proposal and routes it to the required reviewers:
+The architect reads the prompt, plans the design, records a knowledge entry, and hands off to the doer:
 
 ```
-[02:00:28] CONSENSUS → Proposal "Expand to SUI/USDC pool" → REVIEWING (round 1)
-[02:00:28] ROUTER → Queuing review task for: bot_analyst
-[02:00:28] ROUTER → Queuing review task for: engineer
+## Escrow Module Design
+
+### Module: `escrow`
+- `create_escrow<T1, T2>(initiator_nft: T1, ctx)` — locks initiator's NFT, returns shared Escrow object
+- `accept_escrow<T1, T2>(escrow: &mut Escrow, responder_nft: T2, ctx)` — locks responder's NFT, executes swap
+- `cancel_escrow<T1, T2>(escrow: Escrow, ctx)` — only initiator can cancel before acceptance
+
+### Shared Object Lifecycle
+Escrow is a shared object created on `create_escrow`, consumed on `accept_escrow` or `cancel_escrow`.
+
+<<<KNOWLEDGE>>>
+topic: escrow-architecture
+content: Escrow uses shared object pattern. Two entry points: create (locks initiator NFT,
+returns shared Escrow) and accept (locks responder NFT, executes atomic swap). Cancel only
+available to initiator before acceptance. No partial fulfillment in v1.
+<<<END_KNOWLEDGE>>>
+
+<<<HANDOFF>>>
+to: move-dev
+prompt: Implement the escrow module per the design above. Create sources/escrow.move
+with create_escrow, accept_escrow, and cancel_escrow functions. Write tests in
+tests/escrow_tests.move covering: successful swap, cancellation, and unauthorized
+cancel attempt (should abort). Compile and run tests.
+<<<END_HANDOFF>>>
 ```
 
-**Bot Analyst reviews** (gets temporary read access to Market Analyst's relevant vault files via Seal):
+### Step 3: Doer Implements
+
+The move developer has full tool access (`agent_class: executor`). It writes code in the `target_dir`, compiles, runs tests:
 
 ```
-[02:01:00] INVOKER → bot_analyst reviewing proposal
-[02:01:15] OUTPUT_PARSER → Parsed: 1 REVIEW (verdict: REVISE)
-           Feedback: "Volume data looks promising but we need to model
-           expected fill rates at our spread levels. Request 48h dry-run
-           data before committing capital."
+I'll implement the escrow module now.
+
+[Creates sources/escrow.move — 85 lines]
+[Creates tests/escrow_tests.move — 60 lines]
+[Runs: sui move build — success]
+[Runs: sui move test — 3/3 tests passed]
+
+All tests pass. The module implements create_escrow, accept_escrow, and
+cancel_escrow with proper access control.
+
+<<<KNOWLEDGE>>>
+topic: escrow-implementation
+content: Escrow module implemented in sources/escrow.move. 85 lines, 3 entry functions.
+All 3 tests pass: successful swap, initiator cancellation, unauthorized cancel abort.
+Uses dynamic_object_field to store NFTs inside the shared Escrow object.
+<<<END_KNOWLEDGE>>>
+
+<<<HANDOFF>>>
+to: security-reviewer
+prompt: Review sources/escrow.move for security vulnerabilities. Check for:
+(1) reentrancy via shared object access, (2) unauthorized cancellation,
+(3) type confusion in generic parameters, (4) object lifecycle correctness.
+<<<END_HANDOFF>>>
 ```
 
-**Engineer reviews:**
+### Step 4: Reviewer Validates
+
+The security reviewer reads the code (read-only tools) and either approves or requests changes:
 
 ```
-[02:02:00] INVOKER → engineer reviewing proposal
-[02:02:20] OUTPUT_PARSER → Parsed: 1 REVIEW (verdict: REVISE)
-           Feedback: "Config externalization supports multi-pool. Need to
-           verify gas budget for parallel instances. No code blockers."
+## Security Review: escrow.move
+
+### Findings
+1. **Access control** — cancel_escrow correctly checks tx_context::sender() == escrow.initiator. PASS.
+2. **Object lifecycle** — Escrow consumed on accept and cancel. No dangling shared objects. PASS.
+3. **Type safety** — Generic parameters T1, T2 bound by store+key. No type confusion possible. PASS.
+4. **Minor issue** — accept_escrow does not verify responder != initiator. Self-swap wastes gas but
+   is not a vulnerability. Low priority.
+
+No blocking issues found. Code is safe for deployment.
+
+<<<KNOWLEDGE>>>
+topic: escrow-security-review
+content: Security review passed. No vulnerabilities found. Minor note: self-swap not prevented
+but is harmless (gas waste only). Access control, object lifecycle, and type safety all verified.
+<<<END_KNOWLEDGE>>>
+
+<<<HANDOFF>>>
+to: leader
+prompt: Security review complete — no blocking issues. The escrow module is ready.
+<<<END_HANDOFF>>>
 ```
 
-Both said REVISE. The proposal goes back to round 2.
+### Step 5: Leader Decides
 
-### 4d. Proposal Iterates
+The leader has three options:
 
-Round 2 — Market Analyst revises based on feedback:
-
-```
-[02:05:00] INVOKER → market_analyst revising proposal (round 2)
-[02:05:25] PROPOSAL → Updated: added dry-run plan, estimated fill rates,
-           gas budget analysis from last 7 days
-```
-
-Bot Analyst and Engineer re-review:
+1. **Done** — goal achieved, trigger scribe, end conversation
+2. **Another pass** — hand off to an agent for more work
+3. **Ask human** — needs clarification or approval
 
 ```
-[02:06:00] REVIEW → bot_analyst: APPROVE
-           "Dry-run plan addresses my concern. 48h is sufficient."
-[02:07:00] REVIEW → engineer: APPROVE
-           "Gas analysis checks out. Config changes are straightforward."
+The escrow module is complete. Architecture designed, code implemented, tests passing,
+security review clean. Handing off to scribe to record the work.
+
+<<<HANDOFF>>>
+to: scribe
+prompt: Record the escrow module work. Summarize the architecture, implementation
+decisions, and security review findings from the knowledge ledger.
+<<<END_HANDOFF>>>
 ```
 
-### 4e. Consensus Reached
+After the scribe finishes, the leader marks the conversation done:
 
 ```
-[02:07:00] CONSENSUS → All required reviewers approved
-[02:07:00] PROPOSAL → Status: APPROVED
-[02:07:01] SUI → Transaction: proposal state → APPROVED (tx: 0xdef...)
-[02:07:01] AUDIT → On-chain: proposal-047 approved by bot_analyst, engineer
+<<<HANDOFF>>>
+to: done
+prompt: Goal complete — escrow module built, tested, and documented.
+<<<END_HANDOFF>>>
 ```
 
-The approval is now recorded on Sui. The transaction hash is the cryptographic proof that these specific agents approved this specific proposal at this specific time.
+The daemon sets the conversation state to `done`.
 
-### 4f. Human Approval Gate (When Required)
+### Routing Rules
 
-If the proposal involves capital deployment or going live, it's flagged for human approval:
+When the daemon receives a HANDOFF block, it resolves the next agent:
+
+1. **HANDOFF `to:` field** — explicit target, always wins
+2. **`default_path`** — if no HANDOFF block, follow the configured path
+3. **Leader fallback** — if neither, route back to leader
+
+The `to:` field accepts an agent ID (`move-dev`), `human` (pause for user input), or `done` (end conversation).
+
+---
+
+## Human Interaction
+
+When the leader needs human input, it hands off to `human`:
 
 ```
-[02:07:01] CONSENSUS → Human approval required (capital deployment)
-[02:07:01] NOTIFICATION → Dashboard alert + terminal notification
+I need clarification before proceeding. Should the escrow support
+multi-asset swaps (bundle of NFTs) or single-asset only?
 
-┌──────────────────────────────────────────────────────────┐
-│  🔔 PROPOSAL AWAITING YOUR APPROVAL                     │
-│                                                          │
-│  "Expand to SUI/USDC pool"                              │
-│  Author: Market Analyst                                  │
-│  Approved by: Bot Analyst ✓, Engineer ✓                  │
-│                                                          │
-│  Capital required: 1000 USDC + 50 SUI                   │
-│  Risk: LOW (dry-run first, kill switches active)         │
-│                                                          │
-│  quorum proposal approve --id 047                        │
-│  quorum proposal reject --id 047 --reason "..."          │
-└──────────────────────────────────────────────────────────┘
+<<<HANDOFF>>>
+to: human
+prompt: Should the escrow support multi-asset swaps (bundle of NFTs on each side)
+or single-asset swaps only? This affects the module design significantly.
+<<<END_HANDOFF>>>
 ```
 
-You approve from CLI or dashboard. Your wallet signature IS the approval — recorded on Sui:
+The daemon sets conversation state to `waiting_for_human` and prints:
+
+```
+[14:05:30] Conversation 1 waiting for human input
+[14:05:30] Question: Should the escrow support multi-asset swaps...
+```
+
+### Responding via CLI
 
 ```bash
-quorum proposal approve --id 047
-# Signs a Sui transaction with your wallet
+./build/quorum_daemon --config configs/move-project.yaml respond \
+  --conversation 1 "Single-asset only for v1. We can add bundles later."
 ```
 
-```
-[09:15:00] HUMAN → Approved proposal-047 (tx: 0xfed...)
-[09:15:00] PROPOSAL → Status: APPROVED (human gate cleared)
-```
+The daemon resumes the conversation, delivering the human's response to the leader.
 
-### 4g. Execution
+### Responding via Web Dashboard
 
-The Operator agent picks up the approved proposal:
+The dashboard shows a conversation card with the pending question and a text input. Type your response and click Send. The daemon picks it up via SSE.
 
-```
-[09:15:01] ROUTER → Execution task → operator
-[09:15:10] OPERATOR → Executing: generate SUI/USDC config, deploy dry-run instance
-[09:15:10] PROPOSAL → Status: EXECUTED
-[09:15:11] SUI → Transaction: proposal state → EXECUTED (tx: 0x123...)
-```
-
-### 4h. Outcome Evaluation (48 hours later)
-
-The daemon schedules an automatic follow-up:
-
-```
-[48h later]
-[09:15:00] SCHEDULER → outcome_evaluation (bot_analyst)
-[09:15:00] INVOKER → bot_analyst evaluating proposal-047 outcomes
-[09:15:20] OUTPUT_PARSER → Parsed: 1 OUTCOME_EVALUATION
-
-  Prediction: "SUI/USDC fill rate ~2× higher than DEEP/SUI"
-  Actual:     "SUI/USDC fill rate 2.3× higher (exceeded expectation)"
-  Prediction: "One competitor, spreads 30-50 bps"
-  Actual:     "Two competitors, spreads 25-45 bps (more competitive than expected)"
-  Overall:    "Directionally correct, magnitude slightly conservative"
-
-[09:15:20] PROPOSAL → Status: EVALUATED
-[09:15:21] SUI → Transaction: outcome recorded (tx: 0x456...)
-[09:15:21] WALRUS → Stored: full evaluation report (blob: walrus_xyz...)
-[09:15:21] VAULT → bot_analyst/decisions/proposal-047-eval.md updated
-```
-
-The prediction vs. actual comparison is now permanently recorded. Over time, this builds each agent's **verifiable track record**.
-
----
-
-## Phase 5: Knowledge Accumulation (Weeks → Months)
-
-This is where Quorum diverges from every other framework. After weeks of operation:
-
-### Agent Vaults Grow Organically
-
-```
-vaults/market_analyst/
-├── CONTEXT.md
-├── knowledge/
-│   ├── active-pools.md          # Updated 847 times
-│   ├── competitor-map.md        # 12 competitors tracked
-│   ├── volume-patterns.md       # "SUI/USDC volume 2× on weekdays"
-│   ├── fee-tier-analysis.md     # "1 bps pools have 4× more MM competition"
-│   └── regime-correlations.md   # "BTC drawdowns >5% → VOLATILE within 2h"
-├── experiments/
-│   └── (empty — Market Analyst doesn't run experiments)
-└── decisions/
-    ├── proposal-012-eval.md     # "Correctly predicted DEEP/USDC opportunity"
-    ├── proposal-031-eval.md     # "Overestimated volume on SUI/USDT"
-    └── proposal-047-eval.md     # "SUI/USDC expansion — conservative but correct"
-```
-
-```
-vaults/bot_analyst/
-├── CONTEXT.md
-├── knowledge/
-│   ├── parameters.md            # Current optimal params + reasoning
-│   ├── spread-analysis.md       # "35 bps optimal for CALM, 55 for MODERATE"
-│   ├── fill-rate-model.md       # Empirical fill rate vs spread curve
-│   └── gas-efficiency.md        # "Refresh hysteresis saves 92% gas"
-├── experiments/
-│   ├── exp-001-spread-35bps.md  # Completed, positive result
-│   ├── exp-002-two-levels.md    # Completed, negative (gas too high)
-│   ├── exp-003-skew-80bps.md    # Completed, mixed results
-│   └── exp-004-size-doubling.md # In progress
-└── decisions/
-    ├── proposal-008-eval.md
-    └── ... (35 evaluated proposals)
-```
-
-Each agent's vault is its **institutional memory**. The Market Analyst "knows" that volume spikes on weekdays not because someone told it, but because it observed the pattern across hundreds of data points and wrote the conclusion itself.
-
-### Agent Track Records Build On-Chain
+### Other Conversation Commands
 
 ```bash
-quorum agent stats
+# Check conversation status
+./build/quorum_daemon --config configs/move-project.yaml status
 
-┌────────────────────────────────────────────────────────────┐
-│  Agent Track Records (on-chain verified)                   │
-│                                                            │
-│  market_analyst                                            │
-│    Proposals: 23 created, 19 approved, 18 evaluated        │
-│    Accuracy (directional): 83%                             │
-│    Avg outcome improvement: +6.2% revenue per proposal     │
-│                                                            │
-│  bot_analyst                                               │
-│    Proposals: 47 created, 38 approved, 35 evaluated        │
-│    Accuracy (directional): 82%                             │
-│    Accuracy (magnitude ±20%): 61%                          │
-│    Avg outcome improvement: +8.3% revenue per proposal     │
-│                                                            │
-│  engineer                                                  │
-│    Reviews: 52 submitted                                   │
-│    Proposals: 8 created (design changes)                   │
-│    Safety catches: 4 (prevented problematic parameter sets)│
-│                                                            │
-│  operator                                                  │
-│    Deployments: 31 executed                                │
-│    Incidents: 3 detected, all resolved < 15 min            │
-│    Uptime: 99.7%                                           │
-└────────────────────────────────────────────────────────────┘
+# Resume a paused conversation (e.g., after budget pause)
+./build/quorum_daemon --config configs/move-project.yaml resume --conversation 1
+
+# Close a conversation manually
+./build/quorum_daemon --config configs/move-project.yaml close --conversation 1
 ```
-
-These aren't self-reported metrics. Every number traces back to an on-chain transaction.
 
 ---
 
-## Phase 6: Steady State — What a Typical Day Looks Like
+## Knowledge Accumulation
+
+Every agent can emit KNOWLEDGE blocks during its turn. These are append-only entries in the knowledge ledger — a per-conversation log stored in SQLite.
+
+### KNOWLEDGE Block Format
 
 ```
-00:00  Operator health check (Tier 1, local) ─────────── 2s, $0
-00:15  Operator health check
-00:30  Market Analyst routine scan (Tier 1, local) ───── 3s, $0
-00:30  Operator health check
-00:45  Operator health check
-01:00  Bot Analyst performance review (Tier 1, local) ── 4s, $0
-01:00  Operator health check
-...
-02:00  Market Analyst deep analysis (Tier 2, Claude) ─── 28s, $0.05
-02:00  Bot Analyst daily P&L (Tier 2, Claude) ────────── 22s, $0.04
-       → Bot Analyst creates proposal: "Widen spread to 45 bps for MODERATE"
-02:01  CONSENSUS: proposal enters review
-02:02  Engineer reviews (Tier 2) ─────────────────────── 15s, $0.03
-       → APPROVE: "Kill switch thresholds still valid at 45 bps"
-02:02  CONSENSUS: approved → EXECUTED
-02:02  Sui tx: proposal-089 APPROVED (0.001 SUI)
-02:02  Walrus: proposal content stored (0.001 WAL)
-...
-[remaining 22 hours: 48 local LLM calls, 0 frontier calls, ~$0]
-
-Daily totals:
-  Agent invocations: 58 (52 local, 6 frontier)
-  Proposals: 1 created, 1 approved, 1 from yesterday evaluated
-  Sui transactions: 4
-  Walrus writes: 12 vault updates
-  Cost: ~$0.35
+<<<KNOWLEDGE>>>
+topic: escrow-architecture
+content: Escrow uses shared object pattern. Create locks initiator NFT,
+accept executes atomic swap. Cancel only available to initiator.
+<<<END_KNOWLEDGE>>>
 ```
 
-Most of the day is quiet — local LLM calls that cost nothing, updating vault knowledge incrementally. The expensive frontier calls happen once or twice daily for deep analysis. On-chain activity is minimal: a few transactions for proposal lifecycle and audit entries.
+An agent can emit multiple KNOWLEDGE blocks in a single turn. The daemon parses them and appends each to the ledger with metadata (agent ID, turn number, timestamp).
+
+### The Ledger
+
+The knowledge ledger is a table in `quorum.db`:
+
+| turn | agent | topic | content |
+|------|-------|-------|---------|
+| 2 | architect | escrow-architecture | Escrow uses shared object pattern... |
+| 3 | move-dev | escrow-implementation | 85 lines, 3 entry functions, all tests pass... |
+| 4 | security-reviewer | escrow-security-review | No vulnerabilities found... |
+
+### Scribe Consumption
+
+At the end of a conversation cycle, the leader hands off to a scribe. The scribe receives the full knowledge ledger and produces structured notes — typically Obsidian markdown files written to a configured output directory.
+
+The scribe is a regular agent (`agent_class: analyst`, read-only tools for the project, write access to its notes directory). It reads the ledger, synthesizes findings, and writes notes. The librarian archetype does the same but targets human-facing documentation (READMEs, API docs, changelogs).
 
 ---
 
-## The Dashboard
+## Web Dashboard
 
-The web dashboard (`http://localhost:7470` or `@quorum/dashboard`) shows:
+Quorum ships with a web dashboard (Bun + Hono API server, React frontend).
 
-### Proposals View
-- Active proposals with current status and round
-- Review history (who said what, when)
-- Linked Sui transactions (click to verify on explorer)
-- Outcome evaluations with prediction accuracy
+```bash
+cd dashboard && bun install && bun run dev
+# → http://localhost:7470
+```
 
-### Vaults View
-- Browse each agent's knowledge files
-- Version history (when was this file last updated? what changed?)
-- Walrus blob IDs for verification
-- Token count per file (context budget usage)
+The dashboard shows:
 
-### Agents View
-- Agent status (last invocation, next scheduled)
-- Track record (proposals, accuracy, outcomes)
-- Inference tier usage (% local vs frontier)
-- Cost breakdown per agent
+- **Conversation cards** — active, waiting, done. Each card shows the goal, current agent, turn count, and cost so far.
+- **Real-time updates** — SSE stream from the API server. Agent output appears as it happens.
+- **Human interaction** — when a conversation is `waiting_for_human`, the card shows the question and a response input.
+- **Task timeline** — every agent invocation with token counts, cost, and duration.
+- **Approve/reject controls** — for conversations with human gates enabled.
 
-### Audit View
-- Complete event timeline
-- Filter by agent, event type, date range
-- On-chain verification links for every decision event
-- Exportable for compliance or debugging
+---
+
+## Common Scenarios
+
+### "I want to add another doer agent"
+
+```bash
+# Generate the agent scaffold
+quorum agent create --role doer --name ts-dev --project move-project
+
+# Edit the generated CONTEXT.md
+vim data/vaults/ts-dev/CONTEXT.md
+
+# Add to project config
+# agents:
+#   - config: configs/agents/move-project/ts-dev.yaml
+# conversations.agents: [..., ts-dev]
+```
+
+Restart the daemon to pick up the new agent.
+
+### "I want to use Quorum for a completely different domain"
+
+Create a new project config. Different agents, different CONTEXT.md files, same daemon:
+
+```bash
+# Infrastructure monitoring team
+./build/quorum_daemon --config configs/infra-project.yaml converse \
+  "Audit our fullnode configuration and identify performance bottlenecks"
+```
+
+The daemon, conversation loop, HANDOFF/KNOWLEDGE parsing, and knowledge ledger work identically. Only the agents change. See `docs/domain-templates.md` for pre-built team compositions.
+
+### "Conversation paused because of budget"
+
+The daemon pauses dispatch when the hourly or daily budget limit is reached:
+
+```
+[15:30:00] Budget limit reached (hourly: $2.00/$2.00)
+[15:30:00] Conversation 1 paused — will resume when budget resets
+```
+
+Resume manually after the budget window resets:
+
+```bash
+./build/quorum_daemon --config configs/move-project.yaml resume --conversation 1
+```
+
+Or wait — the daemon auto-resumes when the hourly window rolls over.
+
+### "An agent is going in circles"
+
+The `max_turns` setting in the project config caps total turns per conversation. When reached, the daemon pauses and escalates to the human:
+
+```
+[16:00:00] Conversation 1 reached max_turns (20)
+[16:00:00] Conversation 1 paused — max turns reached, awaiting human decision
+```
+
+Review the conversation history, then either resume with guidance or close it.
 
 ---
 
 ## CLI Quick Reference
 
 ```bash
-# Daemon
-quorum daemon start              # Start daemon (foreground)
-quorum daemon start -d           # Start daemon (background)
-quorum daemon stop               # Graceful shutdown
-quorum daemon status             # Running? Last heartbeat? Agent count?
+# Start a conversation
+./build/quorum_daemon --config configs/project.yaml converse "goal text"
 
-# Agents
-quorum agent list                # All agents with status
-quorum agent invoke market_analyst routine_scan   # Manual trigger
-quorum agent stats               # Track records
+# Check conversation status
+./build/quorum_daemon --config configs/project.yaml status
 
-# Proposals
-quorum proposal list             # All proposals with status
-quorum proposal create --title "..." --author bot_analyst
-quorum proposal status --id 047  # Detailed view with reviews
-quorum proposal approve --id 047 # Human approval (signs Sui tx)
-quorum proposal reject --id 047 --reason "..."
-quorum proposal history          # Completed proposals with outcomes
+# Respond to leader (when waiting_for_human)
+./build/quorum_daemon --config configs/project.yaml respond --conversation 1 "your response"
 
-# Vaults
-quorum vault list --agent market_analyst
-quorum vault read --agent market_analyst --path knowledge/active-pools.md
-quorum vault search --query "SUI/USDC volume"
+# Resume a paused conversation
+./build/quorum_daemon --config configs/project.yaml resume --conversation 1
 
-# Audit
-quorum audit list --limit 20
-quorum audit verify --tx 0xdef...  # Verify on-chain
-
-# Config
-quorum config show               # Current daemon config
-quorum config validate           # Check config for errors
+# Close a conversation
+./build/quorum_daemon --config configs/project.yaml close --conversation 1
 ```
-
----
-
-## What If: Common Scenarios
-
-### "I want to add a fifth agent"
-
-```bash
-# Create agent config
-cat > agents/risk_manager.yaml << EOF
-id: risk_manager
-name: "Risk Manager"
-schedule:
-  - type: periodic
-    interval_minutes: 60
-    task: risk_assessment
-inference_tier:
-  risk_assessment: 2
-EOF
-
-# Create vault
-mkdir -p vaults/risk_manager/knowledge
-cat > vaults/risk_manager/CONTEXT.md << EOF
-# Risk Manager
-You monitor portfolio-level risk across all running bots...
-EOF
-
-# Register on-chain
-quorum agent create --config agents/risk_manager.yaml
-
-# Restart daemon to pick up new agent
-quorum daemon restart
-```
-
-### "I want to use this for software engineering, not trading"
-
-Change the CONTEXT.md files and agent configs. The four-role pattern maps:
-
-```
-Market Analyst  →  Product Researcher
-Bot Analyst     →  Code Quality Analyst
-Engineer        →  Implementation Agent
-Operator        →  DevOps Agent
-```
-
-Edit each vault's CONTEXT.md to describe the new domain. Edit task YAML files with appropriate data sources and prompt templates. The daemon, proposal protocol, and vault system work identically.
-
-### "An agent proposed something dangerous"
-
-The Engineer agent is designed to catch this in review. But if a bad proposal reaches APPROVED:
-
-```bash
-# Human override — reject at any point
-quorum proposal reject --id 089 --reason "Risk too high" --override
-
-# Emergency: stop all agent activity
-quorum daemon pause    # Stops scheduling, finishes current invocations
-quorum daemon resume   # Resume when ready
-```
-
-The kill switches in the underlying system (mm-bot) are independent of Quorum. Even if the orchestrator makes a bad decision, the bot's C++ safety rails (capital loss limits, inventory skew limits, staleness checks) prevent catastrophic outcomes.
-
-### "Chain is down / Walrus is unreachable"
-
-Quorum continues operating locally. Decisions queue up:
-
-```
-[14:30:00] WARN: Sui RPC unreachable — queuing on-chain operations
-[14:30:00] Proposal-090 approved (local state updated, chain sync pending)
-[14:30:00] Vault updates written to local cache (Walrus sync pending)
-...
-[15:45:00] INFO: Sui RPC reconnected — syncing 3 queued transactions
-[15:45:02] INFO: Walrus reconnected — syncing 8 vault updates
-```
-
-Local speed, on-chain truth. The local system is the source of speed; the chain is the source of truth.
-
----
-
-## Failure Modes
-
-| Scenario | What Happens |
-|----------|-------------|
-| LLM API down | Daemon keeps running, agent invocations fail gracefully, retry on next schedule tick |
-| Sui RPC down | Proposals track locally in SQLite, on-chain sync queues until reconnection |
-| Walrus unreachable | Vault writes to local files, Walrus sync retries in background |
-| Bad proposal approved | Human override via CLI (`proposal reject --override`), underlying system kill switches independent of Quorum |
-| Agent producing garbage | Operator pauses daemon, reviews CONTEXT.md, adjusts instructions, resumes |
-| Consensus deadlock | 3-round limit → automatic human escalation |
-
----
-
-## Open Design Questions
-
-1. **Notification system:** How does the operator learn about human-gated proposals? Dashboard polling? Push notification? Telegram/Slack bot?
-2. **Multi-operator:** Can multiple humans share approval authority? Threshold approval (2 of 3)?
-3. **Agent hot-reload:** Can CONTEXT.md changes take effect without daemon restart?
-4. **Vault conflict resolution:** If operator manually edits a vault file that an agent also updates, who wins?
-5. **Proposal dependencies:** Can proposal B declare "only execute after proposal A succeeds"?
