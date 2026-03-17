@@ -34,15 +34,14 @@ static void init_conversations_table(sui::quorum::Database& db) {
         "CREATE TABLE IF NOT EXISTS conversations ("
         "  id INTEGER PRIMARY KEY,"
         "  goal TEXT NOT NULL,"
-        "  state TEXT NOT NULL DEFAULT 'init',"
+        "  state TEXT NOT NULL DEFAULT 'active',"
         "  round INTEGER NOT NULL DEFAULT 0,"
         "  max_rounds INTEGER NOT NULL DEFAULT 3,"
         "  budget_usd REAL NOT NULL DEFAULT 5.0,"
         "  spent_usd REAL NOT NULL DEFAULT 0.0,"
         "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
         "  completed_at TEXT,"
-        "  paused_reason TEXT,"
-        "  pipeline TEXT NOT NULL DEFAULT 'analyst'"
+        "  paused_reason TEXT"
         ")"
     );
 }
@@ -84,7 +83,7 @@ static void test_create_conversation_defaults() {
     auto rec = db.get_conversation(id);
     check(rec.has_value(), "1: conversation found");
     check(rec->goal == "Analyze mm-bot", "1: goal matches");
-    check(rec->state == "init", "1: state == init");
+    check(rec->state == "active", "1: state == active");
     check(rec->round == 0, "1: round == 0");
     check(rec->max_rounds == 3, "1: max_rounds == 3");
     check(std::abs(rec->budget_usd - 5.0) < 0.01, "1: budget_usd ~= 5.0");

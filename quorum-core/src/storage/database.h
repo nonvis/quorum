@@ -20,7 +20,6 @@ struct ConversationRecord {
     int max_rounds{3};
     double budget_usd{5.0};
     double spent_usd{0.0};
-    std::string pipeline = "analyst";  // "analyst" or "executor"
 };
 
 class Database {
@@ -56,16 +55,14 @@ public:
 
     // ── Conversation CRUD ──────────────────────────────────────────────────
 
-    int64_t create_conversation(const std::string& goal, double budget_usd, int max_rounds,
-                                const std::string& pipeline = "analyst") {
+    int64_t create_conversation(const std::string& goal, double budget_usd, int max_rounds) {
         execute(
-            "INSERT INTO conversations (goal, state, round, max_rounds, budget_usd, pipeline) "
-            "VALUES (?, 'init', 0, ?, ?, ?)",
+            "INSERT INTO conversations (goal, state, round, max_rounds, budget_usd) "
+            "VALUES (?, 'active', 0, ?, ?)",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_text(stmt, 1, goal.c_str(), -1, SQLITE_TRANSIENT);
                 sqlite3_bind_int(stmt, 2, max_rounds);
                 sqlite3_bind_double(stmt, 3, budget_usd);
-                sqlite3_bind_text(stmt, 4, pipeline.c_str(), -1, SQLITE_TRANSIENT);
             }
         );
         return last_insert_id();
@@ -124,7 +121,7 @@ public:
         ConversationRecord rec;
         bool found = false;
         query(
-            "SELECT id, goal, state, round, max_rounds, budget_usd, spent_usd, pipeline "
+            "SELECT id, goal, state, round, max_rounds, budget_usd, spent_usd "
             "FROM conversations WHERE id = ?",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_int64(stmt, 1, conv_id);
@@ -140,8 +137,6 @@ public:
                 rec.max_rounds = sqlite3_column_int(stmt, 4);
                 rec.budget_usd = sqlite3_column_double(stmt, 5);
                 rec.spent_usd = sqlite3_column_double(stmt, 6);
-                auto p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7));
-                rec.pipeline = p ? p : "analyst";
             }
         );
         return found ? std::optional{rec} : std::nullopt;

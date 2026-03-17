@@ -15,16 +15,13 @@
 #include "utils/config.h"
 #include "daemon/scheduler.h"
 #include "daemon/message_bus.h"
-#include "daemon/router.h"
 #include "daemon/event_dispatcher.h"
-#include "daemon/consensus.h"
 #include "daemon/conversation.h"
 #include "storage/database.h"
 #include "agent/invoker.h"
 #include "agent/context_assembler.h"
 #include "agent/output_parser.h"
 #include "vault/vault_manager.h"
-#include "knowledge/inbox_writer.h"
 
 namespace fs = std::filesystem;
 
@@ -76,7 +73,7 @@ static void print_conversations(sui::quorum::Database& db) {
     int count = 0;
     db.query(
         "SELECT id, goal, state, round, max_rounds, budget_usd, spent_usd, "
-        "created_at, paused_reason, pipeline FROM conversations ORDER BY id DESC",
+        "created_at, paused_reason FROM conversations ORDER BY id DESC",
         [&](sqlite3_stmt* stmt) {
             auto id = sqlite3_column_int64(stmt, 0);
             auto goal_raw = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
@@ -86,16 +83,13 @@ static void print_conversations(sui::quorum::Database& db) {
             auto budget = sqlite3_column_double(stmt, 5);
             auto spent = sqlite3_column_double(stmt, 6);
             auto reason_raw = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
-            auto pipeline_raw = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
 
             std::string goal = goal_raw ? std::string(goal_raw) : "";
             std::string reason = reason_raw ? std::string(reason_raw) : "";
-            std::string pipeline = pipeline_raw ? std::string(pipeline_raw) : "analyst";
             if (goal.size() > 50) goal = goal.substr(0, 50) + "...";
 
             std::cout << "  #" << id
                       << "  " << (state ? state : "?")
-                      << " [" << pipeline << "]"
                       << "  round " << round << "/" << max_r
                       << "  $" << spent << "/$" << budget
                       << "  " << goal;
@@ -127,8 +121,6 @@ static void print_usage(const char* prog) {
               << "  " << prog << " --config <path> status                     List conversations\n"
               << "  " << prog << " --config <path> resume --conversation <id> Resume paused\n"
               << "  " << prog << " --config <path> close --conversation <id>  Close conversation\n"
-              << "  " << prog << " --config <path> gate --approve --conversation <id>  Approve execution\n"
-              << "  " << prog << " --config <path> gate --reject --conversation <id>   Reject execution\n"
               << "\nOptions:\n"
               << "  --config <path>      Path to config YAML (required, e.g. configs/mm-bot.yaml)\n"
               << "  --verbose            Enable verbose logging\n"
@@ -149,20 +141,18 @@ static void init_schema(sui::quorum::Database& db) {
         "  details TEXT"
         ")"
     );
-    sui::quorum::ConsensusEngine::init_schema(db);
     db.execute(
         "CREATE TABLE IF NOT EXISTS conversations ("
         "  id INTEGER PRIMARY KEY,"
         "  goal TEXT NOT NULL,"
-        "  state TEXT NOT NULL DEFAULT 'init',"
+        "  state TEXT NOT NULL DEFAULT 'active',"
         "  round INTEGER NOT NULL DEFAULT 0,"
         "  max_rounds INTEGER NOT NULL DEFAULT 3,"
         "  budget_usd REAL NOT NULL DEFAULT 5.0,"
         "  spent_usd REAL NOT NULL DEFAULT 0.0,"
         "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
         "  completed_at TEXT,"
-        "  paused_reason TEXT,"
-        "  pipeline TEXT NOT NULL DEFAULT 'analyst'"
+        "  paused_reason TEXT"
         ")"
     );
     db.execute(
@@ -184,46 +174,16 @@ static void init_schema(sui::quorum::Database& db) {
         "  session_id TEXT"
         ")"
     );
-    db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)"
-    );
-    db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(agent)"
-    );
-    // For existing databases: add conversation columns to tasks.
-    // Errors silently if columns already exist (exec_raw logs + continues).
+    db.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)");
+    db.execute("CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(agent)");
+    // Migration for existing databases
     db.execute("ALTER TABLE tasks ADD COLUMN conversation_id INTEGER REFERENCES conversations(id)");
     db.execute("ALTER TABLE tasks ADD COLUMN session_id TEXT");
-    db.execute("ALTER TABLE conversations ADD COLUMN pipeline TEXT NOT NULL DEFAULT 'analyst'");
-}
-
-// Insert a new task into the queue. Returns the task id.
-static int64_t enqueue_task(sui::quorum::Database& db,
-                            const std::string& agent,
-                            const std::string& task_type,
-                            const std::string& prompt) {
-    db.execute(
-        "INSERT INTO tasks (agent, task_type, status, prompt) VALUES (?, ?, 'pending', ?)",
-        [&](sqlite3_stmt* stmt) {
-            sqlite3_bind_text(stmt, 1, agent.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt, 2, task_type.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt, 3, prompt.c_str(), -1, SQLITE_TRANSIENT);
-        }
-    );
-    return db.last_insert_id();
 }
 
 // Count currently active (running) tasks
 static int64_t count_active_tasks(sui::quorum::Database& db) {
     return db.query_int("SELECT COUNT(*) FROM tasks WHERE status = 'active'");
-}
-
-// Get daily cost so far
-static double daily_cost(sui::quorum::Database& db) {
-    return db.query_double(
-        "SELECT COALESCE(SUM(cost), 0.0) FROM tasks "
-        "WHERE created_at > datetime('now', '-1 day')"
-    );
 }
 
 // Get hourly cost
@@ -291,82 +251,6 @@ static std::string get_task_type(sui::quorum::Database& db, int64_t task_id) {
     return task_type;
 }
 
-// Schedule review tasks for all pending reviewers on a proposal.
-// Idempotent: skips reviewers who already have a pending/active review task
-// for this proposal (detected via prompt LIKE match on proposal_id).
-static void schedule_review_tasks(
-    sui::quorum::Database& db,
-    sui::quorum::ConsensusEngine& consensus,
-    const sui::quorum::ContextAssembler& context_assembler,
-    const sui::quorum::VaultManager& vault_manager,
-    const std::string& proposal_id,
-    bool verbose)
-{
-    auto pending = consensus.get_pending_reviewers(proposal_id);
-    if (pending.empty()) return;
-
-    auto prop_opt = consensus.get_proposal(proposal_id);
-    if (!prop_opt) return;
-    const auto& prop = *prop_opt;
-
-    for (const auto& reviewer : pending) {
-        // Idempotency guard: skip if a pending/active review task already
-        // exists for this reviewer + proposal_id combination.
-        int64_t existing = 0;
-        std::string like_pattern = std::string("%") + proposal_id + "%";
-        db.query(
-            "SELECT COUNT(*) FROM tasks "
-            "WHERE agent = ? AND task_type = 'review' "
-            "AND status IN ('pending', 'active') "
-            "AND prompt LIKE ?",
-            [&](sqlite3_stmt* stmt) {
-                sqlite3_bind_text(stmt, 1, reviewer.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(stmt, 2, like_pattern.c_str(), -1, SQLITE_TRANSIENT);
-            },
-            [&](sqlite3_stmt* stmt) {
-                existing = sqlite3_column_int64(stmt, 0);
-            }
-        );
-        if (existing > 0) {
-            if (verbose) {
-                std::cout << "[consensus] review task already exists for "
-                          << reviewer << " on " << proposal_id << ", skipping\n";
-            }
-            continue;
-        }
-
-        // Build review task description with full proposal context
-        std::string task_description;
-        task_description += "## Proposal to Review\n\n";
-        task_description += "**Proposal ID:** " + proposal_id + "\n";
-        task_description += "**Title:** " + prop.title + "\n";
-        task_description += "**Author:** " + prop.author + "\n";
-        task_description += "**Round:** " + std::to_string(prop.current_round) + "\n\n";
-        task_description += "### Proposal Content\n\n";
-        task_description += prop.content + "\n\n";
-        task_description += "---\n\n";
-        task_description += "Review this proposal and respond with a REVIEW block.\n\n";
-        task_description += "```REVIEW\n";
-        task_description += "proposal_id: " + proposal_id + "\n";
-        task_description += "verdict: approve | reject | escalate\n";
-        task_description += "reasoning: |\n";
-        task_description += "  <your analysis of the proposal>\n";
-        task_description += "```\n";
-
-        // Assemble full prompt with vault context
-        auto vault_path = vault_manager.vault_path(reviewer);
-        auto prompt = context_assembler.assemble(
-            reviewer, vault_path, "review", task_description);
-
-        enqueue_task(db, reviewer, "review", prompt);
-
-        if (verbose) {
-            std::cout << "[consensus] scheduled review task for "
-                      << reviewer << " on " << proposal_id << "\n";
-        }
-    }
-}
-
 int main(int argc, char* argv[]) {
     // Disable stdout buffering for real-time log tailing when redirected to file
     std::setbuf(stdout, nullptr);
@@ -409,8 +293,6 @@ int main(int argc, char* argv[]) {
     int conv_max_rounds = -1;         // sentinel — will use config default
     int64_t conv_id_arg = 0;
     std::string goal_text;
-    bool gate_approve = false;
-    bool gate_reject = false;
 
     if (subcommand == "converse") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
@@ -425,14 +307,6 @@ int main(int argc, char* argv[]) {
     } else if (subcommand == "resume" || subcommand == "close") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
             if (sub_args[i] == "--conversation" && i + 1 < sub_args.size()) {
-                conv_id_arg = std::stoll(sub_args[++i]);
-            }
-        }
-    } else if (subcommand == "gate") {
-        for (size_t i = 0; i < sub_args.size(); ++i) {
-            if (sub_args[i] == "--approve") gate_approve = true;
-            else if (sub_args[i] == "--reject") gate_reject = true;
-            else if (sub_args[i] == "--conversation" && i + 1 < sub_args.size()) {
                 conv_id_arg = std::stoll(sub_args[++i]);
             }
         }
@@ -473,12 +347,7 @@ int main(int argc, char* argv[]) {
     init_schema(db);
 
     // Conversation engine — lightweight, needed for subcommands
-    sui::quorum::ConversationEngine conversation_engine(
-        db,
-        cfg.conversations.thinker_agent,
-        cfg.conversations.executor_agent,
-        cfg.conversations.reviewer_agent
-    );
+    sui::quorum::ConversationEngine conversation_engine(db);
 
     // ── Subcommand early exits (no PID lock, no daemon) ──────────────────
     if (subcommand == "status") {
@@ -501,30 +370,6 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (subcommand == "gate") {
-        if (conv_id_arg == 0) {
-            std::cerr << "ERROR: gate requires --conversation <id>\n";
-            return 1;
-        }
-        if (!gate_approve && !gate_reject) {
-            std::cerr << "ERROR: gate requires --approve or --reject\n";
-            return 1;
-        }
-        if (gate_approve && gate_reject) {
-            std::cerr << "ERROR: cannot both --approve and --reject\n";
-            return 1;
-        }
-
-        bool ok = conversation_engine.gate(conv_id_arg, gate_approve);
-        if (!ok) return 1;
-
-        if (gate_approve) {
-            std::cout << "Executor task queued for conversation " << conv_id_arg << ".\n";
-            std::cout << "Start or check the daemon to execute.\n";
-        }
-        return 0;
-    }
-
     // ── Banner + config summary (daemon paths only) ──────────────────────
     std::cout << "Quorum Daemon v0.2.0" << std::endl;
     std::cout << "====================" << std::endl;
@@ -539,13 +384,10 @@ int main(int argc, char* argv[]) {
         std::cout << "    - " << a.id << " (" << a.agent_class << ")\n";
     }
     std::cout << "  Dispatch:   sequential (one task at a time)\n";
-    std::cout << "  Daily budget: $" << cfg.budget.daily_limit_usd << "\n";
     std::cout << "  Conversations: "
               << (cfg.conversations.enabled ? "enabled" : "disabled")
-              << " (pipeline: " << cfg.conversations.pipeline
-              << ", budget: $" << cfg.conversations.default_budget_usd
+              << " (budget: $" << cfg.conversations.default_budget_usd
               << ", max_rounds: " << cfg.conversations.default_max_rounds
-              << ", human_gate: " << (cfg.conversations.human_gate ? "on" : "off")
               << ")\n";
 
     if (verbose) {
@@ -570,8 +412,7 @@ int main(int argc, char* argv[]) {
                     std::cerr << "ERROR: converse requires a goal string\n";
                     return 1;
                 }
-                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds,
-                                                     cfg.conversations.pipeline);
+                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds);
                 std::cout << "Conversation " << id << " created.\n";
                 std::cout << "Daemon already running — it will pick up the conversation.\n";
             } else if (subcommand == "resume") {
@@ -595,22 +436,11 @@ int main(int argc, char* argv[]) {
     // Initialize subsystems
     sui::quorum::Scheduler scheduler;
     sui::quorum::MessageBus message_bus;
-    sui::quorum::Router router;
     sui::quorum::EventDispatcher events;
     sui::quorum::Invoker invoker(db);
     sui::quorum::ContextAssembler context_assembler;
     sui::quorum::OutputParser output_parser;
     sui::quorum::VaultManager vault_manager(cfg.daemon.data_dir);
-    sui::quorum::ConsensusEngine consensus(db, cfg.consensus);
-    sui::quorum::InboxWriter inbox_writer(cfg.daemon.knowledge_dir);
-    if (!inbox_writer.init()) {
-        std::cerr << "WARNING: Failed to initialize knowledge directories\n";
-    }
-
-    if (verbose) {
-        std::cout << "  Knowledge dir: " << cfg.daemon.knowledge_dir << "\n";
-        std::cout << "  Conversation engine: OK\n";
-    }
 
     // Initialize vaults for all configured agents
     for (const auto& agent_meta : cfg.agents) {
@@ -629,8 +459,7 @@ int main(int argc, char* argv[]) {
             release_pid_lock(cfg.daemon.pid_file);
             return 1;
         }
-        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds,
-                                           cfg.conversations.pipeline);
+        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds);
         std::cout << "Conversation " << id << " created. Starting daemon...\n";
         // fall through to daemon loop
     } else if (subcommand == "resume") {
@@ -663,14 +492,12 @@ int main(int argc, char* argv[]) {
     scheduler.add("heartbeat", 60, [&]() {
         auto active = count_active_tasks(db);
         auto cost_h = hourly_cost(db);
-        auto cost_d = daily_cost(db);
 
         if (verbose) {
             std::cout << "[" << format_ts(epoch_seconds()) << "] heartbeat"
                       << " — active: " << active
                       << " pending_msgs: " << message_bus.pending()
                       << " cost_1h: $" << cost_h
-                      << " cost_24h: $" << cost_d
                       << "\n";
         }
     });
@@ -680,16 +507,6 @@ int main(int argc, char* argv[]) {
     // Conversation tasks (daemon-created via ConversationEngine).
     scheduler.add("task_dispatch", 5, [&]() {
         // Check budget
-        auto cost_d = daily_cost(db);
-        if (cost_d >= cfg.budget.daily_limit_usd) {
-            if (verbose) {
-                std::cout << "[dispatch] daily budget exceeded ($"
-                          << cost_d << " >= $" << cfg.budget.daily_limit_usd
-                          << "), pausing dispatch\n";
-            }
-            return;
-        }
-
         auto cost_h = hourly_cost(db);
         if (cost_h >= cfg.budget.hourly_limit_usd) {
             if (verbose) {
@@ -761,56 +578,6 @@ int main(int argc, char* argv[]) {
                     std::cout << "[dispatch] task " << task_id
                               << " summary: " << parsed.summary.substr(0, 200) << "\n";
                 }
-
-                // Create proposals and schedule reviewer tasks
-                for (const auto& p : parsed.proposals) {
-                    if (p.title.empty() || p.content.empty()) continue;  // skip malformed
-                    auto prop_id = consensus.create_proposal(
-                        agent_id, p.title, p.content,
-                        p.requires_consensus_from, task_id);
-                    if (verbose) {
-                        std::cout << "[consensus] proposal created: " << prop_id
-                                  << " by " << agent_id
-                                  << " — \"" << p.title << "\""
-                                  << " reviewers: " << p.requires_consensus_from.size()
-                                  << "\n";
-                    }
-                    schedule_review_tasks(db, consensus, context_assembler,
-                                          vault_manager, prop_id, verbose);
-                }
-
-                // Submit reviews and handle potential new rounds
-                for (const auto& r : parsed.reviews) {
-                    if (r.proposal_id.empty() || r.verdict.empty()) continue;
-                    bool ok = consensus.submit_review(
-                        r.proposal_id, agent_id, r.verdict, r.reasoning, task_id);
-                    if (verbose) {
-                        std::cout << "[consensus] review submitted: " << r.proposal_id
-                                  << " by " << agent_id
-                                  << " verdict=" << r.verdict
-                                  << (ok ? "" : " (FAILED)") << "\n";
-                    }
-                    // If a rejection triggered a new round, schedule reviews for it
-                    if (ok) {
-                        schedule_review_tasks(db, consensus, context_assembler,
-                                              vault_manager, r.proposal_id, verbose);
-                    }
-                }
-
-                // Write observations to knowledge inbox
-                if (!parsed.observations.empty()) {
-                    auto task_type = get_task_type(db, task_id);
-                    for (auto& obs : parsed.observations) {
-                        obs.agent = agent_id;
-                        obs.task_type = task_type;
-                        bool ok = inbox_writer.write_observation(obs);
-                        if (verbose) {
-                            std::cout << "[knowledge] observation "
-                                      << (ok ? "written" : "FAILED")
-                                      << ": " << obs.title << "\n";
-                        }
-                    }
-                }
             }
         }
 
@@ -867,10 +634,10 @@ int main(int argc, char* argv[]) {
     // Print final stats
     auto total_done = db.query_int("SELECT COUNT(*) FROM tasks WHERE status = 'done'");
     auto total_failed = db.query_int("SELECT COUNT(*) FROM tasks WHERE status = 'failed'");
-    auto total_cost = daily_cost(db);
+    auto total_cost = hourly_cost(db);
     std::cout << "  Tasks completed: " << total_done << "\n";
     std::cout << "  Tasks failed:    " << total_failed << "\n";
-    std::cout << "  Cost (24h):      $" << total_cost << "\n";
+    std::cout << "  Cost (1h):       $" << total_cost << "\n";
 
     release_pid_lock(cfg.daemon.pid_file);
     std::cout << "Shutdown complete." << std::endl;

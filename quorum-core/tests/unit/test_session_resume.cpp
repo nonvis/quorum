@@ -12,7 +12,6 @@
 
 #include "utils/uuid.h"
 #include "storage/database.h"
-#include "daemon/conversation.h"
 #include "agent/invoker.h"
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -35,15 +34,14 @@ static void init_schema(sui::quorum::Database& db) {
         "CREATE TABLE IF NOT EXISTS conversations ("
         "  id INTEGER PRIMARY KEY,"
         "  goal TEXT NOT NULL,"
-        "  state TEXT NOT NULL DEFAULT 'init',"
+        "  state TEXT NOT NULL DEFAULT 'active',"
         "  round INTEGER NOT NULL DEFAULT 0,"
         "  max_rounds INTEGER NOT NULL DEFAULT 3,"
         "  budget_usd REAL NOT NULL DEFAULT 5.0,"
         "  spent_usd REAL NOT NULL DEFAULT 0.0,"
         "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
         "  completed_at TEXT,"
-        "  paused_reason TEXT,"
-        "  pipeline TEXT NOT NULL DEFAULT 'analyst'"
+        "  paused_reason TEXT"
         ")"
     );
     db.execute(
@@ -258,38 +256,7 @@ static void test_no_prior_usage_for_new_session() {
     check(prior_uses == 0, "6: prior_uses == 0 (Invoker should use --session-id)");
 }
 
-// ─── Test 7: ConversationEngine uses shared UUID ────────────────────────────
-
-static void test_conversation_engine_uses_shared_uuid() {
-    std::cout << "\n=== 7. ConversationEngine Uses Shared UUID ===\n\n";
-
-    sui::quorum::Database db(":memory:");
-    init_schema(db);
-    sui::quorum::ConversationEngine engine(db);
-
-    auto conv_id = engine.start("Test UUID integration", 5.0, 3);
-
-    // Get the think task's session_id
-    std::string sid;
-    db.query(
-        "SELECT session_id FROM tasks WHERE conversation_id = ? AND task_type = 'think' "
-        "ORDER BY id DESC LIMIT 1",
-        [&](sqlite3_stmt* stmt) {
-            sqlite3_bind_int64(stmt, 1, conv_id);
-        },
-        [&](sqlite3_stmt* stmt) {
-            auto s = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            if (s) sid = s;
-        }
-    );
-
-    check(sid.size() == 36, "7a: session_id length == 36 (UUID format)");
-    check(sid[8] == '-' && sid[13] == '-' && sid[18] == '-' && sid[23] == '-',
-          "7b: dashes at correct positions");
-    check(sid[14] == '4', "7c: version nibble == '4'");
-}
-
-// ─── Test 8: InvocationResult has session_id ────────────────────────────────
+// ─── Test 7: InvocationResult has session_id ────────────────────────────────
 
 static void test_invocation_result_has_session_id() {
     std::cout << "\n=== 8. InvocationResult Has session_id ===\n\n";
@@ -323,7 +290,6 @@ int main() {
     test_session_id_null_for_task_queue();
     test_prior_usage_detection();
     test_no_prior_usage_for_new_session();
-    test_conversation_engine_uses_shared_uuid();
     test_invocation_result_has_session_id();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)

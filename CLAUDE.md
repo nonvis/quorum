@@ -4,7 +4,7 @@
 
 Quorum is a **multi-agent orchestration framework**. A deterministic C++20 daemon orchestrates independent AI agents that coordinate through structured proposals and persist knowledge in local vaults.
 
-**Current phase: Phase 1 — Multi-Domain Expansion.** Pure local orchestration on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) are deferred indefinitely.
+**Current phase: Phase 2 — Team Mode.** Pure local orchestration on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) are deferred indefinitely.
 
 **Tagline:** "Define your agents, point them at your project, let the daemon run."
 
@@ -24,7 +24,7 @@ quorum/
 │   ├── CMakeLists.txt
 │   ├── src/
 │   │   ├── main.cpp             # Daemon entry, signal handling, PID lock, CLI subcommands
-│   │   ├── daemon/              # Scheduler, router, message bus, events, conversation engine
+│   │   ├── daemon/              # Scheduler, message bus, events, conversation engine
 │   │   ├── agent/               # Claude Code invoker (claude -p), context assembler, output parser
 │   │   ├── knowledge/           # InboxWriter — writes OBSERVATION blocks to knowledge inbox
 │   │   ├── vault/               # Local vault manager (filesystem-based)
@@ -54,7 +54,7 @@ quorum/
 │           ├── hooks/useSSE.ts   # EventSource hook for real-time updates
 │           └── components/       # StatsBanner, PromptInput, ConversationCard, etc.
 ├── .claude/commands/             # Claude Code skills (project scaffolding, ops)
-├── scripts/                     # Shell scripts (smoke tests, utilities)
+├── scripts/                     # Shell scripts (utilities)
 └── docs/                        # Design documents
 ```
 
@@ -161,7 +161,7 @@ The daemon enforces strictly sequential execution — one `claude -p` task at a 
 - **One task at a time** — dispatch blocks while any task is active (`active > 0`)
 - **No `max_concurrent` setting** — removed from `BudgetConfig` and `mm-bot.yaml`
 - **Per-task token cap** — kills process if exceeded
-- **Global daily/hourly budget** — daemon pauses all invocations when hit
+- **Global hourly budget** — daemon pauses all invocations when hit
 - **Rationale:** causal traceability (task B depends on task A's vault updates), budget predictability, session resume chaining, deterministic debugging
 - Critical for unattended overnight runs
 
@@ -211,79 +211,29 @@ data/knowledge/
 - **Synthesis**: a future knowledge-processing task reads `PROCESSING.md`, merges unprocessed inbox notes into `library/{topic}/findings.md`, and marks notes as `processed: true`
 - Agents see both VAULT_UPDATE and OBSERVATION in their output instructions (context assembler includes both block formats)
 
-### Conversation Mode (Phase 0.7+)
+### Conversation Mode (Phase 2 — Team Mode)
 
-Conversation Mode seeds a single goal and lets the daemon drive a pipeline through a state machine. Two pipeline types are supported: **analyst** (Thinker → Reviewer → Done) and **executor** (Thinker → Human Gate → Executor → Reviewer → Done). The `ConversationEngine` (`src/daemon/conversation.h`) manages state transitions, task creation, and budget enforcement per conversation.
+Conversation Mode seeds a single goal and lets the daemon coordinate a team of agents. The `ConversationEngine` (`src/daemon/conversation.h`) manages state transitions and budget enforcement per conversation.
 
-**State machines:**
+**NOTE:** The legacy analyst/executor pipeline state machines were stripped in Phase 2 task #0. The ConversationEngine is currently stubbed — `on_task_complete()` is a no-op returning `false`. Team mode routing will be reimplemented in task #3.
 
-```
-Analyst pipeline (default):
-INIT → THINKING → REVIEWING ──┬──→ DONE
-                      │        │
-                 REVISE (round < max_rounds)
-                      │        │
-                      ▼        │
-                   THINKING ◄──┘
-                      │
-                 REJECT or round >= max_rounds
-                      │
-                      ▼
-                    CLOSED
-
-Executor pipeline:
-INIT → THINKING → APPROVED (human gate) → EXECUTING → REVIEWING → DONE
-                                 │                          │
-                              REJECTED                   REJECT
-                                 │                          │
-                                 ▼                          ▼
-                              CLOSED                     CLOSED
-
-Any state → PAUSED (budget exceeded, token anomaly, consecutive failures, or agent escalation)
-```
+**States:** `active`, `waiting_for_human`, `done`, `closed`, `paused` (enum `ConvState`).
 
 **Key types:**
-- `ConversationRecord` — struct in `storage/database.h` (id, goal, state, round, max_rounds, budget_usd, spent_usd, pipeline)
-- `ConversationEngine` — header-only class in `daemon/conversation.h`. Constructor takes `Database&` + 3 optional agent name strings (thinker, executor, reviewer). Depends only on `Database` and `OutputParser` types. No dependency on Invoker, VaultManager, or ConsensusEngine.
-- `PauseCheck` — struct in `daemon/conversation.h` (should_pause, reason). Returned by `check_pause_conditions()`.
+- `ConversationRecord` — struct in `storage/database.h` (id, goal, state, round, max_rounds, budget_usd, spent_usd)
+- `ConversationEngine` — header-only class in `daemon/conversation.h`. Constructor takes `Database&` only. Methods: `start()`, `on_task_complete()` (stub), `resume()`, `close()`.
 
 **Database schema:**
-- `conversations` table: id, goal, state, round, max_rounds, budget_usd, spent_usd, created_at, completed_at, paused_reason, pipeline
+- `conversations` table: id, goal, state, round, max_rounds, budget_usd, spent_usd, created_at, completed_at, paused_reason
 - `tasks` table extended with: `conversation_id INTEGER REFERENCES conversations(id)`, `session_id TEXT`
 
-**Executor pipeline flow:**
-1. `start()` creates conversation with `pipeline="executor"`, seeds thinker task
-2. `handle_thinking()` detects executor pipeline → transitions to APPROVED state, prints proposal + gate instructions
-3. Operator runs `gate --approve --conversation <id>` → `gate()` creates executor task, transitions to EXECUTING
-4. `handle_executing()` collects executor output + original proposal → creates reviewer task, transitions to REVIEWING
-5. `handle_reviewing()` approve → DONE (same as analyst pipeline)
-
-**Human gate (`gate()` method):**
-- Validates conversation is in APPROVED state
-- `--approve`: retrieves thinker output, creates executor task (task_type='execute'), transitions to EXECUTING
-- `--reject`: transitions to CLOSED
-- CLI: `quorum_daemon --config <path> gate --approve/--reject --conversation <id>` (no PID lock, no daemon needed)
-
 **Session ID strategy (implemented in Invoker):**
-- Thinker: same session_id reused across all REVISE cycles — Invoker detects prior completed task with same session_id and uses `-r` to resume
-- Reviewer: fresh session_id per review task — Invoker uses `--session-id` (first use, no prior completion)
-- Task Queue tasks: no session_id (NULL) — Invoker adds no session flag (backward compatible)
+- Task Queue tasks: no session_id (NULL) — Invoker adds no session flag
+- Conversation tasks: session_id set per task — Invoker uses `--session-id` for first use / `-r` for resume
 - UUID generation: centralized `generate_uuid()` in `utils/uuid.h` (UUID v4, `snprintf`-based, `mt19937_64`)
 
-**Pause conditions (`check_pause_conditions()`):**
-Centralized pause check runs in `on_task_complete()` before any state transition. Four triggers:
-1. **Budget exceeded** — `spent_usd >= budget_usd` after cost update
-2. **Token anomaly** — current task's `token_in > 2x median` of all completed tasks in the conversation (skipped if no history, i.e. median == 0)
-3. **Consecutive failures** — last 2 tasks (by id DESC) for this conversation both have `status='failed'`
-4. **Agent escalation** — reviewer produces `verdict: escalate` (caught both in pre-routing check and in `handle_reviewing()` verdict dispatch)
-
-Helper methods: `get_median_input_tokens()`, `count_recent_failures()`, `get_task_token_in()` — all query the tasks table directly.
-
-**Verdict normalization (`OutputParser::normalize_verdict()`):**
-The parser normalizes REVIEW verdicts at parse time: lowercase + trim + alias mapping. Canonical values: `approve`, `reject`, `revise`, `escalate`. Unknown verdicts default to `reject` (safe). Aliases include `approved`/`accepted` -> `approve`, `rejected`/`denied` -> `reject`, `revision`/`needs_revision` -> `revise`, `escalated`/`needs_human`/`uncertain` -> `escalate`. Defense-in-depth: `handle_reviewing()` also lowercases before matching.
-
 **Main loop integration:**
-- After existing output processing (vault updates, consensus, observations), the dispatch lambda checks `get_conversation_for_task(task_id)`. If the task belongs to a conversation, `conversation_engine.on_task_complete()` routes to the next state. Tasks without `conversation_id` skip this block entirely (backward compatible).
+- After output processing (vault updates), the dispatch lambda checks `get_conversation_for_task(task_id)`. If the task belongs to a conversation, `conversation_engine.on_task_complete()` is called (currently a no-op stub). Tasks without `conversation_id` skip this block entirely.
 
 ### Storage (Phase 0)
 
@@ -342,13 +292,8 @@ budget:
 
 conversations:
   enabled: true
-  default_max_rounds: 3         # max T->R revision cycles per conversation
+  default_max_rounds: 3         # max revision cycles per conversation
   default_budget_usd: 5.0       # per-conversation budget cap
-  human_gate: true               # require operator approval before executor runs
-  pipeline: analyst              # "analyst" or "executor"
-  thinker: thinker               # agent id for thinker role
-  executor: executor             # agent id for executor role
-  reviewer: reviewer             # agent id for reviewer role
 
 agents:
   - config: configs/agents/mm-bot/market_analyst.yaml
@@ -413,39 +358,35 @@ executor:
 
 ## Current Phase
 
-**Phase 1: Multi-Domain Expansion** — Project-specific configs, hello-world verification pipeline.
+**Phase 2: Team Mode** — Replace legacy analyst/executor pipelines with flexible team-based agent coordination.
 
-Priority order:
-1. ~~C++ daemon skeleton~~ ✓ (main.cpp, signal handling, PID lock, config loading)
-2. ~~Scheduler, message bus, router, event dispatcher~~ ✓ (skeleton implementations)
+Phase 1 completed items (preserved for reference):
+1. ~~C++ daemon skeleton~~ ✓
+2. ~~Scheduler, message bus, event dispatcher~~ ✓
 3. ~~Invoker rewrite~~ ✓ (spawns `claude -p`, captures JSON output, writes token/cost to DB)
 4. ~~SQLite task queue~~ ✓ (pending/active/done states with token tracking)
-5. ~~Context assembler~~ ✓ (vault CONTEXT.md + knowledge + inbox, output format instructions incl. OBSERVATION guidance)
-6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / OBSERVATION / SUMMARY blocks, KV + multi-line parsing, lenient block detection for heading/bold labels and first-line type fallback, language-tagged fences, content fallback for free-text blocks, field aliases for reviewer/verdict variants, VAULT_UPDATE path aliases `target:`/`file:` and bold metadata path extraction, verdict normalization with alias mapping)
-7. ~~Token budget enforcement~~ ✓ (per-task cap + hourly/daily caps with rolling window)
-8. ~~Smoke test script~~ ✓ (scripts/smoke_test.sh — seeds tasks, runs daemon, validates results; includes WAL/SHM cleanup to prevent stale SQLite state)
-9. ~~End-to-end dispatch verified~~ ✓ (daemon claims pending tasks, invokes `claude -p`, writes results back to DB)
-10. ~~Knowledge pipeline wired~~ ✓ (OBSERVATION blocks parsed → InboxWriter → `data/knowledge/inbox/`; PROCESSING.md for synthesis agent; all 4 agent CONTEXT.md files updated with OBSERVATION block format)
-11. ~~Conversation schema + CRUD~~ ✓ (ConversationRecord struct, 8 Database CRUD methods, conversations table, tasks extended with conversation_id + session_id, ALTER TABLE migration for existing DBs)
-12. ~~ConversationEngine~~ ✓ (header-only state machine in daemon/conversation.h — start, on_task_complete, resume, close; Thinker/Reviewer pipeline with revise loops, multi-trigger pause system, escalation protocol, session_id reuse)
-13. ~~Main loop integration~~ ✓ (conversation routing block in task_dispatch lambda — runs after existing output processing, backward compatible for non-conversation tasks)
-14. ~~Session resume in Invoker~~ ✓ (reads session_id from tasks table, uses `--session-id` for first use / `-r` for resume; fallback retry on resume failure; `generate_uuid()` centralized in `utils/uuid.h`; `InvocationResult` includes session_id; verbose log shows session prefix)
-15. ~~Pause conditions + escalation~~ ✓ (centralized `check_pause_conditions()` with 4 triggers: budget exceeded, token anomaly >2x median, 2+ consecutive failures, agent escalation verdict; `PauseCheck` struct; `normalize_verdict()` in OutputParser maps aliases to canonical values; "escalate" verdict in handle_reviewing; agent CONTEXT.md files updated with REVIEW Verdicts section)
-16. ~~Sequential dispatch enforcement~~ ✓ (removed `max_concurrent` from BudgetConfig/config parser/mm-bot.yaml; dispatch gate changed from `active >= max_concurrent` to `active > 0`; design decision, not configuration; test_pipeline updated from parallelism gate to sequential dispatch test)
-17. ~~CLI subcommands~~ ✓ (`converse`, `status`, `resume`, `close` subcommands in main.cpp — two-phase arg parser, early-exit for status/close without PID lock, graceful PID lock fallback for converse/resume when daemon already running, `print_conversations()` for status display)
-18. ~~Conversation pipeline integration test~~ ✓ (`tests/integration/test_conversation_pipeline.cpp` — 9 tests, 34 assertions, exercises full state machine end-to-end without `claude -p`: happy path, revise with session reuse, max rounds exhaustion, budget pause, consecutive failures pause, agent escalation pause, resume from paused, operator close, reject close; all 11 ctest targets pass)
-19. ~~ConversationConfig~~ ✓ (`ConversationConfig` struct in `config.h` with `enabled`, `default_max_rounds`, `default_budget_usd`, `human_gate`; parsed from `conversations:` section in `mm-bot.yaml`; CLI `--budget`/`--max-rounds` use sentinel values, resolved to config defaults after load; startup banner shows conversation settings)
-20. ~~Agent class + terminology~~ ✓ (`agent_class: analyst` added to all 4 agent YAMLs; execution mode comments in `mm-bot.yaml`; dispatch comment in `main.cpp` updated for dual-mode awareness; `DEVELOPMENT.md` and `README.md` rewritten for local-first positioning; `Makefile` header updated)
-21. ~~AgentMetadata + executor support in Invoker~~ ✓ (`AgentRef` replaced with `AgentMetadata` struct in `config.h` — 7 fields: id, name, agent_class, config_path, vault_path, context_file, target_dir; `load_agent_config()` parses individual agent YAMLs at startup; `load_config()` calls it for each `- config:` entry; `invoke()` now takes `const AgentMetadata&` — conditionally omits `--disallowedTools` for executor agents, prepends `cd target_dir &&` with `~/` expansion; main.cpp looks up agent metadata before dispatch; startup banner lists each agent with its class; all 11 tests pass)
-22. ~~Executor pipeline + human gate~~ ✓ (`ConversationConfig` extended with `pipeline`, `thinker_agent`, `executor_agent`, `reviewer_agent` fields parsed from `conversations:` YAML; `ConversationRecord` + DB schema extended with `pipeline` column; `ConversationEngine` constructor takes configurable agent names (defaults preserve backward compat); `start()` accepts pipeline param; `handle_thinking()` branches: analyst → REVIEWING, executor → APPROVED (human gate); `gate()` method: validates APPROVED state, creates executor task, transitions to EXECUTING; `handle_executing()`: collects executor+thinker output, creates reviewer task; `resume()` supports `execute` task type; `gate` CLI subcommand: `--approve`/`--reject --conversation <id>`, no PID lock; `print_conversations()` shows pipeline; all hardcoded agent names replaced with member variables; all 11 tests pass)
-23. ~~Multi-project config layout~~ ✓ (`configs/quorum.yaml` renamed to `configs/mm-bot.yaml`; agent YAMLs moved to `configs/agents/mm-bot/` subfolder; all references updated across 15 files; `configs/hello-world.yaml` + `configs/agents/hello-world/{thinker,executor,reviewer}.yaml` added as minimal T→E→R executor pipeline verification project; vault CONTEXT.md files created locally in `data/vaults/{thinker,executor,reviewer}/` — gitignored per convention)
-24. ~~Executor pipeline integration test~~ ✓ (`tests/integration/test_executor_pipeline.cpp` — 8 tests, 41 assertions: happy path T→APPROVED→E→R→DONE, gate reject, gate wrong state, reviewer reject, dual pipeline selection, AgentMetadata defaults, reviewer context verification, resume from paused executor with session reuse; all 12 ctest targets pass)
+5. ~~Context assembler~~ ✓
+6. ~~Output parser~~ ✓ (VAULT_UPDATE / PROPOSAL / REVIEW / OBSERVATION / SUMMARY blocks)
+7. ~~Token budget enforcement~~ ✓ (per-task cap + hourly cap with rolling window)
+8. ~~End-to-end dispatch verified~~ ✓
+9. ~~Conversation schema + CRUD~~ ✓
+10. ~~Session resume in Invoker~~ ✓
+11. ~~Sequential dispatch enforcement~~ ✓
+12. ~~CLI subcommands~~ ✓ (`converse`, `status`, `resume`, `close`)
+13. ~~ConversationConfig~~ ✓ (enabled, default_max_rounds, default_budget_usd)
+14. ~~AgentMetadata + executor support in Invoker~~ ✓
+15. ~~Multi-project config layout~~ ✓
+
+Phase 2 tasks:
+0. ~~Strip legacy pipelines~~ ✓ (removed analyst/executor pipeline state machines from ConversationEngine, removed router.h, removed consensus/observations/proposals processing from main loop, removed gate CLI subcommand, removed pipeline field from ConversationRecord/DB schema, stubbed on_task_complete(), deleted 8 files incl. legacy tests/scripts, 9 tests pass)
+1. Team mode ConversationEngine — reimplemented state machine with flexible agent teams
+2. Team mode integration tests
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 
 ### Known Issues
 
-- **Nested Claude Code sessions:** `claude -p` refuses to launch inside another Claude Code session (`CLAUDECODE` env var detected). The smoke test must be run from a regular terminal, not from within `claude` CLI.
+- **Nested Claude Code sessions:** `claude -p` refuses to launch inside another Claude Code session (`CLAUDECODE` env var detected).
 - ~~**Invoker error handling:**~~ ✓ Fixed — invoker now checks exit code and validates JSON structure (`"type":"result"`) before calling `mark_done()`. Non-zero exits and invalid output are routed to `mark_failed()`. See `CommandResult` struct and `validate_claude_output()` in `src/agent/invoker.h`.
 - **Buffered stdout in background mode:** When daemon stdout is redirected to a file, `std::cout` uses full buffering. Verbose log lines only appear after process exit. Add `std::flush` to verbose output paths if real-time log tailing is needed.
 - ~~**Agents writing files directly:**~~ ✓ Fixed — Phase 0.5 observation test revealed all agents used Claude Code's built-in Write/Edit tools instead of structured blocks, bypassing the output parser entirely. Prompt-level instructions alone were insufficient — agents treat available tools as the preferred path. Definitive fix: `--disallowedTools "Write,Edit,NotebookEdit"` in the invoker removes the tools entirely. Defense-in-depth via CONTEXT.md and context_assembler.h prompt instructions retained as secondary layers.
@@ -479,12 +420,6 @@ cmake -B build && cmake --build build -j$(nproc)
 # Close a conversation (no PID lock, no daemon)
 ./build/quorum_daemon --config configs/mm-bot.yaml close --conversation 1
 
-# Approve executor at human gate (no PID lock, no daemon)
-./build/quorum_daemon --config configs/mm-bot.yaml gate --approve --conversation 1
-
-# Reject at human gate (no PID lock, no daemon)
-./build/quorum_daemon --config configs/mm-bot.yaml gate --reject --conversation 1
-
 # Agent invocation — analyst (what the daemon spawns, read-only tools)
 claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" --output-format json
 
@@ -494,10 +429,6 @@ cd ~/projects/myapp && claude -p "prompt" --dangerously-skip-permissions --outpu
 # Agent invocation with session (conversation mode)
 claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" --session-id <uuid> --output-format json  # first use
 claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" -r <uuid> --output-format json            # resume
-
-# Smoke test (seeds tasks, runs daemon with real claude -p, validates results)
-# MUST be run from a regular terminal, NOT inside a claude session
-./scripts/smoke_test.sh
 
 # Troubleshooting: clear stale SQLite WAL/SHM if daemon sees wrong data
 rm -f data/quorum.db-wal data/quorum.db-shm
