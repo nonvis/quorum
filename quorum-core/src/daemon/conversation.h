@@ -9,6 +9,7 @@
 #include "utils/uuid.h"
 #include "storage/database.h"
 #include "agent/output_parser.h"
+#include "agent/context_assembler.h"
 
 namespace sui::quorum {
 
@@ -17,8 +18,9 @@ enum class ConvState { active, waiting_for_human, done, closed, paused };
 class ConversationEngine {
 public:
     ConversationEngine(Database& db, const ConversationConfig& cfg,
-                       const std::vector<AgentMetadata>& agents)
-        : db_(db), cfg_(cfg), agents_(agents) {}
+                       const std::vector<AgentMetadata>& agents,
+                       const ContextAssembler* assembler = nullptr)
+        : db_(db), cfg_(cfg), agents_(agents), assembler_(assembler) {}
 
     // Start a new conversation. Creates the first task for the leader agent.
     // Returns conversation ID.
@@ -52,8 +54,8 @@ public:
 
         auto display = goal.size() > 60 ? goal.substr(0, 60) : goal;
         std::cout << "[conversation " << conv_id << "] started"
-                  << " — " << display
-                  << " → " << first_agent << "\n";
+                  << " -- " << display
+                  << " -> " << first_agent << "\n";
 
         return conv_id;
     }
@@ -108,7 +110,7 @@ public:
                 next_prompt = h.prompt;
             }
         } else {
-            // No HANDOFF — follow default_path or complete
+            // No HANDOFF -- follow default_path or complete
             if (!cfg_.default_path.empty()) {
                 int next_idx = conv->path_index + 1;
                 if (next_idx < static_cast<int>(cfg_.default_path.size())) {
@@ -119,23 +121,23 @@ public:
                     is_done = true;
                 }
             } else {
-                // No default_path, no handoff — done
+                // No default_path, no handoff -- done
                 is_done = true;
             }
         }
 
-        // 6. Unknown agent → leader fallback
+        // 6. Unknown agent -> leader fallback
         if (!next_agent.empty() && !is_known_agent(next_agent)) {
             std::cout << "[conversation " << conv_id
                       << "] unknown agent '" << next_agent
-                      << "' → fallback to leader\n";
+                      << "' -> fallback to leader\n";
             next_agent = cfg_.leader;
             if (next_agent.empty() && !agents_.empty()) {
                 next_agent = agents_[0].id;
             }
         }
 
-        // 7. Route: done → complete; human → waiting_for_human; budget/turns → pause
+        // 7. Route: done -> complete; human -> waiting_for_human; budget/turns -> pause
         if (is_done) {
             db_.complete_conversation(conv_id);
             std::cout << "[conversation " << conv_id << "] done\n";
@@ -150,7 +152,7 @@ public:
             if (!next_prompt.empty()) {
                 auto display = next_prompt.size() > 60
                     ? next_prompt.substr(0, 60) : next_prompt;
-                std::cout << " — " << display;
+                std::cout << " -- " << display;
             }
             std::cout << "\n";
             return false;
@@ -162,7 +164,7 @@ public:
                 + std::to_string(conv->spent_usd) + "/$"
                 + std::to_string(conv->budget_usd) + ")");
             std::cout << "[conversation " << conv_id
-                      << "] paused — budget exceeded\n";
+                      << "] paused -- budget exceeded\n";
             return false;
         }
 
@@ -172,7 +174,7 @@ public:
                 + std::to_string(conv->round) + "/"
                 + std::to_string(conv->max_rounds) + ")");
             std::cout << "[conversation " << conv_id
-                      << "] paused — max turns reached\n";
+                      << "] paused -- max turns reached\n";
             return false;
         }
 
@@ -195,7 +197,7 @@ public:
 
         std::cout << "[conversation " << conv_id
                   << "] turn " << conv->round + 1
-                  << " → " << next_agent << "\n";
+                  << " -> " << next_agent << "\n";
         return true;
     }
 
@@ -220,7 +222,7 @@ public:
         increment_turn(conversation_id);
 
         std::cout << "[conversation " << conversation_id
-                  << "] human responded → " << leader << "\n";
+                  << "] human responded -> " << leader << "\n";
         return true;
     }
 
@@ -252,7 +254,7 @@ public:
         );
 
         std::cout << "[conversation " << conversation_id
-                  << "] resumed → " << leader << "\n";
+                  << "] resumed -> " << leader << "\n";
         return true;
     }
 
@@ -267,6 +269,7 @@ private:
     Database& db_;
     ConversationConfig cfg_;
     std::vector<AgentMetadata> agents_;
+    const ContextAssembler* assembler_ = nullptr;
 
     bool is_known_agent(const std::string& agent_id) const {
         return std::any_of(agents_.begin(), agents_.end(),
@@ -291,13 +294,37 @@ private:
     void create_task(int64_t conv_id, const std::string& agent,
                      const std::string& task_type, const std::string& prompt,
                      const std::string& session_id) {
+        std::string final_prompt = prompt;
+
+        if (assembler_) {
+            // Build roster
+            auto roster = ContextAssembler::build_roster(agents_, agent, cfg_);
+
+            // Find agent metadata for vault path
+            std::string vault_dir;
+            for (const auto& a : agents_) {
+                if (a.id == agent) {
+                    vault_dir = a.vault_path;
+                    break;
+                }
+            }
+
+            // Assemble full prompt with vault context + roster + task
+            if (!vault_dir.empty()) {
+                final_prompt = assembler_->assemble(agent, vault_dir, task_type, prompt, roster);
+            } else {
+                // No vault -- just roster + task
+                final_prompt = roster + "\n---\n\n# Current Task\n\n" + prompt + "\n";
+            }
+        }
+
         db_.execute(
             "INSERT INTO tasks (agent, task_type, prompt, conversation_id, session_id) "
             "VALUES (?, ?, ?, ?, ?)",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_text(stmt, 1, agent.c_str(), -1, SQLITE_TRANSIENT);
                 sqlite3_bind_text(stmt, 2, task_type.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(stmt, 3, prompt.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 3, final_prompt.c_str(), -1, SQLITE_TRANSIENT);
                 sqlite3_bind_int64(stmt, 4, conv_id);
                 sqlite3_bind_text(stmt, 5, session_id.c_str(), -1, SQLITE_TRANSIENT);
             }

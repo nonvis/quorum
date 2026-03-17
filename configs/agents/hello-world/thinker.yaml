@@ -6,6 +6,7 @@
 id: thinker
 agent_class: analyst
 name: "Thinker"
+role: thinker
 description: "Plans implementation — analyzes goals and produces step-by-step proposals"
 
 vault_path: data/vaults/thinker/

@@ -380,8 +380,11 @@ int main(int argc, char* argv[]) {
     }
     init_schema(db);
 
+    // Context assembler — stateless, safe to construct early
+    sui::quorum::ContextAssembler context_assembler;
+
     // Conversation engine — lightweight, needed for subcommands
-    sui::quorum::ConversationEngine conversation_engine(db, cfg.conversations, cfg.agents);
+    sui::quorum::ConversationEngine conversation_engine(db, cfg.conversations, cfg.agents, &context_assembler);
 
     // ── Subcommand early exits (no PID lock, no daemon) ──────────────────
     if (subcommand == "status") {
@@ -491,7 +494,6 @@ int main(int argc, char* argv[]) {
     sui::quorum::MessageBus message_bus;
     sui::quorum::EventDispatcher events;
     sui::quorum::Invoker invoker(db);
-    sui::quorum::ContextAssembler context_assembler;
     sui::quorum::OutputParser output_parser;
     sui::quorum::VaultManager vault_manager(cfg.daemon.data_dir);
 

@@ -123,3 +123,7 @@ add_test(NAME test_generic_loop COMMAND test_generic_loop)
 add_executable(test_team_pipeline tests/integration/test_team_pipeline.cpp)
 target_include_directories(test_team_pipeline PRIVATE src)
 add_test(NAME test_team_pipeline COMMAND test_team_pipeline)
+
+add_executable(test_roster_injection tests/unit/test_roster_injection.cpp)
+target_include_directories(test_roster_injection PRIVATE src)
+add_test(NAME test_roster_injection COMMAND test_roster_injection)

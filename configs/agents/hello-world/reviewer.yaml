@@ -6,6 +6,7 @@
 id: reviewer
 agent_class: analyst
 name: "Reviewer"
+role: reviewer
 description: "Reviews code changes — verifies implementation matches the plan"
 
 vault_path: data/vaults/reviewer/

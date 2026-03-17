@@ -77,6 +77,8 @@ struct ConversationConfig {
 struct AgentMetadata {
     std::string id;
     std::string name;
+    std::string description;                     // human-readable for roster
+    std::string role;                            // archetype: leader, thinker, doer, reviewer, scribe, librarian
     std::string agent_class = "analyst";  // "analyst" or "executor"
     std::string config_path;
     std::string vault_path;
@@ -162,6 +164,8 @@ inline std::optional<AgentMetadata> load_agent_config(const std::string& path) {
             if (key == "id") agent.id = val;
             else if (key == "agent_class") agent.agent_class = val;
             else if (key == "name") agent.name = val;
+            else if (key == "description") agent.description = val;
+            else if (key == "role") agent.role = val;
             else if (key == "vault_path") agent.vault_path = val;
             else if (key == "context_file") agent.context_file = val;
         }

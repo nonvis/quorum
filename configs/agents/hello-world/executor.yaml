@@ -6,6 +6,7 @@
 id: executor
 agent_class: executor
 name: "Executor"
+role: doer
 description: "Implements proposals — full tool access, writes and tests code"
 
 vault_path: data/vaults/executor/
