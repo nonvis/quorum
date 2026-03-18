@@ -24,6 +24,7 @@
 #include "vault/vault_manager.h"
 #include "cli/agent_create.h"
 #include "cli/init.h"
+#include "utils/discover.h"
 
 namespace fs = std::filesystem;
 
@@ -121,16 +122,16 @@ static void print_conversations(sui::quorum::Database& db) {
 static void print_usage(const char* prog) {
     std::cerr << "Usage:\n"
               << "  " << prog << " init                                      Initialize .quorum/ in current directory\n"
+              << "  " << prog << " converse \"goal text\"                      Start conversation (auto-discovers .quorum/)\n"
+              << "  " << prog << " status                                    List conversations\n"
               << "  " << prog << " --config <path>                            Start daemon\n"
-              << "  " << prog << " --config <path> converse \"goal text\"       Start conversation + daemon\n"
               << "  " << prog << " --config <path> converse --budget 3.0 \"g\"  Custom budget\n"
-              << "  " << prog << " --config <path> status                     List conversations\n"
               << "  " << prog << " --config <path> resume --conversation <id> Resume paused\n"
               << "  " << prog << " --config <path> close --conversation <id>  Close conversation\n"
               << "  " << prog << " --config <path> respond --conversation <id> \"text\"  Respond to human request\n"
               << "  " << prog << " --config <path> agent create --role <r> --name <n> --project <p>\n"
               << "\nOptions:\n"
-              << "  --config <path>      Path to config YAML (required, e.g. configs/mm-bot.yaml)\n"
+              << "  --config <path>      Path to config YAML (optional if .quorum/ exists in project)\n"
               << "  --verbose            Enable verbose logging\n"
               << "  --budget <usd>       Per-conversation budget (default: 5.0)\n"
               << "  --max-rounds <n>     Max revision rounds (default: 3)\n"
@@ -139,7 +140,7 @@ static void print_usage(const char* prog) {
               << "\nAgent create options:\n"
               << "  --role <role>        Agent role (leader|thinker|doer|reviewer|scribe|librarian)\n"
               << "  --name <name>        Agent ID\n"
-              << "  --project <name>     Project subfolder in configs/agents/\n"
+              << "  --project <name>     Project subfolder in configs/agents/ (optional with .quorum/)\n"
               << "  --description <d>    Agent description (optional)\n"
               << "  --skill-file <path>  Path to SKILL.md (optional)\n"
               << "  --target-dir <path>  Working directory for doer agents (optional)\n"
@@ -301,6 +302,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    bool explicit_config = !config_path.empty();
+
     // Phase 2: collect unconsumed args -> subcommand + subcommand args
     std::string subcommand;
     std::vector<std::string> sub_args;
@@ -374,9 +377,28 @@ int main(int argc, char* argv[]) {
     }
 
     if (config_path.empty()) {
-        std::cerr << "ERROR: --config is required\n";
-        print_usage(argv[0]);
-        return 1;
+        auto discovered = sui::quorum::discover_config();
+        if (discovered) {
+            config_path = *discovered;
+            if (verbose) {
+                std::cout << "Auto-discovered config: " << config_path << "\n";
+            }
+        } else {
+            std::cerr << "ERROR: no --config provided and no .quorum/ found in current or parent directories\n";
+            std::cerr << "Run 'quorum init' to initialize a project, or use --config <path>\n";
+            return 1;
+        }
+    }
+
+    // If config was auto-discovered, chdir to project root so relative paths work
+    if (!explicit_config) {
+        auto project_root = sui::quorum::discover_project_root();
+        if (project_root) {
+            fs::current_path(*project_root);
+            if (verbose) {
+                std::cout << "Project root: " << *project_root << "\n";
+            }
+        }
     }
 
     // Load config
@@ -395,8 +417,12 @@ int main(int argc, char* argv[]) {
             std::cerr << "ERROR: unknown agent subcommand. Usage: agent create ...\n";
             return 1;
         }
-        if (agent_params.role.empty() || agent_params.name.empty() || agent_params.project.empty()) {
-            std::cerr << "ERROR: agent create requires --role, --name, and --project\n";
+        if (agent_params.role.empty() || agent_params.name.empty()) {
+            std::cerr << "ERROR: agent create requires --role and --name\n";
+            return 1;
+        }
+        if (agent_params.project.empty() && !sui::quorum::discover_project_root()) {
+            std::cerr << "ERROR: agent create requires --project (no .quorum/ found)\n";
             return 1;
         }
         agent_params.data_dir = cfg.daemon.data_dir;

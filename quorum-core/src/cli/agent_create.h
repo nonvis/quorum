@@ -8,6 +8,7 @@
 
 #include "utils/subprocess.h"
 #include "utils/json.h"
+#include "utils/discover.h"
 
 namespace fs = std::filesystem;
 namespace sui::quorum::cli {
@@ -37,13 +38,15 @@ inline int create_agent(const AgentCreateParams& p) {
     }
 
     // 1b. Detect project-local .quorum/ layout
-    bool is_local = fs::exists(".quorum");
+    auto project_root = sui::quorum::discover_project_root();
+    bool is_local = project_root.has_value();
 
     // 2. Derive paths
     auto agent_class = (p.role == "doer") ? "executor" : "analyst";
-    auto config_dir = is_local ? std::string(".quorum/agents") : ("configs/agents/" + p.project);
+    std::string root_prefix = is_local ? (*project_root + "/") : "";
+    auto config_dir = is_local ? (root_prefix + ".quorum/agents") : ("configs/agents/" + p.project);
     auto config_path = config_dir + "/" + p.name + ".yaml";
-    auto vault_dir = is_local ? (".quorum/vaults/" + p.name) : (p.data_dir + "/vaults/" + p.name);
+    auto vault_dir = is_local ? (root_prefix + ".quorum/vaults/" + p.name) : (p.data_dir + "/vaults/" + p.name);
     auto context_path = vault_dir + "/CONTEXT.md";
     auto knowledge_dir = vault_dir + "/knowledge";
 
@@ -186,7 +189,8 @@ inline int create_agent(const AgentCreateParams& p) {
 
     if (is_local) {
         // Auto-append to .quorum/config.yaml
-        std::ofstream cfg_out(".quorum/config.yaml", std::ios::app);
+        auto cfg_yaml_path = *project_root + "/.quorum/config.yaml";
+        std::ofstream cfg_out(cfg_yaml_path, std::ios::app);
         cfg_out << "  - config: .quorum/agents/" << p.name << ".yaml\n";
         std::cout << "\nAgent '" << p.name << "' added to .quorum/config.yaml\n";
     } else {

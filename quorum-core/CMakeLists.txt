@@ -140,3 +140,7 @@ add_test(NAME test_agent_create COMMAND test_agent_create)
 add_executable(test_quorum_init tests/unit/test_quorum_init.cpp)
 target_include_directories(test_quorum_init PRIVATE src)
 add_test(NAME test_quorum_init COMMAND test_quorum_init)
+
+add_executable(test_discover tests/unit/test_discover.cpp)
+target_include_directories(test_discover PRIVATE src)
+add_test(NAME test_discover COMMAND test_discover)
