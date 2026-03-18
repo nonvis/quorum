@@ -192,7 +192,7 @@ Agents also produce VAULT_UPDATE blocks for persistent findings written to their
 
 Conversation Mode seeds a single goal and lets the daemon coordinate a team of agents. The `ConversationEngine` (`src/daemon/conversation.h`) manages state transitions and budget enforcement per conversation.
 
-**NOTE:** Legacy pipelines were stripped in task #0. HANDOFF parsing in task #1. KNOWLEDGE parsing + ledger in task #2. Team mode ConversationEngine with generic ball-passing loop in task #3. Team roster injection into agent prompts in task #4. Web dashboard updated for team mode in task #5 (removed gate/pipeline/auto-approve, added respond controls for `waiting_for_human`, updated states to active/waiting_for_human/done/closed/paused). Config parser (skill_file, auto-derive agent_class, validate_config) in task #6. State cleanup (rename labels, remove legacy fields) in task #7. Agent generator CLI (`agent create` subcommand, subprocess.h extraction) in task #8. Phase 3 task #0: `quorum init` creates `.quorum/` project-local layout; `agent create` auto-detects it. Phase 3 task #1: auto-discover `.quorum/config.yaml` — walk up from cwd, chdir to project root, `--config` and `--project` optional. Phase 3 task #3: team presets — named YAML files in `.quorum/teams/` define `default_path` routing; `--team <name>` selects a preset at conversation start; `quorum teams` lists available presets; team stored on conversation record. Phase 3 task #4: `agent modify` and `agent list` CLI subcommands; extracted `generate_context_md()` shared by create and modify; CONTEXT.md regenerated on every modify (Decision #23: users should never hand-edit CONTEXT.md).
+**NOTE:** Legacy pipelines were stripped in task #0. HANDOFF parsing in task #1. KNOWLEDGE parsing + ledger in task #2. Team mode ConversationEngine with generic ball-passing loop in task #3. Team roster injection into agent prompts in task #4. Web dashboard updated for team mode in task #5 (removed gate/pipeline/auto-approve, added respond controls for `waiting_for_human`, updated states to active/waiting_for_human/done/closed/paused). Config parser (skill_file, auto-derive agent_class, validate_config) in task #6. State cleanup (rename labels, remove legacy fields) in task #7. Agent generator CLI (`agent create` subcommand, subprocess.h extraction) in task #8. Phase 3 task #0: `quorum init` creates `.quorum/` project-local layout; `agent create` auto-detects it. Phase 3 task #1: auto-discover `.quorum/config.yaml` — walk up from cwd, chdir to project root, `--config` and `--project` optional. Phase 3 task #3: team presets — named YAML files in `.quorum/teams/` define `default_path` routing; `--team <name>` selects a preset at conversation start; `quorum teams` lists available presets; team stored on conversation record. Phase 3 task #4: `agent modify` and `agent list` CLI subcommands; extracted `generate_context_md()` shared by create and modify; CONTEXT.md regenerated on every modify (Decision #23: users should never hand-edit CONTEXT.md). Phase 3 task #5: directory-based agent roster — `load_agents_from_directory()` scans `.quorum/agents/` for YAML files, replacing explicit `agents:` list; `quorum init` no longer writes `agents:` section; `agent create` no longer appends to config.yaml.
 
 **States:** `active`, `waiting_for_human`, `done`, `closed`, `paused` (enum `ConvState`).
 
@@ -258,7 +258,24 @@ auto result = db.query("SELECT * FROM metrics WHERE agent = ?", agent_id);
 ### Config Pattern
 
 ```yaml
-# configs/mm-bot.yaml — daemon config (key sections)
+# .quorum/config.yaml — project-local config (preferred)
+# No agents: section needed — agents auto-loaded from .quorum/agents/
+daemon:
+  data_dir: .quorum
+  pid_file: .quorum/quorum.pid
+
+budget:
+  hourly_limit_usd: 2.00
+
+conversations:
+  enabled: true
+  default_max_rounds: 20
+  default_budget_usd: 5.0
+  leader: leader
+```
+
+```yaml
+# configs/mm-bot.yaml — centralized config (fallback when no agents/ dir)
 daemon:
   pid_file: /tmp/quorum.pid
   data_dir: ./data
@@ -271,12 +288,12 @@ budget:
 
 conversations:
   enabled: true
-  leader: leader                              # agent id that receives the goal first
-  default_max_rounds: 20                      # repurposed as max_turns
-  default_budget_usd: 5.0                     # per-conversation budget cap
-  default_path: [leader, thinker, doer, scribe]  # optional default routing path
+  leader: leader
+  default_max_rounds: 20
+  default_budget_usd: 5.0
+  default_path: [leader, thinker, doer, scribe]
 
-agents:
+agents:                                          # only needed when no agents/ dir exists
   - config: configs/agents/project/leader.yaml
   - config: configs/agents/project/thinker.yaml
   - config: configs/agents/project/doer.yaml
@@ -312,7 +329,7 @@ executor:
 
 **Agent classes:** `analyst` (read-only, default — `--disallowedTools` enforced), `executor` (full tool access, no `--disallowedTools`). Role determines class: doer = executor, all others = analyst.
 
-**Config loading:** At startup, `load_config()` reads the project config YAML (e.g. `mm-bot.yaml`) agent list, then calls `load_agent_config()` for each entry. This parses the individual agent YAML into `AgentMetadata` structs (id, name, agent_class, config_path, vault_path, context_file, target_dir). The Invoker receives `AgentMetadata` at dispatch time to build the appropriate `claude -p` command.
+**Config loading:** At startup, `load_config()` reads the project config YAML. If an `agents/` subdirectory exists next to the config file, `load_agents_from_directory()` scans it for all `.yaml`/`.yml` files and loads them (sorted alphabetically by id), replacing any explicit `agents:` list in the config. If no `agents/` directory exists, the explicit `agents:` list is used as fallback (centralized layout). Either way, each agent YAML is parsed via `load_agent_config()` into `AgentMetadata` structs (id, name, agent_class, config_path, vault_path, context_file, target_dir). The Invoker receives `AgentMetadata` at dispatch time to build the appropriate `claude -p` command.
 
 ### Project-Local Layout (`.quorum/`)
 
@@ -321,7 +338,7 @@ executor:
 ```
 myproject/
 └── .quorum/
-    ├── config.yaml              # Project config (daemon, budget, conversations, agent list)
+    ├── config.yaml              # Project config (daemon, budget, conversations — no agents: section needed)
     ├── .gitignore               # Ignores quorum.db, WAL/SHM, quorum.pid, knowledge/ dirs
     ├── quorum.db                # SQLite database (runtime, gitignored)
     ├── quorum.pid               # PID lock file (runtime, gitignored)
@@ -359,7 +376,7 @@ Select a team with `--team <name>` when starting a conversation: `quorum convers
 
 **Auto-discovery:** When `--config` is not provided, the daemon walks up from cwd looking for `.quorum/config.yaml` (via `utils/discover.h`). If found, it auto-sets the config path and `chdir`s to the project root so relative paths in config.yaml resolve correctly. This means `quorum converse`, `quorum status`, `quorum agent create`, `quorum agent modify`, and `quorum agent list` all work without `--config` from anywhere inside a `.quorum/`-initialized project tree. Explicit `--config <path>` still takes precedence and skips the chdir.
 
-`agent create` auto-detects `.quorum/` via `discover_project_root()` (walks up from cwd). When found, it writes configs to `.quorum/agents/`, vaults to `.quorum/vaults/`, and auto-appends to `.quorum/config.yaml`. When absent, it uses the centralized `configs/agents/` + `data/vaults/` layout. The `--project` flag is optional when `.quorum/` exists.
+`agent create` auto-detects `.quorum/` via `discover_project_root()` (walks up from cwd). When found, it writes configs to `.quorum/agents/` and vaults to `.quorum/vaults/` — no config.yaml modification needed (agents are auto-discovered from the directory). When `.quorum/` is absent, it uses the centralized `configs/agents/` + `data/vaults/` layout. The `--project` flag is optional when `.quorum/` exists.
 
 ## Move Contract Conventions (Deferred — Phase 1+)
 
@@ -421,10 +438,11 @@ Phase 2 tasks:
 10. ~~E2E verification~~ ✓ (live 4-agent conversation: leader/thinker/doer/scribe built C++ hello world via real `claude -p` invocations. 7 tasks, 5 handoffs, session reuse confirmed, $0.47 total cost. Config: `configs/e2e-test.yaml`, target: `/tmp/quorum-e2e-target/`, data: `data-e2e/`. All 8 success criteria passed: conversation done, 5 handoffs, compilable code, 4 knowledge entries, scribe summary, consistent sessions, cost under budget, clean exit)
 
 Phase 3 tasks:
-0. ~~`quorum init`~~ ✓ (`init` CLI subcommand — creates `.quorum/` directory with config.yaml, leader agent YAML, CONTEXT.md, .gitignore, vault dirs; `agent create` detects `.quorum/` and uses project-local paths + auto-appends to config.yaml; no `--config` required for init; 6 tests in test_quorum_init.cpp, 25 assertions pass)
+0. ~~`quorum init`~~ ✓ (`init` CLI subcommand — creates `.quorum/` directory with config.yaml, leader agent YAML, CONTEXT.md, .gitignore, vault dirs; `agent create` detects `.quorum/` and uses project-local paths; no `--config` required for init; 6 tests in test_quorum_init.cpp, 26 assertions pass)
 1. ~~Auto-discover `.quorum/config.yaml`~~ ✓ (`utils/discover.h` — `discover_config()` and `discover_project_root()` walk up from cwd; main.cpp auto-discovers when `--config` omitted, chdir to project root; `--config` and `--project` now optional with `.quorum/`; init.h generates `daemon:` section so DB/PID land in `.quorum/`; `agent_create.h` uses `discover_project_root()` for subdirectory support; 7 tests in test_discover.cpp, 17 assertions pass; test_quorum_init 25/25, test_agent_create 17/17, quorum_daemon compiles clean)
 3. ~~Team presets~~ ✓ (`TeamPreset` struct + `load_team_presets()` in `utils/config.h`; `--team <name>` flag on `converse`; `quorum teams` subcommand lists presets; team stored on `conversations.team` column; `quorum init` creates `.quorum/teams/default.yaml`; `quorum status` shows `{team}` tag; team overrides `cfg.conversations.default_path` before ConversationEngine construction; 6 tests in test_team_presets.cpp, 22 assertions pass; test_quorum_init 25/25, test_agent_create 17/17, test_discover 17/17, quorum_daemon compiles clean)
 4. ~~Agent modify/list~~ ✓ (`agent modify --name <id>` updates YAML + regenerates CONTEXT.md; supports `--role`, `--description`, `--skill-file`, `--target-dir`, `--regenerate` flags; role change auto-derives agent_class and adds/removes executor section; `agent list` shows all agents sorted by id with role and description; extracted `generate_context_md()` from `create_agent()` into shared function used by both create and modify; both commands work via `.quorum/` auto-discovery — no `--config` needed; 7 tests in test_agent_modify.cpp, 23 assertions pass; test_agent_create 17/17, test_quorum_init 25/25, quorum_daemon compiles clean)
+5. ~~Directory-based agent roster~~ ✓ (`load_agents_from_directory()` in `utils/config.h` scans `.quorum/agents/` for `.yaml`/`.yml` files, sorted alphabetically by id; `load_config()` auto-detects `agents/` dir next to config file and overrides explicit `agents:` list; `quorum init` no longer writes `agents:` section in config.yaml; `agent create` no longer appends to config.yaml — agents are auto-discovered; `validate_config()` warns on empty agents; 7 tests in test_agent_roster_dir.cpp, 17 assertions pass; test_quorum_init 26/26, test_agent_create 17/17, all 21 tests pass, quorum_daemon compiles clean)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 

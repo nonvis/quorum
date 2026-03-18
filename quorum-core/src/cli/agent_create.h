@@ -201,11 +201,7 @@ inline int create_agent(const AgentCreateParams& p) {
     std::cout << "  Created: " << knowledge_dir << "/\n";
 
     if (is_local) {
-        // Auto-append to .quorum/config.yaml
-        auto cfg_yaml_path = *project_root + "/.quorum/config.yaml";
-        std::ofstream cfg_out(cfg_yaml_path, std::ios::app);
-        cfg_out << "  - config: .quorum/agents/" << p.name << ".yaml\n";
-        std::cout << "\nAgent '" << p.name << "' added to .quorum/config.yaml\n";
+        std::cout << "\nAgent '" << p.name << "' created. It will be auto-loaded from .quorum/agents/\n";
     } else {
         std::cout << "\nAgent '" << p.name << "' scaffolded. Add to your project YAML:\n";
         std::cout << "  - config: " << config_path << "\n";

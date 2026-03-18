@@ -87,8 +87,8 @@ static void test_init_creates_config() {
           "B: config contains 'leader: leader'");
     check(content.find("hourly_limit_usd") != std::string::npos,
           "B: config contains 'hourly_limit_usd'");
-    check(content.find("- config: .quorum/agents/leader.yaml") != std::string::npos,
-          "B: config contains '- config: .quorum/agents/leader.yaml'");
+    check(content.find("agents:") == std::string::npos,
+          "B: config does NOT contain 'agents:' section (auto-discovered)");
 
     fs::current_path(original_cwd);
     cleanup_temp(tmp);
@@ -200,8 +200,10 @@ static void test_agent_create_detects_quorum_dir() {
           "F: .quorum/vaults/test-dev/knowledge/ exists");
 
     auto config = read_file(".quorum/config.yaml");
-    check(config.find("- config: .quorum/agents/test-dev.yaml") != std::string::npos,
-          "F: config.yaml contains '- config: .quorum/agents/test-dev.yaml'");
+    check(config.find("- config: .quorum/agents/test-dev.yaml") == std::string::npos,
+          "F: config.yaml does NOT contain agent entry (auto-discovered from directory)");
+    check(fs::exists(".quorum/agents/test-dev.yaml"),
+          "F: agent YAML in .quorum/agents/ is sufficient (no config.yaml entry needed)");
 
     fs::current_path(original_cwd);
     cleanup_temp(tmp);

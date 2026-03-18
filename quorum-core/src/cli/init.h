@@ -44,10 +44,7 @@ inline int init_project() {
             << "  enabled: true\n"
             << "  default_max_rounds: 20\n"
             << "  default_budget_usd: 5.0\n"
-            << "  leader: leader\n"
-            << "\n"
-            << "agents:\n"
-            << "  - config: .quorum/agents/leader.yaml\n";
+            << "  leader: leader\n";
     }
     std::cout << "  Created: .quorum/config.yaml\n";
 
@@ -136,7 +133,7 @@ inline int init_project() {
     std::cout << "  Created: .quorum/vaults/leader/knowledge/\n";
     std::cout << "  Created: .quorum/teams/\n";
     std::cout << "\nQuorum initialized. Next steps:\n";
-    std::cout << "  1. Add agents:\n";
+    std::cout << "  1. Add agents (auto-discovered from .quorum/agents/):\n";
     std::cout << "     quorum agent create --role doer --name my-dev\n";
     std::cout << "  2. Start a conversation:\n";
     std::cout << "     quorum converse \"your goal here\"\n";

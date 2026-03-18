@@ -202,6 +202,29 @@ inline std::optional<AgentMetadata> load_agent_config(const std::string& path) {
     return agent;
 }
 
+inline std::vector<AgentMetadata> load_agents_from_directory(const std::string& agents_dir) {
+    std::vector<AgentMetadata> agents;
+    namespace fs = std::filesystem;
+    if (!fs::exists(agents_dir) || !fs::is_directory(agents_dir)) return agents;
+
+    for (const auto& entry : fs::directory_iterator(agents_dir)) {
+        if (!entry.is_regular_file()) continue;
+        auto path = entry.path();
+        if (path.extension() != ".yaml" && path.extension() != ".yml") continue;
+
+        auto agent = load_agent_config(path.string());
+        if (agent) {
+            agents.push_back(std::move(*agent));
+        } else {
+            std::cerr << "WARNING: skipping invalid agent config: " << path << "\n";
+        }
+    }
+
+    std::sort(agents.begin(), agents.end(),
+              [](const auto& a, const auto& b) { return a.id < b.id; });
+    return agents;
+}
+
 inline std::optional<QuorumConfig> load_config(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) {
@@ -342,6 +365,20 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
         }
     }
 
+    // Directory-based agent loading: if .quorum/agents/ exists, it overrides
+    // the explicit agents: list in config.yaml (one source of truth).
+    {
+        namespace fs = std::filesystem;
+        auto config_dir = fs::path(path).parent_path();
+        auto agents_dir = config_dir / "agents";
+        if (fs::exists(agents_dir) && fs::is_directory(agents_dir)) {
+            auto dir_agents = load_agents_from_directory(agents_dir.string());
+            if (!dir_agents.empty()) {
+                cfg.agents = std::move(dir_agents);
+            }
+        }
+    }
+
     // Apply project-level target_dir as default for agents that don't override
     if (!cfg.daemon.target_dir.empty()) {
         for (auto& agent : cfg.agents) {
@@ -356,6 +393,10 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
 
 inline bool validate_config(const QuorumConfig& cfg) {
     bool valid = true;
+
+    if (cfg.agents.empty()) {
+        std::cerr << "WARNING: no agents loaded. Add agents to .quorum/agents/ or config agents: section\n";
+    }
 
     // Check leader exists in agents list
     if (!cfg.conversations.leader.empty()) {

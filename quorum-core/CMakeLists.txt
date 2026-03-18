@@ -152,3 +152,7 @@ add_test(NAME test_team_presets COMMAND test_team_presets)
 add_executable(test_agent_modify tests/unit/test_agent_modify.cpp)
 target_include_directories(test_agent_modify PRIVATE src)
 add_test(NAME test_agent_modify COMMAND test_agent_modify)
+
+add_executable(test_agent_roster_dir tests/unit/test_agent_roster_dir.cpp)
+target_include_directories(test_agent_roster_dir PRIVATE src)
+add_test(NAME test_agent_roster_dir COMMAND test_agent_roster_dir)
