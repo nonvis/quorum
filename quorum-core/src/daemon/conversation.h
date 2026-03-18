@@ -277,6 +277,48 @@ public:
                   << "] closed by operator\n";
     }
 
+    // Recover a conversation after daemon crash.
+    // Re-dispatches to leader so it can decide how to proceed.
+    bool recover(int64_t conversation_id) {
+        auto conv = db_.get_conversation(conversation_id);
+        if (!conv || conv->state != "active") return false;
+
+        auto leader = cfg_.leader;
+        if (leader.empty() && !agents_.empty()) {
+            leader = agents_[0].id;
+        }
+        if (leader.empty()) return false;
+
+        auto session_id = db_.get_or_create_session(conversation_id, leader);
+
+        // Find the last failed agent for context
+        std::string last_agent;
+        db_.query(
+            "SELECT agent FROM tasks WHERE conversation_id = ? AND status = 'failed' "
+            "ORDER BY id DESC LIMIT 1",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, conversation_id);
+            },
+            [&](sqlite3_stmt* stmt) {
+                auto a = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                if (a) last_agent = a;
+            }
+        );
+
+        std::string prompt = "# Recovery\n\n"
+            "The daemon was restarted while this conversation was in progress. "
+            "The last agent (" + (last_agent.empty() ? "unknown" : last_agent) + ") was interrupted. "
+            "Review the conversation state and decide how to proceed.\n";
+
+        create_task(conversation_id, leader, "turn", prompt, session_id);
+        update_current_agent(conversation_id, leader);
+        increment_turn(conversation_id);
+
+        std::cout << "[conversation " << conversation_id
+                  << "] recovered -> " << leader << "\n";
+        return true;
+    }
+
 private:
     Database& db_;
     ConversationConfig cfg_;

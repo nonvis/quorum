@@ -160,3 +160,8 @@ add_test(NAME test_agent_roster_dir COMMAND test_agent_roster_dir)
 add_executable(test_skill_discovery tests/unit/test_skill_discovery.cpp)
 target_include_directories(test_skill_discovery PRIVATE src)
 add_test(NAME test_skill_discovery COMMAND test_skill_discovery)
+
+add_executable(test_crash_recovery tests/unit/test_crash_recovery.cpp)
+target_include_directories(test_crash_recovery PRIVATE src)
+target_link_libraries(test_crash_recovery PRIVATE SQLite::SQLite3)
+add_test(NAME test_crash_recovery COMMAND test_crash_recovery)

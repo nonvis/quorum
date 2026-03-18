@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -241,6 +242,58 @@ static void init_schema(sui::quorum::Database& db) {
 // Count currently active (running) tasks
 static int64_t count_active_tasks(sui::quorum::Database& db) {
     return db.query_int("SELECT COUNT(*) FROM tasks WHERE status = 'active'");
+}
+
+// Recover from daemon crash: clean up stale active tasks and re-dispatch affected conversations
+static int recover_stale_tasks(sui::quorum::Database& db,
+                                sui::quorum::ConversationEngine& engine,
+                                bool verbose) {
+    // Find all tasks that were active (in-flight) when daemon last died
+    std::vector<std::pair<int64_t, int64_t>> stale; // {task_id, conv_id}
+    db.query(
+        "SELECT id, conversation_id FROM tasks WHERE status = 'active'",
+        [&](sqlite3_stmt* stmt) {
+            auto tid = sqlite3_column_int64(stmt, 0);
+            auto cid = sqlite3_column_type(stmt, 1) != SQLITE_NULL
+                       ? sqlite3_column_int64(stmt, 1) : 0;
+            stale.push_back({tid, cid});
+        }
+    );
+
+    if (stale.empty()) return 0;
+
+    std::cout << "[recovery] found " << stale.size()
+              << " stale active task(s) from previous run\n";
+
+    // Mark stale tasks as failed
+    for (const auto& [task_id, conv_id] : stale) {
+        db.execute(
+            "UPDATE tasks SET status = 'failed', "
+            "error = 'interrupted by daemon restart', "
+            "completed_at = datetime('now') WHERE id = ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, task_id);
+            }
+        );
+        if (verbose) {
+            std::cout << "[recovery] task " << task_id << " marked failed";
+            if (conv_id > 0) std::cout << " (conversation " << conv_id << ")";
+            std::cout << "\n";
+        }
+    }
+
+    // Collect unique conversation IDs that were affected
+    std::set<int64_t> affected_convs;
+    for (const auto& [_, conv_id] : stale) {
+        if (conv_id > 0) affected_convs.insert(conv_id);
+    }
+
+    // Re-dispatch affected active conversations to leader
+    for (auto conv_id : affected_convs) {
+        engine.recover(conv_id);
+    }
+
+    return static_cast<int>(stale.size());
 }
 
 // Get hourly cost
@@ -562,6 +615,9 @@ int main(int argc, char* argv[]) {
     sui::quorum::ConversationEngine conversation_engine(
         db, cfg.conversations, cfg.agents, &context_assembler,
         project_root_str.value_or(""));
+
+    // Recover from previous crash (if any)
+    recover_stale_tasks(db, conversation_engine, verbose);
 
     // ── Subcommand early exits (no PID lock, no daemon) ──────────────────
     if (subcommand == "status") {
