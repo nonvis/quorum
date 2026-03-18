@@ -1,4 +1,4 @@
-import type { Conversation, Task, Stats, ProjectConfig, ProjectState, Team, Agent } from "./types";
+import type { Conversation, Task, Stats, ProjectConfig, ProjectState, Team, Agent, BudgetInfo, AgentCost } from "./types";
 
 const BASE = "/api";
 
@@ -80,6 +80,28 @@ export async function fetchTeams(): Promise<Team[]> {
 
 export async function fetchAgents(): Promise<Agent[]> {
   const res = await fetch(`${BASE}/agents`);
+  return res.json();
+}
+
+export async function fetchBudget(): Promise<BudgetInfo> {
+  const res = await fetch(`${BASE}/budget`);
+  return res.json();
+}
+
+export async function updateWindowBudget(budget_usd?: number, remaining_minutes?: number) {
+  const res = await fetch(`${BASE}/budget`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...(budget_usd != null && { budget_usd }),
+      ...(remaining_minutes != null && { remaining_minutes }),
+    }),
+  });
+  return res.json();
+}
+
+export async function fetchAgentCosts(): Promise<AgentCost[]> {
+  const res = await fetch(`${BASE}/budget/agents`);
   return res.json();
 }
 

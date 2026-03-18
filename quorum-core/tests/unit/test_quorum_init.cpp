@@ -85,8 +85,8 @@ static void test_init_creates_config() {
     auto content = read_file(".quorum/config.yaml");
     check(content.find("leader: leader") != std::string::npos,
           "B: config contains 'leader: leader'");
-    check(content.find("hourly_limit_usd") != std::string::npos,
-          "B: config contains 'hourly_limit_usd'");
+    check(content.find("window_budget_usd") != std::string::npos,
+          "B: config contains 'window_budget_usd'");
     check(content.find("agents:") == std::string::npos,
           "B: config does NOT contain 'agents:' section (auto-discovered)");
 

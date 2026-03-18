@@ -63,9 +63,8 @@ struct ConsensusConfig {
 };
 
 struct BudgetConfig {
-    double daily_limit_usd = 10.0;     // pause dispatch when exceeded
-    double hourly_limit_usd = 3.0;     // pause dispatch when exceeded
-    uint64_t task_timeout_seconds = 300; // kill claude -p after this
+    double window_budget_usd = 100.0;   // budget for the current window
+    double window_hours = 5.0;           // window duration in hours
 };
 
 struct ConversationConfig {
@@ -329,13 +328,12 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
                 cfg.consensus.human_escalation = (val == "true");
             }
         } else if (section == "budget") {
-            if (key == "daily_limit_usd") {
-                try { cfg.budget.daily_limit_usd = std::stod(val); } catch (...) {}
-            } else if (key == "hourly_limit_usd") {
-                try { cfg.budget.hourly_limit_usd = std::stod(val); } catch (...) {}
-            } else if (key == "task_timeout_seconds") {
-                try { cfg.budget.task_timeout_seconds = std::stoull(val); } catch (...) {}
+            if (key == "window_budget_usd") {
+                try { cfg.budget.window_budget_usd = std::stod(val); } catch (...) {}
+            } else if (key == "window_hours") {
+                try { cfg.budget.window_hours = std::stod(val); } catch (...) {}
             }
+            // Old fields (daily_limit_usd, hourly_limit_usd, task_timeout_seconds) silently ignored
         } else if (section == "conversations") {
             if (key == "enabled") cfg.conversations.enabled = (val == "true");
             else if (key == "default_max_rounds") {

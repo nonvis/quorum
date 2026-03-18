@@ -231,6 +231,15 @@ static void init_schema(sui::quorum::Database& db) {
         "  UNIQUE(cycle_id, agent_id)"
         ")"
     );
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS budget_window ("
+        "  id INTEGER PRIMARY KEY CHECK (id = 1),"
+        "  budget_usd REAL NOT NULL DEFAULT 100.0,"
+        "  window_hours REAL NOT NULL DEFAULT 5.0,"
+        "  window_start TEXT NOT NULL DEFAULT (datetime('now')),"
+        "  spent_usd REAL NOT NULL DEFAULT 0.0"
+        ")"
+    );
     // Migration for existing databases
     db.execute("ALTER TABLE tasks ADD COLUMN conversation_id INTEGER REFERENCES conversations(id)");
     db.execute("ALTER TABLE tasks ADD COLUMN session_id TEXT");
@@ -301,6 +310,53 @@ static double hourly_cost(sui::quorum::Database& db) {
     return db.query_double(
         "SELECT COALESCE(SUM(cost), 0.0) FROM tasks "
         "WHERE created_at > datetime('now', '-1 hour')"
+    );
+}
+
+struct BudgetWindow {
+    double budget_usd = 100.0;
+    double window_hours = 5.0;
+    std::string window_start;
+    double spent_usd = 0.0;
+
+    double remaining_usd() const { return budget_usd - spent_usd; }
+};
+
+static BudgetWindow get_budget_window(sui::quorum::Database& db) {
+    BudgetWindow w;
+    db.query(
+        "SELECT budget_usd, window_hours, window_start, spent_usd "
+        "FROM budget_window WHERE id = 1",
+        [&](sqlite3_stmt* stmt) {
+            w.budget_usd = sqlite3_column_double(stmt, 0);
+            w.window_hours = sqlite3_column_double(stmt, 1);
+            auto ws = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            if (ws) w.window_start = ws;
+            w.spent_usd = sqlite3_column_double(stmt, 3);
+        }
+    );
+    return w;
+}
+
+static bool is_window_expired(sui::quorum::Database& db) {
+    // Use SQLite datetime arithmetic for reliable comparison
+    return db.query_int(
+        "SELECT CASE WHEN datetime(window_start, '+' || "
+        "CAST(CAST(window_hours * 60 AS INTEGER) AS TEXT) || ' minutes') "
+        "<= datetime('now') THEN 1 ELSE 0 END "
+        "FROM budget_window WHERE id = 1"
+    ) == 1;
+}
+
+static void reset_budget_window(sui::quorum::Database& db,
+                                  double budget, double hours) {
+    db.execute(
+        "UPDATE budget_window SET budget_usd = ?, window_hours = ?, "
+        "window_start = datetime('now'), spent_usd = 0.0 WHERE id = 1",
+        [&](sqlite3_stmt* stmt) {
+            sqlite3_bind_double(stmt, 1, budget);
+            sqlite3_bind_double(stmt, 2, hours);
+        }
     );
 }
 
@@ -607,6 +663,21 @@ int main(int argc, char* argv[]) {
     }
     init_schema(db);
 
+    // Seed budget window from config defaults if no row exists
+    {
+        auto count = db.query_int("SELECT COUNT(*) FROM budget_window");
+        if (count == 0) {
+            db.execute(
+                "INSERT INTO budget_window (id, budget_usd, window_hours, window_start, spent_usd) "
+                "VALUES (1, ?, ?, datetime('now'), 0.0)",
+                [&](sqlite3_stmt* stmt) {
+                    sqlite3_bind_double(stmt, 1, cfg.budget.window_budget_usd);
+                    sqlite3_bind_double(stmt, 2, cfg.budget.window_hours);
+                }
+            );
+        }
+    }
+
     // Context assembler — stateless, safe to construct early
     sui::quorum::ContextAssembler context_assembler;
 
@@ -678,6 +749,11 @@ int main(int argc, char* argv[]) {
               << " (budget: $" << cfg.conversations.default_budget_usd
               << ", max_turns: " << cfg.conversations.default_max_rounds
               << ")\n";
+    {
+        auto window = get_budget_window(db);
+        std::cout << "  Budget:     $" << window.spent_usd << " / $"
+                  << window.budget_usd << " (window: " << window.window_hours << "h)\n";
+    }
 
     if (verbose) {
         std::cout << "  Database:   " << db_path << " (OK)\n";
@@ -779,13 +855,13 @@ int main(int argc, char* argv[]) {
     // Register heartbeat
     scheduler.add("heartbeat", 60, [&]() {
         auto active = count_active_tasks(db);
-        auto cost_h = hourly_cost(db);
+        auto window = get_budget_window(db);
 
         if (verbose) {
             std::cout << "[" << format_ts(epoch_seconds()) << "] heartbeat"
                       << " — active: " << active
                       << " pending_msgs: " << message_bus.pending()
-                      << " cost_1h: $" << cost_h
+                      << " window: $" << window.spent_usd << "/$" << window.budget_usd
                       << "\n";
         }
     });
@@ -794,15 +870,25 @@ int main(int argc, char* argv[]) {
     // Handles both Task Queue tasks (operator-seeded) and
     // Conversation tasks (daemon-created via ConversationEngine).
     scheduler.add("task_dispatch", 5, [&]() {
-        // Check budget
-        auto cost_h = hourly_cost(db);
-        if (cost_h >= cfg.budget.hourly_limit_usd) {
+        // Check window budget
+        if (is_window_expired(db)) {
+            reset_budget_window(db, cfg.budget.window_budget_usd, cfg.budget.window_hours);
             if (verbose) {
-                std::cout << "[dispatch] hourly budget exceeded ($"
-                          << cost_h << " >= $" << cfg.budget.hourly_limit_usd
-                          << "), pausing dispatch\n";
+                std::cout << "[dispatch] budget window expired, resetting to $"
+                          << cfg.budget.window_budget_usd << " / "
+                          << cfg.budget.window_hours << "h\n";
             }
-            return;
+        }
+        {
+            auto window = get_budget_window(db);
+            if (window.spent_usd >= window.budget_usd) {
+                if (verbose) {
+                    std::cout << "[dispatch] window budget exceeded ($"
+                              << window.spent_usd << " >= $" << window.budget_usd
+                              << "), pausing dispatch\n";
+                }
+                return;
+            }
         }
 
         // Sequential dispatch: one task at a time
@@ -842,6 +928,16 @@ int main(int argc, char* argv[]) {
                 std::cout << "[dispatch] task " << task_id
                           << " failed: " << result.error << "\n";
             }
+        }
+
+        // Track cost in budget window
+        if (result.cost > 0) {
+            db.execute(
+                "UPDATE budget_window SET spent_usd = spent_usd + ? WHERE id = 1",
+                [&](sqlite3_stmt* stmt) {
+                    sqlite3_bind_double(stmt, 1, result.cost);
+                }
+            );
         }
 
         // Process structured output

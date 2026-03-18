@@ -161,7 +161,7 @@ The daemon enforces strictly sequential execution — one `claude -p` task at a 
 - **One task at a time** — dispatch blocks while any task is active (`active > 0`)
 - **No `max_concurrent` setting** — removed from `BudgetConfig` and `mm-bot.yaml`
 - **Per-task token cap** — kills process if exceeded
-- **Global hourly budget** — daemon pauses all invocations when hit
+- **Window budget** — `budget_window` singleton table tracks spend within a configurable time window; daemon auto-resets when window expires; pauses dispatch when budget exhausted
 - **Rationale:** causal traceability (task B depends on task A's vault updates), budget predictability, session resume chaining, deterministic debugging
 - **Crash recovery** — on startup, `recover_stale_tasks()` finds any tasks stuck in `status='active'` (from a previous crash/kill), marks them `failed`, and calls `ConversationEngine::recover()` to re-dispatch affected active conversations to the leader agent
 - Critical for unattended overnight runs
@@ -194,7 +194,7 @@ Agents also produce VAULT_UPDATE blocks for persistent findings written to their
 
 Conversation Mode seeds a single goal and lets the daemon coordinate a team of agents. The `ConversationEngine` (`src/daemon/conversation.h`) manages state transitions and budget enforcement per conversation.
 
-**NOTE:** Legacy pipelines were stripped in task #0. HANDOFF parsing in task #1. KNOWLEDGE parsing + ledger in task #2. Team mode ConversationEngine with generic ball-passing loop in task #3. Team roster injection into agent prompts in task #4. Web dashboard updated for team mode in task #5 (removed gate/pipeline/auto-approve, added respond controls for `waiting_for_human`, updated states to active/waiting_for_human/done/closed/paused). Config parser (skill_file, auto-derive agent_class, validate_config) in task #6. State cleanup (rename labels, remove legacy fields) in task #7. Agent generator CLI (`agent create` subcommand, subprocess.h extraction) in task #8. Phase 3 task #0: `quorum init` creates `.quorum/` project-local layout; `agent create` auto-detects it. Phase 3 task #1: auto-discover `.quorum/config.yaml` — walk up from cwd, chdir to project root, `--config` and `--project` optional. Phase 3 task #3: team presets — named YAML files in `.quorum/teams/` define `default_path` routing; `--team <name>` selects a preset at conversation start; `quorum teams` lists available presets; team stored on conversation record. Phase 3 task #4: `agent modify` and `agent list` CLI subcommands; extracted `generate_context_md()` shared by create and modify; CONTEXT.md regenerated on every modify (Decision #23: users should never hand-edit CONTEXT.md). Phase 3 task #5: directory-based agent roster — `load_agents_from_directory()` scans `.quorum/agents/` for YAML files, replacing explicit `agents:` list; `quorum init` no longer writes `agents:` section; `agent create` no longer appends to config.yaml. Phase 3 task #6: web dashboard multi-project support — dynamic project selection via `.quorum/` directories; backend resolves DB/daemon/config paths per-project; new endpoints for projects, teams, agents; frontend components ProjectSelector, TeamSelector, AgentRoster; team selection passed to `converse --team`. Phase 3 task #7: skill discovery — `quorum skills` lists `.claude/skills/` directories; `--skill <name>` shorthand for `--skill-file`; `ContextAssembler` resolves relative skill paths via `project_root`; `ConversationEngine` passes project root through; `agent create` suggests available skills for doer agents; web UI shows skill indicator on agent badges. Phase 3 task #8: daemon crash recovery — `recover_stale_tasks()` on every startup finds tasks stuck in `status='active'`, marks them `failed`, re-dispatches affected active conversations to leader via `ConversationEngine::recover()`; recovery prompt includes interrupted agent name for context.
+**NOTE:** Legacy pipelines were stripped in task #0. HANDOFF parsing in task #1. KNOWLEDGE parsing + ledger in task #2. Team mode ConversationEngine with generic ball-passing loop in task #3. Team roster injection into agent prompts in task #4. Web dashboard updated for team mode in task #5 (removed gate/pipeline/auto-approve, added respond controls for `waiting_for_human`, updated states to active/waiting_for_human/done/closed/paused). Config parser (skill_file, auto-derive agent_class, validate_config) in task #6. State cleanup (rename labels, remove legacy fields) in task #7. Agent generator CLI (`agent create` subcommand, subprocess.h extraction) in task #8. Phase 3 task #0: `quorum init` creates `.quorum/` project-local layout; `agent create` auto-detects it. Phase 3 task #1: auto-discover `.quorum/config.yaml` — walk up from cwd, chdir to project root, `--config` and `--project` optional. Phase 3 task #3: team presets — named YAML files in `.quorum/teams/` define `default_path` routing; `--team <name>` selects a preset at conversation start; `quorum teams` lists available presets; team stored on conversation record. Phase 3 task #4: `agent modify` and `agent list` CLI subcommands; extracted `generate_context_md()` shared by create and modify; CONTEXT.md regenerated on every modify (Decision #23: users should never hand-edit CONTEXT.md). Phase 3 task #5: directory-based agent roster — `load_agents_from_directory()` scans `.quorum/agents/` for YAML files, replacing explicit `agents:` list; `quorum init` no longer writes `agents:` section; `agent create` no longer appends to config.yaml. Phase 3 task #6: web dashboard multi-project support — dynamic project selection via `.quorum/` directories; backend resolves DB/daemon/config paths per-project; new endpoints for projects, teams, agents; frontend components ProjectSelector, TeamSelector, AgentRoster; team selection passed to `converse --team`. Phase 3 task #7: skill discovery — `quorum skills` lists `.claude/skills/` directories; `--skill <name>` shorthand for `--skill-file`; `ContextAssembler` resolves relative skill paths via `project_root`; `ConversationEngine` passes project root through; `agent create` suggests available skills for doer agents; web UI shows skill indicator on agent badges. Phase 3 task #8: daemon crash recovery — `recover_stale_tasks()` on every startup finds tasks stuck in `status='active'`, marks them `failed`, re-dispatches affected active conversations to leader via `ConversationEngine::recover()`; recovery prompt includes interrupted agent name for context. Phase 3 task #13: cost dashboard + window budget — replaced `daily_limit_usd`/`hourly_limit_usd`/`task_timeout_seconds` with `window_budget_usd`/`window_hours` in `BudgetConfig`; `budget_window` singleton table tracks spend within configurable time window with auto-reset on expiry; web dashboard `BudgetPanel` component with progress bar, timer sync, budget editing, per-agent cost breakdown; `GET/POST /api/budget` + `GET /api/budget/agents` endpoints.
 
 **States:** `active`, `waiting_for_human`, `done`, `closed`, `paused` (enum `ConvState`).
 
@@ -207,6 +207,7 @@ Conversation Mode seeds a single goal and lets the daemon coordinate a team of a
 - `conversations` table: id, goal, state, round, max_rounds, budget_usd, spent_usd, created_at, completed_at, paused_reason, current_agent, path_index, team
 - `tasks` table extended with: `conversation_id INTEGER REFERENCES conversations(id)`, `session_id TEXT`
 - `knowledge_ledger` table: id, cycle_id (FK→conversations), agent_id, turn_number, topic, content, created_at. Methods: `append_knowledge()`, `get_cycle_knowledge()`, `count_cycle_knowledge()` in `database.h`.
+- `budget_window` table (singleton, id=1): budget_usd, window_hours, window_start (ISO datetime), spent_usd. Auto-seeded from config on first run; auto-resets when window expires.
 
 **Session ID strategy (implemented in Invoker):**
 - Task Queue tasks: no session_id (NULL) — Invoker adds no session flag
@@ -219,7 +220,7 @@ Conversation Mode seeds a single goal and lets the daemon coordinate a team of a
 ### Storage (Phase 0)
 
 ```
-Local only:  SQLite task queue, token tracking, vault index, conversations, knowledge ledger
+Local only:  SQLite task queue, token tracking, vault index, conversations, knowledge ledger, budget window
 Future:      Walrus (vault blobs), Sui (proposals, audit), Seal (access control)
 ```
 
@@ -267,7 +268,8 @@ daemon:
   pid_file: .quorum/quorum.pid
 
 budget:
-  hourly_limit_usd: 2.00
+  window_budget_usd: 100.00
+  window_hours: 5
 
 conversations:
   enabled: true
@@ -284,9 +286,8 @@ daemon:
   log_level: info
 
 budget:
-  daily_limit_usd: 10.0
-  hourly_limit_usd: 3.0
-  task_timeout_seconds: 300
+  window_budget_usd: 100.0
+  window_hours: 5.0
 
 conversations:
   enabled: true
@@ -448,6 +449,7 @@ Phase 3 tasks:
 6. ~~Web dashboard multi-project support~~ ✓ (Dynamic project selection via `.quorum/` directories. Backend: `config.ts` exports `WebState`, `getState()`, `saveState()`, `setCurrentProject()`, `getProjectConfig()` with JSON state persistence; `db.ts` opens fresh DB connections per-query using dynamic path resolution; `daemon.ts` resolves daemon binary/config/cwd dynamically; `index.ts` adds `GET /api/projects`, `POST /api/projects/select`, `GET /api/teams`, `GET /api/agents` endpoints + `--team` support on `POST /api/converse`. Frontend: `ProjectState`, `Team`, `Agent` types; `fetchProjects()`, `selectProject()`, `fetchTeams()`, `fetchAgents()` API functions; `ProjectSelector` component (project bar with path input, recent chips, dropdown); `TeamSelector` component (pill buttons with routing tooltip); `AgentRoster` component (role-colored badges with team-order sorting); `App.tsx` wires project/team/agent state with conditional rendering; `PromptInput` passes selected team; `StatsBanner` shows project name in blue. 12 files changed/created, tsc clean)
 7. ~~Skill discovery + `--skill` shorthand~~ ✓ (`cli/skills.h` with `SkillInfo` struct, `discover_skills()` scans `.claude/skills/` for `SKILL.md` files sorted alphabetically, `list_skills()` prints them; `quorum skills` subcommand lists available skills; `--skill <name>` shorthand expands to `--skill-file .claude/skills/<name>/SKILL.md` in `agent create/modify`; `ContextAssembler::assemble()` accepts `project_root` parameter for robust relative skill path resolution (~/expansion -> project_root prepend -> cwd); `ConversationEngine` passes `project_root_` through to assembler; `agent create` suggests available skills for doer agents without a skill file; web UI `/api/agents` returns `skill_file` field, `AgentRoster` shows amber star indicator on skilled agents; 5 test cases / 13 assertions in test_skill_discovery.cpp; 22 tests pass, C++ and TypeScript clean)
 8. ~~Daemon crash recovery~~ ✓ (`recover_stale_tasks()` static function in main.cpp runs on every daemon startup; finds tasks with `status='active'` left by previous crash, marks them `failed` with `error='interrupted by daemon restart'`; collects unique affected conversation IDs; calls `ConversationEngine::recover()` for each active conversation — dispatches leader with recovery prompt including interrupted agent name; recovery runs before subcommand early exits so `status`/`close`/`respond` see clean task state; `recover()` only acts on `state='active'` conversations — done/closed/paused just get stale tasks cleaned; 5 test cases / 25 assertions in test_crash_recovery.cpp; 23 tests pass, quorum_daemon compiles clean)
+13. ~~Cost dashboard + window budget~~ ✓ (Replaced `daily_limit_usd`/`hourly_limit_usd`/`task_timeout_seconds` with `window_budget_usd`/`window_hours` in `BudgetConfig`; `budget_window` singleton table (id=1) in SQLite tracks budget_usd, window_hours, window_start, spent_usd; auto-seeded from config on first run; `is_window_expired()` uses SQLite datetime arithmetic, `reset_budget_window()` auto-resets on expiry; dispatch loop checks window budget before claiming tasks; task cost tracked via `UPDATE budget_window SET spent_usd = spent_usd + ?`; `quorum init` generates `window_budget_usd: 100.00` + `window_hours: 5`; config parser silently ignores old budget fields for backward compat; web API: `GET /api/budget` returns window info with computed remaining_usd/remaining_minutes/is_expired, `POST /api/budget` updates budget amount or syncs timer, `GET /api/budget/agents` returns per-agent cost breakdown; frontend: `BudgetPanel` component with progress bar (green/yellow/red thresholds), time countdown, sync timer input, change budget input, per-agent cost table; `StatsBanner` simplified to total cost only; `ConfigPanel` updated for new fields; 11 files changed + 1 created, 23 C++ tests pass, server + client TypeScript clean)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 

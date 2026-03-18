@@ -9,6 +9,7 @@ import { AgentRoster } from "./components/AgentRoster";
 import { PromptInput } from "./components/PromptInput";
 import { ConversationCard } from "./components/ConversationCard";
 import { ConfigPanel } from "./components/ConfigPanel";
+import { BudgetPanel } from "./components/BudgetPanel";
 
 export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -92,6 +93,7 @@ export default function App() {
               teamPath={teams.find((t) => t.id === selectedTeam)?.default_path ?? []}
             />
           )}
+          <BudgetPanel />
           <PromptInput onSubmit={refresh} busy={busy} team={selectedTeam} />
 
           <div className="px-6 pb-6">

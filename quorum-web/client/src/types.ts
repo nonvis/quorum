@@ -55,6 +55,23 @@ export interface Agent {
   skill_file: string | null;
 }
 
+export interface BudgetInfo {
+  budget_usd: number;
+  window_hours: number;
+  window_start: string | null;
+  spent_usd: number;
+  remaining_usd: number;
+  remaining_minutes: number;
+  is_expired: boolean;
+}
+
+export interface AgentCost {
+  agent: string;
+  tasks: number;
+  total_cost: number;
+  avg_cost: number;
+}
+
 export interface ProjectConfig {
   config_path: string;
   daemon: {
@@ -64,7 +81,8 @@ export interface ProjectConfig {
     log_level: string | null;
   };
   budget: {
-    hourly_limit_usd: number | null;
+    window_budget_usd: number | null;
+    window_hours: number | null;
   };
   conversations: {
     leader: string | null;

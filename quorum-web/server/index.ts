@@ -116,6 +116,92 @@ app.get("/api/stats", (c) => {
   return c.json(getStats());
 });
 
+app.get("/api/budget", (c) => {
+  try {
+    const rows = freshQuery<{
+      budget_usd: number;
+      window_hours: number;
+      window_start: string;
+      spent_usd: number;
+    }>("SELECT budget_usd, window_hours, window_start, spent_usd FROM budget_window WHERE id = 1");
+
+    if (rows.length === 0) {
+      return c.json({
+        budget_usd: 100, window_hours: 5, window_start: null,
+        spent_usd: 0, remaining_usd: 100, remaining_minutes: 300, is_expired: false,
+      });
+    }
+
+    const row = rows[0];
+    const start = new Date(row.window_start + "Z"); // SQLite stores UTC without Z
+    const endMs = start.getTime() + row.window_hours * 3600 * 1000;
+    const remainingMs = Math.max(0, endMs - Date.now());
+    const remainingMinutes = Math.floor(remainingMs / 60000);
+
+    return c.json({
+      budget_usd: row.budget_usd,
+      window_hours: row.window_hours,
+      window_start: row.window_start,
+      spent_usd: Math.round(row.spent_usd * 100) / 100,
+      remaining_usd: Math.round((row.budget_usd - row.spent_usd) * 100) / 100,
+      remaining_minutes: remainingMinutes,
+      is_expired: remainingMs <= 0,
+    });
+  } catch {
+    return c.json({
+      budget_usd: 100, window_hours: 5, window_start: null,
+      spent_usd: 0, remaining_usd: 100, remaining_minutes: 300, is_expired: false,
+    });
+  }
+});
+
+app.post("/api/budget", async (c) => {
+  const body = await c.req.json<{
+    budget_usd?: number;
+    remaining_minutes?: number;
+  }>();
+
+  if (body.budget_usd != null && body.budget_usd > 0) {
+    dbWrite("UPDATE budget_window SET budget_usd = ? WHERE id = 1", [body.budget_usd]);
+  }
+
+  if (body.remaining_minutes != null && body.remaining_minutes >= 0) {
+    // Compute window_start so that window_start + window_hours = now + remaining_minutes
+    const rows = freshQuery<{ window_hours: number }>(
+      "SELECT window_hours FROM budget_window WHERE id = 1"
+    );
+    const windowHours = rows[0]?.window_hours ?? 5;
+    const windowStartMs = Date.now() + body.remaining_minutes * 60000 - windowHours * 3600000;
+    const windowStart = new Date(windowStartMs).toISOString()
+      .replace("T", " ").split(".")[0];
+    dbWrite(
+      "UPDATE budget_window SET window_start = ?, spent_usd = 0 WHERE id = 1",
+      [windowStart]
+    );
+  }
+
+  return c.json({ success: true });
+});
+
+app.get("/api/budget/agents", (c) => {
+  try {
+    const rows = freshQuery<{
+      agent: string;
+      tasks: number;
+      total_cost: number;
+      avg_cost: number;
+    }>(
+      "SELECT agent, COUNT(*) as tasks, " +
+      "ROUND(COALESCE(SUM(cost), 0), 2) as total_cost, " +
+      "ROUND(COALESCE(AVG(cost), 0), 2) as avg_cost " +
+      "FROM tasks WHERE cost > 0 GROUP BY agent ORDER BY total_cost DESC"
+    );
+    return c.json(rows);
+  } catch {
+    return c.json([]);
+  }
+});
+
 app.get("/api/config", (c) => {
   try {
     const yaml = readFileSync(config.configPath, "utf-8");
@@ -127,7 +213,8 @@ app.get("/api/config", (c) => {
     const logLevel = yaml.match(/^\s+log_level:\s*(.+)/m)?.[1]?.trim() ?? null;
 
     // Parse budget section
-    const hourlyBudget = parseFloat(yaml.match(/^\s+hourly_limit_usd:\s*(.+)/m)?.[1] ?? "0") || null;
+    const windowBudget = parseFloat(yaml.match(/^\s+window_budget_usd:\s*(.+)/m)?.[1] ?? "0") || null;
+    const windowHours = parseFloat(yaml.match(/^\s+window_hours:\s*(.+)/m)?.[1] ?? "0") || null;
 
     // Parse conversations section
     const leader = yaml.match(/^\s+leader:\s*(.+)/m)?.[1]?.trim() ?? null;
@@ -141,7 +228,7 @@ app.get("/api/config", (c) => {
     return c.json({
       config_path: config.configPath,
       daemon: { target_dir: targetDir, pid_file: pidFile, data_dir: dataDir, log_level: logLevel },
-      budget: { hourly_limit_usd: hourlyBudget },
+      budget: { window_budget_usd: windowBudget, window_hours: windowHours },
       conversations: { leader, default_path: defaultPath, default_budget_usd: convBudget, default_max_turns: maxRounds },
       agents: agentConfigs,
     });
@@ -149,7 +236,7 @@ app.get("/api/config", (c) => {
     return c.json({
       config_path: config.configPath,
       daemon: { target_dir: null, pid_file: null, data_dir: null, log_level: null },
-      budget: { hourly_limit_usd: null },
+      budget: { window_budget_usd: null, window_hours: null },
       conversations: { leader: null, default_path: null, default_budget_usd: null, default_max_turns: null },
       agents: [],
     });
@@ -166,7 +253,8 @@ app.post("/api/config", async (c) => {
     const fieldMap: Record<string, string> = {
       target_dir: "target_dir",
       log_level: "log_level",
-      hourly_limit_usd: "hourly_limit_usd",
+      window_budget_usd: "window_budget_usd",
+      window_hours: "window_hours",
       default_budget_usd: "default_budget_usd",
       default_max_turns: "default_max_rounds",
       leader: "leader",

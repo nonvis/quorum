@@ -14,7 +14,8 @@ export function ConfigPanel({ onClose }: { onClose: () => void }) {
       setForm({
         target_dir: c.daemon.target_dir ?? "",
         log_level: c.daemon.log_level ?? "info",
-        hourly_limit_usd: String(c.budget.hourly_limit_usd ?? ""),
+        window_budget_usd: String(c.budget.window_budget_usd ?? ""),
+        window_hours: String(c.budget.window_hours ?? ""),
         default_budget_usd: String(c.conversations.default_budget_usd ?? ""),
         default_max_turns: String(c.conversations.default_max_turns ?? ""),
         leader: c.conversations.leader ?? "",
@@ -28,7 +29,7 @@ export function ConfigPanel({ onClose }: { onClose: () => void }) {
     try {
       const updates: Record<string, string | number | boolean> = {};
       for (const [key, value] of Object.entries(form)) {
-        if (["hourly_limit_usd", "default_budget_usd", "default_max_turns"].includes(key)) {
+        if (["window_budget_usd", "window_hours", "default_budget_usd", "default_max_turns"].includes(key)) {
           const num = parseFloat(value);
           if (!isNaN(num)) updates[key] = num;
         } else {
@@ -130,7 +131,8 @@ export function ConfigPanel({ onClose }: { onClose: () => void }) {
         {/* Budget section */}
         <div className="px-5 py-3">
           <h3 className="text-zinc-500 text-xs uppercase tracking-wide mb-2">Budget</h3>
-          <Field label="Hourly Limit (USD)" field="hourly_limit_usd" type="number" />
+          <Field label="Window Budget (USD)" field="window_budget_usd" type="number" />
+          <Field label="Window Hours" field="window_hours" type="number" />
           {editing && (
             <p className="text-amber-500 text-xs mt-2">Budget changes require daemon restart to take effect</p>
           )}
