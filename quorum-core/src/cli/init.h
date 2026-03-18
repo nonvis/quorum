@@ -120,6 +120,18 @@ inline int init_project() {
     }
     std::cout << "  Created: .quorum/.gitignore\n";
 
+    // 6b. Write default team preset
+    {
+        std::ofstream out(".quorum/teams/default.yaml", std::ios::trunc);
+        if (!out.is_open()) {
+            std::cerr << "ERROR: cannot write .quorum/teams/default.yaml\n";
+            return 1;
+        }
+        out << "name: Default\n"
+            << "default_path: [leader]\n";
+    }
+    std::cout << "  Created: .quorum/teams/default.yaml\n";
+
     // 7. Print next steps
     std::cout << "  Created: .quorum/vaults/leader/knowledge/\n";
     std::cout << "  Created: .quorum/teams/\n";

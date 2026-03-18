@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -88,6 +89,12 @@ struct AgentMetadata {
     std::string target_dir;               // working directory for claude -p (inherits from daemon.target_dir)
 };
 
+struct TeamPreset {
+    std::string id;          // filename without extension
+    std::string name;        // display name
+    std::vector<std::string> default_path;
+};
+
 struct QuorumConfig {
     DaemonConfig daemon;
     ChainConfig chain;
@@ -98,6 +105,7 @@ struct QuorumConfig {
     BudgetConfig budget;
     ConversationConfig conversations;
     std::vector<AgentMetadata> agents;
+    std::vector<TeamPreset> teams;
 };
 
 namespace detail {
@@ -393,6 +401,62 @@ inline bool validate_config(const QuorumConfig& cfg) {
     }
 
     return valid;
+}
+
+inline std::vector<TeamPreset> load_team_presets(const std::string& teams_dir) {
+    std::vector<TeamPreset> teams;
+    namespace fs = std::filesystem;
+    if (!fs::exists(teams_dir) || !fs::is_directory(teams_dir)) return teams;
+
+    for (const auto& entry : fs::directory_iterator(teams_dir)) {
+        if (!entry.is_regular_file()) continue;
+        auto path = entry.path();
+        if (path.extension() != ".yaml" && path.extension() != ".yml") continue;
+
+        TeamPreset team;
+        team.id = path.stem().string();
+
+        std::ifstream file(path);
+        std::string line;
+        while (std::getline(file, line)) {
+            line = detail::strip_comment(line);
+            auto trimmed = detail::trim(line);
+            if (trimmed.empty()) continue;
+
+            auto colon = trimmed.find(':');
+            if (colon == std::string::npos) continue;
+            auto key = detail::trim(trimmed.substr(0, colon));
+            auto val = detail::unquote(trimmed.substr(colon + 1));
+
+            if (key == "name") {
+                team.name = val;
+            } else if (key == "default_path") {
+                // Parse "[leader, thinker, doer]" format
+                auto stripped = val;
+                if (!stripped.empty() && stripped.front() == '[') stripped.erase(stripped.begin());
+                if (!stripped.empty() && stripped.back() == ']') stripped.pop_back();
+                std::string item;
+                for (char c : stripped) {
+                    if (c == ',') {
+                        auto t = detail::trim(item);
+                        if (!t.empty()) team.default_path.push_back(t);
+                        item.clear();
+                    } else {
+                        item += c;
+                    }
+                }
+                auto t = detail::trim(item);
+                if (!t.empty()) team.default_path.push_back(t);
+            }
+        }
+
+        if (team.name.empty()) team.name = team.id;
+        teams.push_back(std::move(team));
+    }
+
+    std::sort(teams.begin(), teams.end(),
+              [](const auto& a, const auto& b) { return a.id < b.id; });
+    return teams;
 }
 
 } // namespace sui::quorum

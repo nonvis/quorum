@@ -24,6 +24,7 @@ struct ConversationRecord {
     double spent_usd{0.0};
     std::string current_agent;  // who has the ball
     int path_index{0};          // position in default_path
+    std::string team;
 };
 
 class Database {
@@ -126,7 +127,7 @@ public:
         bool found = false;
         query(
             "SELECT id, goal, state, round, max_rounds, budget_usd, spent_usd, "
-            "current_agent, path_index FROM conversations WHERE id = ?",
+            "current_agent, path_index, team FROM conversations WHERE id = ?",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_int64(stmt, 1, conv_id);
             },
@@ -144,6 +145,8 @@ public:
                 auto ca = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7));
                 rec.current_agent = ca ? ca : "";
                 rec.path_index = sqlite3_column_int(stmt, 8);
+                auto tm = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
+                rec.team = tm ? tm : "";
             }
         );
         return found ? std::optional{rec} : std::nullopt;

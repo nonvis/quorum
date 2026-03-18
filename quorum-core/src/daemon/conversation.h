@@ -25,8 +25,18 @@ public:
     // Start a new conversation. Creates the first task for the leader agent.
     // Returns conversation ID.
     int64_t start(const std::string& goal, double budget_usd = 5.0,
-                  int max_rounds = 20) {
+                  int max_rounds = 20, const std::string& team = "") {
         auto conv_id = db_.create_conversation(goal, budget_usd, max_rounds);
+
+        // Store team name on conversation record
+        if (!team.empty()) {
+            db_.execute(
+                "UPDATE conversations SET team = ? WHERE id = ?",
+                [&](sqlite3_stmt* stmt) {
+                    sqlite3_bind_text(stmt, 1, team.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_int64(stmt, 2, conv_id);
+                });
+        }
 
         // Determine first agent: leader > default_path[0] > agents[0]
         std::string first_agent = cfg_.leader;

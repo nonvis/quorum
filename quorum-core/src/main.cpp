@@ -76,7 +76,7 @@ static void print_conversations(sui::quorum::Database& db) {
     int count = 0;
     db.query(
         "SELECT id, goal, state, round, max_rounds, budget_usd, spent_usd, "
-        "created_at, paused_reason, current_agent FROM conversations ORDER BY id DESC",
+        "created_at, paused_reason, current_agent, team FROM conversations ORDER BY id DESC",
         [&](sqlite3_stmt* stmt) {
             auto id = sqlite3_column_int64(stmt, 0);
             auto goal_raw = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
@@ -91,11 +91,14 @@ static void print_conversations(sui::quorum::Database& db) {
             std::string goal = goal_raw ? std::string(goal_raw) : "";
             std::string reason = reason_raw ? std::string(reason_raw) : "";
             std::string current = current_raw ? std::string(current_raw) : "";
+            auto team_raw = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 10));
+            std::string team = team_raw ? std::string(team_raw) : "";
             if (goal.size() > 50) goal = goal.substr(0, 50) + "...";
 
             std::cout << "  #" << id
                       << "  " << (state ? state : "?");
             if (!current.empty()) std::cout << " [" << current << "]";
+            if (!team.empty()) std::cout << " {" << team << "}";
             std::cout << "  turn " << round << "/" << max_r
                       << "  $" << spent << "/$" << budget
                       << "  " << goal;
@@ -123,6 +126,8 @@ static void print_usage(const char* prog) {
     std::cerr << "Usage:\n"
               << "  " << prog << " init                                      Initialize .quorum/ in current directory\n"
               << "  " << prog << " converse \"goal text\"                      Start conversation (auto-discovers .quorum/)\n"
+              << "  " << prog << " converse --team quick-build \"fix bug\"     Use specific team\n"
+              << "  " << prog << " teams                                      List available teams\n"
               << "  " << prog << " status                                    List conversations\n"
               << "  " << prog << " --config <path>                            Start daemon\n"
               << "  " << prog << " --config <path> converse --budget 3.0 \"g\"  Custom budget\n"
@@ -135,6 +140,7 @@ static void print_usage(const char* prog) {
               << "  --verbose            Enable verbose logging\n"
               << "  --budget <usd>       Per-conversation budget (default: 5.0)\n"
               << "  --max-rounds <n>     Max revision rounds (default: 3)\n"
+              << "  --team <name>        Team preset from .quorum/teams/ (optional)\n"
               << "  --conversation <id>  Conversation ID for resume/close\n"
               << "  --help               Show this message\n"
               << "\nAgent create options:\n"
@@ -223,6 +229,7 @@ static void init_schema(sui::quorum::Database& db) {
     db.execute("ALTER TABLE tasks ADD COLUMN session_id TEXT");
     db.execute("ALTER TABLE conversations ADD COLUMN current_agent TEXT");
     db.execute("ALTER TABLE conversations ADD COLUMN path_index INTEGER NOT NULL DEFAULT 0");
+    db.execute("ALTER TABLE conversations ADD COLUMN team TEXT");
 }
 
 // Count currently active (running) tasks
@@ -324,6 +331,7 @@ int main(int argc, char* argv[]) {
     std::string response_text;
     std::string agent_subcmd;
     sui::quorum::cli::AgentCreateParams agent_params;
+    std::string team_name;
 
     if (subcommand == "converse") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
@@ -331,6 +339,8 @@ int main(int argc, char* argv[]) {
                 conv_budget = std::stod(sub_args[++i]);
             } else if (sub_args[i] == "--max-rounds" && i + 1 < sub_args.size()) {
                 conv_max_rounds = std::stoi(sub_args[++i]);
+            } else if (sub_args[i] == "--team" && i + 1 < sub_args.size()) {
+                team_name = sub_args[++i];
             } else {
                 goal_text = sub_args[i]; // last positional = goal
             }
@@ -365,6 +375,8 @@ int main(int argc, char* argv[]) {
         }
     } else if (subcommand == "init") {
         // No additional flags needed
+    } else if (subcommand == "teams") {
+        // No additional flags needed
     } else if (!subcommand.empty() && subcommand != "status") {
         std::cerr << "Unknown subcommand: " << subcommand << "\n";
         print_usage(argv[0]);
@@ -374,6 +386,32 @@ int main(int argc, char* argv[]) {
     // Init doesn't need --config -- it creates the config
     if (subcommand == "init") {
         return sui::quorum::cli::init_project();
+    }
+
+    // Teams doesn't need --config -- reads .quorum/teams/ directly
+    if (subcommand == "teams") {
+        auto root = sui::quorum::discover_project_root();
+        if (!root) {
+            std::cerr << "No .quorum/ found. Run 'quorum init' first.\n";
+            return 1;
+        }
+        auto teams = sui::quorum::load_team_presets(
+            (fs::path(*root) / ".quorum" / "teams").string());
+        if (teams.empty()) {
+            std::cout << "No teams configured. Create a file in .quorum/teams/:\n";
+            std::cout << "  echo 'name: My Team\\ndefault_path: [leader, doer]' > .quorum/teams/my-team.yaml\n";
+            return 0;
+        }
+        std::cout << "Teams:\n";
+        for (const auto& t : teams) {
+            std::cout << "  " << t.id << "  \"" << t.name << "\"    ";
+            for (size_t i = 0; i < t.default_path.size(); ++i) {
+                if (i > 0) std::cout << " -> ";
+                std::cout << t.default_path[i];
+            }
+            std::cout << "\n";
+        }
+        return 0;
     }
 
     if (config_path.empty()) {
@@ -410,6 +448,42 @@ int main(int argc, char* argv[]) {
     auto& cfg = *cfg_opt;
 
     sui::quorum::validate_config(cfg);
+
+    // Load team presets from .quorum/teams/ if available
+    if (fs::exists(".quorum/teams") && fs::is_directory(".quorum/teams")) {
+        cfg.teams = sui::quorum::load_team_presets(".quorum/teams");
+        if (verbose && !cfg.teams.empty()) {
+            std::cout << "  Teams:      " << cfg.teams.size() << "\n";
+            for (const auto& t : cfg.teams) {
+                std::cout << "    - " << t.id << " (" << t.name << ")\n";
+            }
+        }
+    }
+
+    // Apply team preset if --team specified
+    if (!team_name.empty()) {
+        bool found = false;
+        for (const auto& t : cfg.teams) {
+            if (t.id == team_name) {
+                cfg.conversations.default_path = t.default_path;
+                found = true;
+                if (verbose) {
+                    std::cout << "  Using team: " << t.name << "\n";
+                }
+                break;
+            }
+        }
+        if (!found) {
+            std::cerr << "ERROR: team '" << team_name << "' not found. Available:\n";
+            for (const auto& t : cfg.teams) {
+                std::cerr << "  - " << t.id << " (" << t.name << ")\n";
+            }
+            if (cfg.teams.empty()) {
+                std::cerr << "  (no team presets in .quorum/teams/)\n";
+            }
+            return 1;
+        }
+    }
 
     // ── Agent subcommand early exit (no DB, no daemon) ──────────────────
     if (subcommand == "agent") {
@@ -533,7 +607,7 @@ int main(int argc, char* argv[]) {
                     std::cerr << "ERROR: converse requires a goal string\n";
                     return 1;
                 }
-                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds);
+                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, team_name);
                 std::cout << "Conversation " << id << " created.\n";
                 std::cout << "Daemon already running — it will pick up the conversation.\n";
             } else if (subcommand == "resume") {
@@ -579,7 +653,7 @@ int main(int argc, char* argv[]) {
             release_pid_lock(cfg.daemon.pid_file);
             return 1;
         }
-        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds);
+        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, team_name);
         std::cout << "Conversation " << id << " created. Starting daemon...\n";
         // fall through to daemon loop
     } else if (subcommand == "resume") {

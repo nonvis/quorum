@@ -144,3 +144,7 @@ add_test(NAME test_quorum_init COMMAND test_quorum_init)
 add_executable(test_discover tests/unit/test_discover.cpp)
 target_include_directories(test_discover PRIVATE src)
 add_test(NAME test_discover COMMAND test_discover)
+
+add_executable(test_team_presets tests/unit/test_team_presets.cpp)
+target_include_directories(test_team_presets PRIVATE src)
+add_test(NAME test_team_presets COMMAND test_team_presets)
