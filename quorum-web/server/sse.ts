@@ -10,7 +10,8 @@ function getSnapshot(): Map<number, string> {
   const convs = getConversations();
   const snap = new Map<number, string>();
   for (const c of convs) {
-    snap.set(c.id, c.state);
+    // Include state + round + spent + current_agent so we detect mid-conversation changes
+    snap.set(c.id, `${c.state}|${c.round}|${c.spent_usd}|${c.current_agent}`);
   }
   return snap;
 }

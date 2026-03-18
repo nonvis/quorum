@@ -170,15 +170,8 @@ public:
             return false;
         }
 
-        // Budget check
-        if (conv->spent_usd >= conv->budget_usd) {
-            db_.pause_conversation(conv_id, "budget exceeded ($"
-                + std::to_string(conv->spent_usd) + "/$"
-                + std::to_string(conv->budget_usd) + ")");
-            std::cout << "[conversation " << conv_id
-                      << "] paused -- budget exceeded\n";
-            return false;
-        }
+        // Per-conversation budget check removed — redundant with window budget + max turns.
+        // The window budget (budget_window table) and max_rounds enforce cost limits.
 
         // Turn check
         if (conv->round >= conv->max_rounds) {
