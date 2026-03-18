@@ -135,6 +135,8 @@ static void print_usage(const char* prog) {
               << "  " << prog << " --config <path> close --conversation <id>  Close conversation\n"
               << "  " << prog << " --config <path> respond --conversation <id> \"text\"  Respond to human request\n"
               << "  " << prog << " --config <path> agent create --role <r> --name <n> --project <p>\n"
+              << "  " << prog << " agent modify --name <id> --description \"new desc\"   Modify agent\n"
+              << "  " << prog << " agent list                                            List all agents\n"
               << "\nOptions:\n"
               << "  --config <path>      Path to config YAML (optional if .quorum/ exists in project)\n"
               << "  --verbose            Enable verbose logging\n"
@@ -150,7 +152,8 @@ static void print_usage(const char* prog) {
               << "  --description <d>    Agent description (optional)\n"
               << "  --skill-file <path>  Path to SKILL.md (optional)\n"
               << "  --target-dir <path>  Working directory for doer agents (optional)\n"
-              << "  --no-ai              Skip AI generation, copy template as-is\n";
+              << "  --no-ai              Skip AI generation, copy template as-is\n"
+              << "  --regenerate         Regenerate CONTEXT.md without changing fields\n";
 }
 
 // Initialize all database tables
@@ -355,8 +358,8 @@ int main(int argc, char* argv[]) {
         }
     } else if (subcommand == "agent") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
-            if (agent_subcmd.empty() && sub_args[i] == "create") {
-                agent_subcmd = "create";
+            if (agent_subcmd.empty() && (sub_args[i] == "create" || sub_args[i] == "modify" || sub_args[i] == "list")) {
+                agent_subcmd = sub_args[i];
             } else if (sub_args[i] == "--role" && i + 1 < sub_args.size()) {
                 agent_params.role = sub_args[++i];
             } else if (sub_args[i] == "--name" && i + 1 < sub_args.size()) {
@@ -371,6 +374,8 @@ int main(int argc, char* argv[]) {
                 agent_params.target_dir = sub_args[++i];
             } else if (sub_args[i] == "--no-ai") {
                 agent_params.no_ai = true;
+            } else if (sub_args[i] == "--regenerate") {
+                agent_params.regenerate = true;
             }
         }
     } else if (subcommand == "init") {
@@ -412,6 +417,18 @@ int main(int argc, char* argv[]) {
             std::cout << "\n";
         }
         return 0;
+    }
+
+    // Agent list/modify don't need --config -- they work with .quorum/ directly
+    if (subcommand == "agent" && agent_subcmd == "list") {
+        return sui::quorum::cli::list_agents();
+    }
+    if (subcommand == "agent" && agent_subcmd == "modify") {
+        if (agent_params.name.empty()) {
+            std::cerr << "ERROR: agent modify requires --name <agent_id>\n";
+            return 1;
+        }
+        return sui::quorum::cli::modify_agent(agent_params);
     }
 
     if (config_path.empty()) {
@@ -488,7 +505,7 @@ int main(int argc, char* argv[]) {
     // ── Agent subcommand early exit (no DB, no daemon) ──────────────────
     if (subcommand == "agent") {
         if (agent_subcmd != "create") {
-            std::cerr << "ERROR: unknown agent subcommand. Usage: agent create ...\n";
+            std::cerr << "ERROR: unknown agent subcommand. Usage: agent create|modify|list\n";
             return 1;
         }
         if (agent_params.role.empty() || agent_params.name.empty()) {

@@ -148,3 +148,7 @@ add_test(NAME test_discover COMMAND test_discover)
 add_executable(test_team_presets tests/unit/test_team_presets.cpp)
 target_include_directories(test_team_presets PRIVATE src)
 add_test(NAME test_team_presets COMMAND test_team_presets)
+
+add_executable(test_agent_modify tests/unit/test_agent_modify.cpp)
+target_include_directories(test_agent_modify PRIVATE src)
+add_test(NAME test_agent_modify COMMAND test_agent_modify)
