@@ -1,10 +1,21 @@
 import { readFileSync, unlinkSync, existsSync } from "fs";
-import { config, repoRoot } from "../config";
+import { config, repoRoot, getState, getProjectConfig } from "../config";
+
+// Resolve dynamic project config, falling back to legacy hardcoded paths
+function getCurrentProjectConfig(): { daemonBin: string; configPath: string; projectPath: string } {
+  const state = getState();
+  if (state.currentProject) {
+    const pc = getProjectConfig(state.currentProject);
+    return { daemonBin: pc.daemonBin, configPath: pc.configPath, projectPath: pc.projectPath };
+  }
+  return { daemonBin: config.daemonBin, configPath: config.configPath, projectPath: repoRoot };
+}
 
 // Read pid_file path from the YAML config (simple grep — avoids a YAML parser dep)
 function getPidFilePath(): string | null {
   try {
-    const yaml = readFileSync(config.configPath, "utf-8");
+    const pc = getCurrentProjectConfig();
+    const yaml = readFileSync(pc.configPath, "utf-8");
     const match = yaml.match(/pid_file:\s*(.+)/);
     return match ? match[1].trim() : null;
   } catch {
@@ -56,8 +67,9 @@ const daemonEnv = {
 
 // For short-lived commands (gate, close, resume, status)
 export async function execDaemon(...args: string[]): Promise<DaemonResult> {
-  const proc = Bun.spawn([config.daemonBin, "--config", config.configPath, ...args], {
-    cwd: repoRoot,
+  const pc = getCurrentProjectConfig();
+  const proc = Bun.spawn([pc.daemonBin, "--config", pc.configPath, ...args], {
+    cwd: pc.projectPath,
     stdout: "pipe",
     stderr: "pipe",
     env: daemonEnv,
@@ -77,8 +89,9 @@ export async function execDaemon(...args: string[]): Promise<DaemonResult> {
 
 // For long-running commands (converse) — spawns detached, doesn't wait
 export function spawnDaemon(...args: string[]): void {
-  const proc = Bun.spawn([config.daemonBin, "--config", config.configPath, ...args], {
-    cwd: repoRoot,
+  const pc = getCurrentProjectConfig();
+  const proc = Bun.spawn([pc.daemonBin, "--config", pc.configPath, ...args], {
+    cwd: pc.projectPath,
     stdout: "inherit",
     stderr: "inherit",
     env: daemonEnv,

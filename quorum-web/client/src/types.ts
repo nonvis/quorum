@@ -36,6 +36,24 @@ export interface Stats {
   active_conversations: number;
 }
 
+export interface ProjectState {
+  current: string | null;
+  recent: string[];
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  default_path: string[];
+}
+
+export interface Agent {
+  id: string;
+  name: string;
+  role: string;
+  description: string;
+}
+
 export interface ProjectConfig {
   config_path: string;
   daemon: {

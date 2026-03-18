@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { config, repoRoot } from "../config";
-import { readFileSync, writeFileSync } from "fs";
+import { config, repoRoot, getState, setCurrentProject, getProjectConfig } from "../config";
+import { join } from "path";
+import { readFileSync, writeFileSync, readdirSync, existsSync } from "fs";
 import {
   getConversations,
   getConversation,
@@ -18,6 +19,78 @@ const app = new Hono();
 
 // CORS for local dev (Vite runs on different port)
 app.use("*", cors());
+
+// -- Project endpoints --
+
+app.get("/api/projects", (c) => {
+  const state = getState();
+  return c.json({ current: state.currentProject, recent: state.recentProjects });
+});
+
+app.post("/api/projects/select", async (c) => {
+  const body = await c.req.json<{ path: string }>();
+  const quorumDir = join(body.path, ".quorum");
+  if (!existsSync(quorumDir)) {
+    return c.json({ error: `No .quorum/ directory found in ${body.path}` }, 400);
+  }
+  setCurrentProject(body.path);
+  return c.json({ success: true, path: body.path });
+});
+
+// -- Team endpoints --
+
+app.get("/api/teams", (c) => {
+  const state = getState();
+  if (!state.currentProject) return c.json([]);
+
+  const teamsDir = join(state.currentProject, ".quorum", "teams");
+  if (!existsSync(teamsDir)) return c.json([]);
+
+  const files = readdirSync(teamsDir).filter(
+    (f) => f.endsWith(".yaml") || f.endsWith(".yml")
+  );
+
+  const teams = files.map((file) => {
+    const content = readFileSync(join(teamsDir, file), "utf-8");
+    const stem = file.replace(/\.ya?ml$/, "");
+    const name = content.match(/^name:\s*(.+)/m)?.[1]?.trim() ?? stem;
+    const pathMatch = content.match(/^default_path:\s*\[(.+)\]/m);
+    const default_path = pathMatch
+      ? pathMatch[1].split(",").map((s) => s.trim())
+      : [];
+    return { id: stem, name, default_path };
+  });
+
+  return c.json(teams);
+});
+
+// -- Agent endpoints --
+
+app.get("/api/agents", (c) => {
+  const state = getState();
+  if (!state.currentProject) return c.json([]);
+
+  const agentsDir = join(state.currentProject, ".quorum", "agents");
+  if (!existsSync(agentsDir)) return c.json([]);
+
+  const files = readdirSync(agentsDir).filter(
+    (f) => f.endsWith(".yaml") || f.endsWith(".yml")
+  );
+
+  const agents = files.map((file) => {
+    const content = readFileSync(join(agentsDir, file), "utf-8");
+    const stem = file.replace(/\.ya?ml$/, "");
+    const id = content.match(/^id:\s*(.+)/m)?.[1]?.trim() ?? stem;
+    const rawName = content.match(/^name:\s*(.+)/m)?.[1]?.trim() ?? id;
+    const name = rawName.replace(/^["']|["']$/g, "");
+    const role = content.match(/^role:\s*(.+)/m)?.[1]?.trim() ?? "";
+    const rawDesc = content.match(/^description:\s*(.+)/m)?.[1]?.trim() ?? "";
+    const description = rawDesc.replace(/^["']|["']$/g, "");
+    return { id, name, role, description };
+  });
+
+  return c.json(agents);
+});
 
 // -- Read endpoints --
 
@@ -134,7 +207,7 @@ app.get("/api/events", (c) => {
 // -- Write endpoints (via daemon CLI) --
 
 app.post("/api/converse", async (c) => {
-  const body = await c.req.json<{ goal: string }>();
+  const body = await c.req.json<{ goal: string; team?: string }>();
   if (!body.goal) return c.json({ error: "goal is required" }, 400);
 
   // Record current max ID before spawning
@@ -144,8 +217,13 @@ app.post("/api/converse", async (c) => {
   const maxIdBefore = before[0]?.max_id ?? 0;
 
   // Spawn daemon in background — it creates the conversation and runs the dispatch loop
-  console.log(`[converse] spawning daemon for: "${body.goal}"`);
-  spawnDaemon("converse", body.goal);
+  const teamTag = body.team ? ` [team: ${body.team}]` : "";
+  console.log(`[converse] spawning daemon for: "${body.goal}"${teamTag}`);
+  if (body.team) {
+    spawnDaemon("converse", "--team", body.team, body.goal);
+  } else {
+    spawnDaemon("converse", body.goal);
+  }
 
   // Poll for the new conversation (fresh connection each time to bypass WAL snapshot)
   let conversationId: number | null = null;
@@ -228,6 +306,9 @@ console.log(`Quorum Web API — http://localhost:${config.port}`);
 console.log(`  DB: ${config.dbPath}`);
 console.log(`  Daemon: ${config.daemonBin}`);
 console.log(`  Config: ${config.configPath}`);
+const startupState = getState();
+if (startupState.currentProject) console.log(`  Project: ${startupState.currentProject}`);
+else console.log(`  Project: (none — select via UI)`);
 
 export default {
   port: config.port,

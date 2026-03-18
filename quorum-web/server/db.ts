@@ -1,12 +1,19 @@
 import { Database } from "bun:sqlite";
-import { config } from "../config";
+import { config, getState, getProjectConfig } from "../config";
 
-// Open in readonly mode — all writes go through daemon CLI
-const db = new Database(config.dbPath, { readonly: true });
+// Resolve current project's DB path, falling back to legacy hardcoded path
+function getDbPath(): string {
+  const state = getState();
+  if (state.currentProject) {
+    const pc = getProjectConfig(state.currentProject);
+    return pc.dbPath;
+  }
+  return config.dbPath;
+}
 
 // Fresh connection for cross-process reads (WAL snapshot isolation)
 export function freshQuery<T>(sql: string, params?: any[]): T[] {
-  const fresh = new Database(config.dbPath, { readonly: true });
+  const fresh = new Database(getDbPath(), { readonly: true });
   const result = params
     ? fresh.query(sql).all(...params) as T[]
     : fresh.query(sql).all() as T[];
@@ -16,7 +23,7 @@ export function freshQuery<T>(sql: string, params?: any[]): T[] {
 
 // Write connection for targeted updates (e.g., editing proposal before approve)
 export function dbWrite(sql: string, params: any[]): void {
-  const writable = new Database(config.dbPath);
+  const writable = new Database(getDbPath());
   writable.query(sql).run(...params);
   writable.close();
 }
@@ -55,20 +62,30 @@ export interface Task {
 }
 
 export function getConversations(): Conversation[] {
-  return db.query("SELECT * FROM conversations ORDER BY id DESC").all() as Conversation[];
+  const db = new Database(getDbPath(), { readonly: true });
+  const result = db.query("SELECT * FROM conversations ORDER BY id DESC").all() as Conversation[];
+  db.close();
+  return result;
 }
 
 export function getConversation(id: number): Conversation | null {
-  return db.query("SELECT * FROM conversations WHERE id = ?").get(id) as Conversation | null;
+  const db = new Database(getDbPath(), { readonly: true });
+  const result = db.query("SELECT * FROM conversations WHERE id = ?").get(id) as Conversation | null;
+  db.close();
+  return result;
 }
 
 export function getTasksForConversation(id: number): Task[] {
-  return db
+  const db = new Database(getDbPath(), { readonly: true });
+  const result = db
     .query("SELECT * FROM tasks WHERE conversation_id = ? ORDER BY id ASC")
     .all(id) as Task[];
+  db.close();
+  return result;
 }
 
 export function getStats() {
+  const db = new Database(getDbPath(), { readonly: true });
   const totalConversations = db
     .query("SELECT COUNT(*) as count FROM conversations")
     .get() as { count: number };
@@ -81,6 +98,7 @@ export function getStats() {
   const activeConversations = db
     .query("SELECT COUNT(*) as count FROM conversations WHERE state NOT IN ('done', 'closed')")
     .get() as { count: number };
+  db.close();
 
   return {
     total_conversations: totalConversations.count,

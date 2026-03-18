@@ -4,16 +4,23 @@ export function StatsBanner({
   stats,
   config,
   onSettingsClick,
+  projectName,
 }: {
   stats: Stats | null;
   config: ProjectConfig | null;
   onSettingsClick?: () => void;
+  projectName?: string | null;
 }) {
   if (!stats) return null;
   return (
     <div className="flex items-center justify-between px-6 py-3 bg-zinc-900 border-b border-zinc-800">
       <div className="flex items-center gap-4">
         <h1 className="text-lg font-semibold text-white">Quorum</h1>
+        {projectName && (
+          <span className="text-sm font-mono text-blue-400">
+            {projectName}
+          </span>
+        )}
         {config?.daemon.target_dir && (
           <span className="text-xs font-mono text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded">
             {config.daemon.target_dir}

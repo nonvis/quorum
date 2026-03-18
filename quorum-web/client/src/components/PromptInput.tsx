@@ -4,9 +4,11 @@ import { startConversation } from "../api";
 export function PromptInput({
   onSubmit,
   busy,
+  team,
 }: {
   onSubmit: () => void;
   busy: boolean;
+  team?: string | null;
 }) {
   const [goal, setGoal] = useState("");
   const [loading, setLoading] = useState(false);
@@ -18,7 +20,7 @@ export function PromptInput({
     if (!goal.trim() || disabled) return;
     setLoading(true);
     try {
-      await startConversation(goal.trim());
+      await startConversation(goal.trim(), team ?? undefined);
       setGoal("");
       onSubmit();
     } finally {

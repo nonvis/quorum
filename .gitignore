@@ -31,6 +31,7 @@ dist/
 .env
 .env.local
 .env.*.local
+.quorum-web-state.json
 
 # Data (runtime)
 data/

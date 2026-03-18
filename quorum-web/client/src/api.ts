@@ -1,4 +1,4 @@
-import type { Conversation, Task, Stats, ProjectConfig } from "./types";
+import type { Conversation, Task, Stats, ProjectConfig, ProjectState, Team, Agent } from "./types";
 
 const BASE = "/api";
 
@@ -22,11 +22,11 @@ export async function fetchConfig(): Promise<ProjectConfig> {
   return res.json();
 }
 
-export async function startConversation(goal: string) {
+export async function startConversation(goal: string, team?: string) {
   const res = await fetch(`${BASE}/converse`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ goal }),
+    body: JSON.stringify({ goal, team: team ?? undefined }),
   });
   return res.json();
 }
@@ -56,6 +56,30 @@ export async function updateBudget(id: number, budget_usd: number) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ budget_usd }),
   });
+  return res.json();
+}
+
+export async function fetchProjects(): Promise<ProjectState> {
+  const res = await fetch(`${BASE}/projects`);
+  return res.json();
+}
+
+export async function selectProject(path: string): Promise<{ success: boolean; path?: string; error?: string }> {
+  const res = await fetch(`${BASE}/projects/select`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  return res.json();
+}
+
+export async function fetchTeams(): Promise<Team[]> {
+  const res = await fetch(`${BASE}/teams`);
+  return res.json();
+}
+
+export async function fetchAgents(): Promise<Agent[]> {
+  const res = await fetch(`${BASE}/agents`);
   return res.json();
 }
 

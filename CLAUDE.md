@@ -39,19 +39,20 @@ quorum/
 ├── data/                        # Runtime data (gitignored)
 │   └── vaults/                  # Per-agent vaults (CONTEXT.md, knowledge/)
 ├── quorum-web/                  # Web dashboard (API + React frontend)
-│   ├── config.ts                # Paths resolved relative to repo root
+│   ├── config.ts                # Dynamic project config, state persistence, legacy compat
+│   ├── .quorum-web-state.json   # Persisted project selection (gitignored)
 │   ├── server/
-│   │   ├── index.ts             # Hono routes (REST + SSE)
-│   │   ├── db.ts                # Read-only SQLite via bun:sqlite
-│   │   ├── daemon.ts            # CLI wrapper (Bun.spawn → quorum_daemon)
+│   │   ├── index.ts             # Hono routes (REST + SSE + project/team/agent endpoints)
+│   │   ├── db.ts                # Dynamic SQLite via bun:sqlite (project-aware)
+│   │   ├── daemon.ts            # CLI wrapper (Bun.spawn → quorum_daemon, project-aware)
 │   │   └── sse.ts               # SSE stream (change-detection poller)
 │   └── client/                  # React + Tailwind (Vite, port 3101)
 │       └── src/
-│           ├── App.tsx           # Root layout (SSE + refresh)
-│           ├── api.ts            # Fetch wrappers for all endpoints
-│           ├── types.ts          # Conversation, Task, Stats interfaces
+│           ├── App.tsx           # Root layout (project/team/agent state, SSE + refresh)
+│           ├── api.ts            # Fetch wrappers for all endpoints (incl. projects/teams/agents)
+│           ├── types.ts          # Conversation, Task, Stats, ProjectState, Team, Agent interfaces
 │           ├── hooks/useSSE.ts   # EventSource hook for real-time updates
-│           └── components/       # StatsBanner, PromptInput, ConversationCard, etc.
+│           └── components/       # ProjectSelector, TeamSelector, AgentRoster, StatsBanner, PromptInput, etc.
 ├── .claude/commands/             # Claude Code skills (project scaffolding, ops)
 ├── scripts/                     # Shell scripts (utilities)
 └── docs/                        # Design documents
@@ -192,7 +193,7 @@ Agents also produce VAULT_UPDATE blocks for persistent findings written to their
 
 Conversation Mode seeds a single goal and lets the daemon coordinate a team of agents. The `ConversationEngine` (`src/daemon/conversation.h`) manages state transitions and budget enforcement per conversation.
 
-**NOTE:** Legacy pipelines were stripped in task #0. HANDOFF parsing in task #1. KNOWLEDGE parsing + ledger in task #2. Team mode ConversationEngine with generic ball-passing loop in task #3. Team roster injection into agent prompts in task #4. Web dashboard updated for team mode in task #5 (removed gate/pipeline/auto-approve, added respond controls for `waiting_for_human`, updated states to active/waiting_for_human/done/closed/paused). Config parser (skill_file, auto-derive agent_class, validate_config) in task #6. State cleanup (rename labels, remove legacy fields) in task #7. Agent generator CLI (`agent create` subcommand, subprocess.h extraction) in task #8. Phase 3 task #0: `quorum init` creates `.quorum/` project-local layout; `agent create` auto-detects it. Phase 3 task #1: auto-discover `.quorum/config.yaml` — walk up from cwd, chdir to project root, `--config` and `--project` optional. Phase 3 task #3: team presets — named YAML files in `.quorum/teams/` define `default_path` routing; `--team <name>` selects a preset at conversation start; `quorum teams` lists available presets; team stored on conversation record. Phase 3 task #4: `agent modify` and `agent list` CLI subcommands; extracted `generate_context_md()` shared by create and modify; CONTEXT.md regenerated on every modify (Decision #23: users should never hand-edit CONTEXT.md). Phase 3 task #5: directory-based agent roster — `load_agents_from_directory()` scans `.quorum/agents/` for YAML files, replacing explicit `agents:` list; `quorum init` no longer writes `agents:` section; `agent create` no longer appends to config.yaml.
+**NOTE:** Legacy pipelines were stripped in task #0. HANDOFF parsing in task #1. KNOWLEDGE parsing + ledger in task #2. Team mode ConversationEngine with generic ball-passing loop in task #3. Team roster injection into agent prompts in task #4. Web dashboard updated for team mode in task #5 (removed gate/pipeline/auto-approve, added respond controls for `waiting_for_human`, updated states to active/waiting_for_human/done/closed/paused). Config parser (skill_file, auto-derive agent_class, validate_config) in task #6. State cleanup (rename labels, remove legacy fields) in task #7. Agent generator CLI (`agent create` subcommand, subprocess.h extraction) in task #8. Phase 3 task #0: `quorum init` creates `.quorum/` project-local layout; `agent create` auto-detects it. Phase 3 task #1: auto-discover `.quorum/config.yaml` — walk up from cwd, chdir to project root, `--config` and `--project` optional. Phase 3 task #3: team presets — named YAML files in `.quorum/teams/` define `default_path` routing; `--team <name>` selects a preset at conversation start; `quorum teams` lists available presets; team stored on conversation record. Phase 3 task #4: `agent modify` and `agent list` CLI subcommands; extracted `generate_context_md()` shared by create and modify; CONTEXT.md regenerated on every modify (Decision #23: users should never hand-edit CONTEXT.md). Phase 3 task #5: directory-based agent roster — `load_agents_from_directory()` scans `.quorum/agents/` for YAML files, replacing explicit `agents:` list; `quorum init` no longer writes `agents:` section; `agent create` no longer appends to config.yaml. Phase 3 task #6: web dashboard multi-project support — dynamic project selection via `.quorum/` directories; backend resolves DB/daemon/config paths per-project; new endpoints for projects, teams, agents; frontend components ProjectSelector, TeamSelector, AgentRoster; team selection passed to `converse --team`.
 
 **States:** `active`, `waiting_for_human`, `done`, `closed`, `paused` (enum `ConvState`).
 
@@ -443,6 +444,7 @@ Phase 3 tasks:
 3. ~~Team presets~~ ✓ (`TeamPreset` struct + `load_team_presets()` in `utils/config.h`; `--team <name>` flag on `converse`; `quorum teams` subcommand lists presets; team stored on `conversations.team` column; `quorum init` creates `.quorum/teams/default.yaml`; `quorum status` shows `{team}` tag; team overrides `cfg.conversations.default_path` before ConversationEngine construction; 6 tests in test_team_presets.cpp, 22 assertions pass; test_quorum_init 25/25, test_agent_create 17/17, test_discover 17/17, quorum_daemon compiles clean)
 4. ~~Agent modify/list~~ ✓ (`agent modify --name <id>` updates YAML + regenerates CONTEXT.md; supports `--role`, `--description`, `--skill-file`, `--target-dir`, `--regenerate` flags; role change auto-derives agent_class and adds/removes executor section; `agent list` shows all agents sorted by id with role and description; extracted `generate_context_md()` from `create_agent()` into shared function used by both create and modify; both commands work via `.quorum/` auto-discovery — no `--config` needed; 7 tests in test_agent_modify.cpp, 23 assertions pass; test_agent_create 17/17, test_quorum_init 25/25, quorum_daemon compiles clean)
 5. ~~Directory-based agent roster~~ ✓ (`load_agents_from_directory()` in `utils/config.h` scans `.quorum/agents/` for `.yaml`/`.yml` files, sorted alphabetically by id; `load_config()` auto-detects `agents/` dir next to config file and overrides explicit `agents:` list; `quorum init` no longer writes `agents:` section in config.yaml; `agent create` no longer appends to config.yaml — agents are auto-discovered; `validate_config()` warns on empty agents; 7 tests in test_agent_roster_dir.cpp, 17 assertions pass; test_quorum_init 26/26, test_agent_create 17/17, all 21 tests pass, quorum_daemon compiles clean)
+6. ~~Web dashboard multi-project support~~ ✓ (Dynamic project selection via `.quorum/` directories. Backend: `config.ts` exports `WebState`, `getState()`, `saveState()`, `setCurrentProject()`, `getProjectConfig()` with JSON state persistence; `db.ts` opens fresh DB connections per-query using dynamic path resolution; `daemon.ts` resolves daemon binary/config/cwd dynamically; `index.ts` adds `GET /api/projects`, `POST /api/projects/select`, `GET /api/teams`, `GET /api/agents` endpoints + `--team` support on `POST /api/converse`. Frontend: `ProjectState`, `Team`, `Agent` types; `fetchProjects()`, `selectProject()`, `fetchTeams()`, `fetchAgents()` API functions; `ProjectSelector` component (project bar with path input, recent chips, dropdown); `TeamSelector` component (pill buttons with routing tooltip); `AgentRoster` component (role-colored badges with team-order sorting); `App.tsx` wires project/team/agent state with conditional rendering; `PromptInput` passes selected team; `StatsBanner` shows project name in blue. 12 files changed/created, tsc clean)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 
