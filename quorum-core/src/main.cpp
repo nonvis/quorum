@@ -24,6 +24,7 @@
 #include "vault/vault_manager.h"
 #include "cli/agent_create.h"
 #include "cli/init.h"
+#include "cli/skills.h"
 #include "utils/discover.h"
 
 namespace fs = std::filesystem;
@@ -128,6 +129,7 @@ static void print_usage(const char* prog) {
               << "  " << prog << " converse \"goal text\"                      Start conversation (auto-discovers .quorum/)\n"
               << "  " << prog << " converse --team quick-build \"fix bug\"     Use specific team\n"
               << "  " << prog << " teams                                      List available teams\n"
+              << "  " << prog << " skills                                     List available Claude Code skills\n"
               << "  " << prog << " status                                    List conversations\n"
               << "  " << prog << " --config <path>                            Start daemon\n"
               << "  " << prog << " --config <path> converse --budget 3.0 \"g\"  Custom budget\n"
@@ -151,6 +153,7 @@ static void print_usage(const char* prog) {
               << "  --project <name>     Project subfolder in configs/agents/ (optional with .quorum/)\n"
               << "  --description <d>    Agent description (optional)\n"
               << "  --skill-file <path>  Path to SKILL.md (optional)\n"
+              << "  --skill <name>       Shorthand for --skill-file .claude/skills/<name>/SKILL.md\n"
               << "  --target-dir <path>  Working directory for doer agents (optional)\n"
               << "  --no-ai              Skip AI generation, copy template as-is\n"
               << "  --regenerate         Regenerate CONTEXT.md without changing fields\n";
@@ -370,6 +373,9 @@ int main(int argc, char* argv[]) {
                 agent_params.description = sub_args[++i];
             } else if (sub_args[i] == "--skill-file" && i + 1 < sub_args.size()) {
                 agent_params.skill_file = sub_args[++i];
+            } else if (sub_args[i] == "--skill" && i + 1 < sub_args.size()) {
+                auto skill_name = sub_args[++i];
+                agent_params.skill_file = ".claude/skills/" + skill_name + "/SKILL.md";
             } else if (sub_args[i] == "--target-dir" && i + 1 < sub_args.size()) {
                 agent_params.target_dir = sub_args[++i];
             } else if (sub_args[i] == "--no-ai") {
@@ -381,6 +387,8 @@ int main(int argc, char* argv[]) {
     } else if (subcommand == "init") {
         // No additional flags needed
     } else if (subcommand == "teams") {
+        // No additional flags needed
+    } else if (subcommand == "skills") {
         // No additional flags needed
     } else if (!subcommand.empty() && subcommand != "status") {
         std::cerr << "Unknown subcommand: " << subcommand << "\n";
@@ -417,6 +425,16 @@ int main(int argc, char* argv[]) {
             std::cout << "\n";
         }
         return 0;
+    }
+
+    // Skills doesn't need --config -- reads .claude/skills/ directly
+    if (subcommand == "skills") {
+        auto root = sui::quorum::discover_project_root();
+        if (!root) {
+            std::cerr << "No .quorum/ found. Run 'quorum init' first.\n";
+            return 1;
+        }
+        return sui::quorum::cli::list_skills(*root);
     }
 
     // Agent list/modify don't need --config -- they work with .quorum/ directly
@@ -540,7 +558,10 @@ int main(int argc, char* argv[]) {
     sui::quorum::ContextAssembler context_assembler;
 
     // Conversation engine — lightweight, needed for subcommands
-    sui::quorum::ConversationEngine conversation_engine(db, cfg.conversations, cfg.agents, &context_assembler);
+    auto project_root_str = sui::quorum::discover_project_root();
+    sui::quorum::ConversationEngine conversation_engine(
+        db, cfg.conversations, cfg.agents, &context_assembler,
+        project_root_str.value_or(""));
 
     // ── Subcommand early exits (no PID lock, no daemon) ──────────────────
     if (subcommand == "status") {

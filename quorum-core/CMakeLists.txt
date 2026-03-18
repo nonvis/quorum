@@ -156,3 +156,7 @@ add_test(NAME test_agent_modify COMMAND test_agent_modify)
 add_executable(test_agent_roster_dir tests/unit/test_agent_roster_dir.cpp)
 target_include_directories(test_agent_roster_dir PRIVATE src)
 add_test(NAME test_agent_roster_dir COMMAND test_agent_roster_dir)
+
+add_executable(test_skill_discovery tests/unit/test_skill_discovery.cpp)
+target_include_directories(test_skill_discovery PRIVATE src)
+add_test(NAME test_skill_discovery COMMAND test_skill_discovery)

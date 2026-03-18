@@ -19,8 +19,10 @@ class ConversationEngine {
 public:
     ConversationEngine(Database& db, const ConversationConfig& cfg,
                        const std::vector<AgentMetadata>& agents,
-                       const ContextAssembler* assembler = nullptr)
-        : db_(db), cfg_(cfg), agents_(agents), assembler_(assembler) {}
+                       const ContextAssembler* assembler = nullptr,
+                       const std::string& project_root = {})
+        : db_(db), cfg_(cfg), agents_(agents), assembler_(assembler),
+          project_root_(project_root) {}
 
     // Start a new conversation. Creates the first task for the leader agent.
     // Returns conversation ID.
@@ -280,6 +282,7 @@ private:
     ConversationConfig cfg_;
     std::vector<AgentMetadata> agents_;
     const ContextAssembler* assembler_ = nullptr;
+    std::string project_root_;
 
     bool is_known_agent(const std::string& agent_id) const {
         return std::any_of(agents_.begin(), agents_.end(),
@@ -323,7 +326,7 @@ private:
 
             // Assemble full prompt with vault context + roster + task
             if (!vault_dir.empty()) {
-                final_prompt = assembler_->assemble(agent, vault_dir, task_type, prompt, roster, skill_file);
+                final_prompt = assembler_->assemble(agent, vault_dir, task_type, prompt, roster, skill_file, project_root_);
             } else {
                 // No vault -- just roster + task
                 final_prompt = roster + "\n---\n\n# Current Task\n\n" + prompt + "\n";

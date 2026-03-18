@@ -34,7 +34,7 @@ quorum/
 │   │   ├── storage/             # SQLite (WAL mode) — task queue, token tracking, conversations, knowledge ledger
 │   │   ├── utils/               # HTTP (libcurl), JSON (manual), crypto (ed25519), config, UUID, subprocess, discover
 │   │   ├── sdk/                 # [DEFERRED] libquorum public API
-│   │   └── cli/                 # quorum binary CLI commands (init.h, agent_create.h)
+│   │   └── cli/                 # quorum binary CLI commands (init.h, agent_create.h, skills.h)
 │   └── tests/
 ├── data/                        # Runtime data (gitignored)
 │   └── vaults/                  # Per-agent vaults (CONTEXT.md, knowledge/)
@@ -193,14 +193,14 @@ Agents also produce VAULT_UPDATE blocks for persistent findings written to their
 
 Conversation Mode seeds a single goal and lets the daemon coordinate a team of agents. The `ConversationEngine` (`src/daemon/conversation.h`) manages state transitions and budget enforcement per conversation.
 
-**NOTE:** Legacy pipelines were stripped in task #0. HANDOFF parsing in task #1. KNOWLEDGE parsing + ledger in task #2. Team mode ConversationEngine with generic ball-passing loop in task #3. Team roster injection into agent prompts in task #4. Web dashboard updated for team mode in task #5 (removed gate/pipeline/auto-approve, added respond controls for `waiting_for_human`, updated states to active/waiting_for_human/done/closed/paused). Config parser (skill_file, auto-derive agent_class, validate_config) in task #6. State cleanup (rename labels, remove legacy fields) in task #7. Agent generator CLI (`agent create` subcommand, subprocess.h extraction) in task #8. Phase 3 task #0: `quorum init` creates `.quorum/` project-local layout; `agent create` auto-detects it. Phase 3 task #1: auto-discover `.quorum/config.yaml` — walk up from cwd, chdir to project root, `--config` and `--project` optional. Phase 3 task #3: team presets — named YAML files in `.quorum/teams/` define `default_path` routing; `--team <name>` selects a preset at conversation start; `quorum teams` lists available presets; team stored on conversation record. Phase 3 task #4: `agent modify` and `agent list` CLI subcommands; extracted `generate_context_md()` shared by create and modify; CONTEXT.md regenerated on every modify (Decision #23: users should never hand-edit CONTEXT.md). Phase 3 task #5: directory-based agent roster — `load_agents_from_directory()` scans `.quorum/agents/` for YAML files, replacing explicit `agents:` list; `quorum init` no longer writes `agents:` section; `agent create` no longer appends to config.yaml. Phase 3 task #6: web dashboard multi-project support — dynamic project selection via `.quorum/` directories; backend resolves DB/daemon/config paths per-project; new endpoints for projects, teams, agents; frontend components ProjectSelector, TeamSelector, AgentRoster; team selection passed to `converse --team`.
+**NOTE:** Legacy pipelines were stripped in task #0. HANDOFF parsing in task #1. KNOWLEDGE parsing + ledger in task #2. Team mode ConversationEngine with generic ball-passing loop in task #3. Team roster injection into agent prompts in task #4. Web dashboard updated for team mode in task #5 (removed gate/pipeline/auto-approve, added respond controls for `waiting_for_human`, updated states to active/waiting_for_human/done/closed/paused). Config parser (skill_file, auto-derive agent_class, validate_config) in task #6. State cleanup (rename labels, remove legacy fields) in task #7. Agent generator CLI (`agent create` subcommand, subprocess.h extraction) in task #8. Phase 3 task #0: `quorum init` creates `.quorum/` project-local layout; `agent create` auto-detects it. Phase 3 task #1: auto-discover `.quorum/config.yaml` — walk up from cwd, chdir to project root, `--config` and `--project` optional. Phase 3 task #3: team presets — named YAML files in `.quorum/teams/` define `default_path` routing; `--team <name>` selects a preset at conversation start; `quorum teams` lists available presets; team stored on conversation record. Phase 3 task #4: `agent modify` and `agent list` CLI subcommands; extracted `generate_context_md()` shared by create and modify; CONTEXT.md regenerated on every modify (Decision #23: users should never hand-edit CONTEXT.md). Phase 3 task #5: directory-based agent roster — `load_agents_from_directory()` scans `.quorum/agents/` for YAML files, replacing explicit `agents:` list; `quorum init` no longer writes `agents:` section; `agent create` no longer appends to config.yaml. Phase 3 task #6: web dashboard multi-project support — dynamic project selection via `.quorum/` directories; backend resolves DB/daemon/config paths per-project; new endpoints for projects, teams, agents; frontend components ProjectSelector, TeamSelector, AgentRoster; team selection passed to `converse --team`. Phase 3 task #7: skill discovery — `quorum skills` lists `.claude/skills/` directories; `--skill <name>` shorthand for `--skill-file`; `ContextAssembler` resolves relative skill paths via `project_root`; `ConversationEngine` passes project root through; `agent create` suggests available skills for doer agents; web UI shows skill indicator on agent badges.
 
 **States:** `active`, `waiting_for_human`, `done`, `closed`, `paused` (enum `ConvState`).
 
 **Key types:**
 - `ConversationRecord` — struct in `storage/database.h` (id, goal, state, round, max_rounds, budget_usd, spent_usd, current_agent, path_index, team)
 - `TeamPreset` — struct in `utils/config.h` (id, name, default_path)
-- `ConversationEngine` — header-only class in `daemon/conversation.h`. Constructor takes `Database&` only. Methods: `start()`, `on_task_complete()`, `respond()`, `resume()`, `close()`.
+- `ConversationEngine` — header-only class in `daemon/conversation.h`. Constructor takes `Database&`, `ConversationConfig&`, `vector<AgentMetadata>&`, `ContextAssembler*`, `project_root`. Methods: `start()`, `on_task_complete()`, `respond()`, `resume()`, `close()`.
 
 **Database schema:**
 - `conversations` table: id, goal, state, round, max_rounds, budget_usd, spent_usd, created_at, completed_at, paused_reason, current_agent, path_index, team
@@ -420,7 +420,7 @@ Phase 1 completed items (preserved for reference):
 9. ~~Conversation schema + CRUD~~ ✓
 10. ~~Session resume in Invoker~~ ✓
 11. ~~Sequential dispatch enforcement~~ ✓
-12. ~~CLI subcommands~~ ✓ (`init`, `converse`, `status`, `resume`, `close`, `agent create`, `agent modify`, `agent list`, `teams`, auto-discovery)
+12. ~~CLI subcommands~~ ✓ (`init`, `converse`, `status`, `resume`, `close`, `agent create`, `agent modify`, `agent list`, `teams`, `skills`, auto-discovery)
 13. ~~ConversationConfig~~ ✓ (enabled, default_max_rounds, default_budget_usd)
 14. ~~AgentMetadata + executor support in Invoker~~ ✓
 15. ~~Multi-project config layout~~ ✓
@@ -445,6 +445,7 @@ Phase 3 tasks:
 4. ~~Agent modify/list~~ ✓ (`agent modify --name <id>` updates YAML + regenerates CONTEXT.md; supports `--role`, `--description`, `--skill-file`, `--target-dir`, `--regenerate` flags; role change auto-derives agent_class and adds/removes executor section; `agent list` shows all agents sorted by id with role and description; extracted `generate_context_md()` from `create_agent()` into shared function used by both create and modify; both commands work via `.quorum/` auto-discovery — no `--config` needed; 7 tests in test_agent_modify.cpp, 23 assertions pass; test_agent_create 17/17, test_quorum_init 25/25, quorum_daemon compiles clean)
 5. ~~Directory-based agent roster~~ ✓ (`load_agents_from_directory()` in `utils/config.h` scans `.quorum/agents/` for `.yaml`/`.yml` files, sorted alphabetically by id; `load_config()` auto-detects `agents/` dir next to config file and overrides explicit `agents:` list; `quorum init` no longer writes `agents:` section in config.yaml; `agent create` no longer appends to config.yaml — agents are auto-discovered; `validate_config()` warns on empty agents; 7 tests in test_agent_roster_dir.cpp, 17 assertions pass; test_quorum_init 26/26, test_agent_create 17/17, all 21 tests pass, quorum_daemon compiles clean)
 6. ~~Web dashboard multi-project support~~ ✓ (Dynamic project selection via `.quorum/` directories. Backend: `config.ts` exports `WebState`, `getState()`, `saveState()`, `setCurrentProject()`, `getProjectConfig()` with JSON state persistence; `db.ts` opens fresh DB connections per-query using dynamic path resolution; `daemon.ts` resolves daemon binary/config/cwd dynamically; `index.ts` adds `GET /api/projects`, `POST /api/projects/select`, `GET /api/teams`, `GET /api/agents` endpoints + `--team` support on `POST /api/converse`. Frontend: `ProjectState`, `Team`, `Agent` types; `fetchProjects()`, `selectProject()`, `fetchTeams()`, `fetchAgents()` API functions; `ProjectSelector` component (project bar with path input, recent chips, dropdown); `TeamSelector` component (pill buttons with routing tooltip); `AgentRoster` component (role-colored badges with team-order sorting); `App.tsx` wires project/team/agent state with conditional rendering; `PromptInput` passes selected team; `StatsBanner` shows project name in blue. 12 files changed/created, tsc clean)
+7. ~~Skill discovery + `--skill` shorthand~~ ✓ (`cli/skills.h` with `SkillInfo` struct, `discover_skills()` scans `.claude/skills/` for `SKILL.md` files sorted alphabetically, `list_skills()` prints them; `quorum skills` subcommand lists available skills; `--skill <name>` shorthand expands to `--skill-file .claude/skills/<name>/SKILL.md` in `agent create/modify`; `ContextAssembler::assemble()` accepts `project_root` parameter for robust relative skill path resolution (~/expansion -> project_root prepend -> cwd); `ConversationEngine` passes `project_root_` through to assembler; `agent create` suggests available skills for doer agents without a skill file; web UI `/api/agents` returns `skill_file` field, `AgentRoster` shows amber star indicator on skilled agents; 5 test cases / 13 assertions in test_skill_discovery.cpp; 22 tests pass, C++ and TypeScript clean)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 
@@ -469,13 +470,20 @@ cd ~/myproject && quorum init
 # Add agents to an initialized project (auto-discovers .quorum/)
 quorum agent create --role doer --name my-dev --target-dir .
 
+# Add agents with a skill (--skill shorthand for .claude/skills/<name>/SKILL.md)
+quorum agent create --role doer --name my-dev --target-dir . --skill move-developer
+
 # Modify an existing agent (auto-discovers .quorum/)
 quorum agent modify --name my-dev --description "New description"
 quorum agent modify --name my-dev --role thinker
+quorum agent modify --name my-dev --skill move-developer  # attach a skill
 quorum agent modify --name my-dev --regenerate  # regenerate CONTEXT.md only
 
 # List all agents (auto-discovers .quorum/)
 quorum agent list
+
+# List available Claude Code skills
+quorum skills
 
 # Add agents with explicit config (centralized layout)
 quorum --config .quorum/config.yaml agent create --role doer --name my-dev --project . --target-dir .
@@ -498,6 +506,9 @@ quorum converse --team quick-build "fix the login bug"
 # List available team presets
 quorum teams
 
+# List available Claude Code skills
+quorum skills
+
 # Start a conversation + daemon (explicit config)
 ./build/quorum_daemon --config configs/mm-bot.yaml converse "Analyze market trends"
 
@@ -518,6 +529,9 @@ quorum status
 
 # Scaffold a new agent (AI-generated CONTEXT.md)
 ./build/quorum_daemon --config configs/mm-bot.yaml agent create --role thinker --name my-agent --project mm-bot --description "Analyzes X"
+
+# Scaffold a new agent with a skill (--skill shorthand)
+quorum agent create --role doer --name my-doer --target-dir . --skill move-developer
 
 # Scaffold a new agent (offline — copy template as-is)
 ./build/quorum_daemon --config configs/mm-bot.yaml agent create --role doer --name my-doer --project mm-bot --target-dir ~/myproject --no-ai

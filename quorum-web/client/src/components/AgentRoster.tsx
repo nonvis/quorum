@@ -34,6 +34,9 @@ function AgentBadge({ agent, dimmed }: { agent: Agent; dimmed: boolean }) {
       <span className={dimmed ? "text-zinc-700" : "text-zinc-500"}>
         ({initial})
       </span>
+      {agent.skill_file && (
+        <span className="text-amber-500 text-[10px] ml-0.5" title={`Skill: ${agent.skill_file}`}>&#9733;</span>
+      )}
     </span>
   );
 }

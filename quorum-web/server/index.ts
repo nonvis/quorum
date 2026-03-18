@@ -86,7 +86,8 @@ app.get("/api/agents", (c) => {
     const role = content.match(/^role:\s*(.+)/m)?.[1]?.trim() ?? "";
     const rawDesc = content.match(/^description:\s*(.+)/m)?.[1]?.trim() ?? "";
     const description = rawDesc.replace(/^["']|["']$/g, "");
-    return { id, name, role, description };
+    const skill = content.match(/^skill_file:\s*(.+)/m)?.[1]?.trim() ?? null;
+    return { id, name, role, description, skill_file: skill };
   });
 
   return c.json(agents);

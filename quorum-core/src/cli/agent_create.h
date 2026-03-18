@@ -10,6 +10,7 @@
 #include "utils/json.h"
 #include "utils/config.h"
 #include "utils/discover.h"
+#include "cli/skills.h"
 
 namespace fs = std::filesystem;
 namespace sui::quorum::cli {
@@ -205,6 +206,21 @@ inline int create_agent(const AgentCreateParams& p) {
     } else {
         std::cout << "\nAgent '" << p.name << "' scaffolded. Add to your project YAML:\n";
         std::cout << "  - config: " << config_path << "\n";
+    }
+
+    // Suggest skills for doer agents
+    if (p.role == "doer" && p.skill_file.empty()) {
+        auto root = sui::quorum::discover_project_root();
+        if (root) {
+            auto skills = sui::quorum::cli::discover_skills(*root);
+            if (!skills.empty()) {
+                std::cout << "\nTip: Available skills for this doer agent:\n";
+                for (const auto& s : skills) {
+                    std::cout << "  quorum agent modify --name " << p.name
+                              << " --skill " << s.id << "\n";
+                }
+            }
+        }
     }
 
     return 0;

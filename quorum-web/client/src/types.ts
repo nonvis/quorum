@@ -52,6 +52,7 @@ export interface Agent {
   name: string;
   role: string;
   description: string;
+  skill_file: string | null;
 }
 
 export interface ProjectConfig {
