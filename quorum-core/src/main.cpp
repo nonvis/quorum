@@ -93,7 +93,7 @@ static void print_conversations(sui::quorum::Database& db) {
             std::cout << "  #" << id
                       << "  " << (state ? state : "?");
             if (!current.empty()) std::cout << " [" << current << "]";
-            std::cout << "  round " << round << "/" << max_r
+            std::cout << "  turn " << round << "/" << max_r
                       << "  $" << spent << "/$" << budget
                       << "  " << goal;
             if (!reason.empty()) std::cout << "  (" << reason << ")";
@@ -445,7 +445,7 @@ int main(int argc, char* argv[]) {
     std::cout << "  Conversations: "
               << (cfg.conversations.enabled ? "enabled" : "disabled")
               << " (budget: $" << cfg.conversations.default_budget_usd
-              << ", max_rounds: " << cfg.conversations.default_max_rounds
+              << ", max_turns: " << cfg.conversations.default_max_rounds
               << ")\n";
 
     if (verbose) {

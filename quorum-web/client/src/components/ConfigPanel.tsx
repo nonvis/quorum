@@ -14,11 +14,9 @@ export function ConfigPanel({ onClose }: { onClose: () => void }) {
       setForm({
         target_dir: c.daemon.target_dir ?? "",
         log_level: c.daemon.log_level ?? "info",
-        daily_limit_usd: String(c.budget.daily_limit_usd ?? ""),
         hourly_limit_usd: String(c.budget.hourly_limit_usd ?? ""),
-        task_timeout_seconds: String(c.budget.task_timeout_seconds ?? ""),
         default_budget_usd: String(c.conversations.default_budget_usd ?? ""),
-        default_max_rounds: String(c.conversations.default_max_rounds ?? ""),
+        default_max_turns: String(c.conversations.default_max_turns ?? ""),
         leader: c.conversations.leader ?? "",
         default_path: c.conversations.default_path ?? "",
       });
@@ -30,7 +28,7 @@ export function ConfigPanel({ onClose }: { onClose: () => void }) {
     try {
       const updates: Record<string, string | number | boolean> = {};
       for (const [key, value] of Object.entries(form)) {
-        if (["daily_limit_usd", "hourly_limit_usd", "task_timeout_seconds", "default_budget_usd", "default_max_rounds"].includes(key)) {
+        if (["hourly_limit_usd", "default_budget_usd", "default_max_turns"].includes(key)) {
           const num = parseFloat(value);
           if (!isNaN(num)) updates[key] = num;
         } else {
@@ -132,9 +130,7 @@ export function ConfigPanel({ onClose }: { onClose: () => void }) {
         {/* Budget section */}
         <div className="px-5 py-3">
           <h3 className="text-zinc-500 text-xs uppercase tracking-wide mb-2">Budget</h3>
-          <Field label="Daily Limit (USD)" field="daily_limit_usd" type="number" />
           <Field label="Hourly Limit (USD)" field="hourly_limit_usd" type="number" />
-          <Field label="Task Timeout (sec)" field="task_timeout_seconds" type="number" />
           {editing && (
             <p className="text-amber-500 text-xs mt-2">Budget changes require daemon restart to take effect</p>
           )}
@@ -146,7 +142,7 @@ export function ConfigPanel({ onClose }: { onClose: () => void }) {
           <Field label="Leader" field="leader" />
           <Field label="Default Path" field="default_path" />
           <Field label="Default Budget (USD)" field="default_budget_usd" type="number" />
-          <Field label="Max Rounds" field="default_max_rounds" type="number" />
+          <Field label="Max Turns" field="default_max_turns" type="number" />
         </div>
 
         {/* Agents section */}

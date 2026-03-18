@@ -45,15 +45,13 @@ export interface ProjectConfig {
     log_level: string | null;
   };
   budget: {
-    daily_limit_usd: number | null;
     hourly_limit_usd: number | null;
-    task_timeout_seconds: number | null;
   };
   conversations: {
     leader: string | null;
     default_path: string | null;
     default_budget_usd: number | null;
-    default_max_rounds: number | null;
+    default_max_turns: number | null;
   };
   agents: string[];
 }

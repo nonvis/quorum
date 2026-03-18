@@ -30,8 +30,8 @@ export function StatsBanner({
         <span>{stats.active_conversations} active</span>
         <span className="text-white font-mono">
           ${stats.total_cost_usd.toFixed(2)}
-          {config?.budget.daily_limit_usd && (
-            <span className="text-zinc-500"> / ${config.budget.daily_limit_usd.toFixed(2)}</span>
+          {config?.budget.hourly_limit_usd && (
+            <span className="text-zinc-500"> / ${config.budget.hourly_limit_usd.toFixed(2)}/hr</span>
           )}
         </span>
         {onSettingsClick && (

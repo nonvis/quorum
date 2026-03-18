@@ -124,7 +124,7 @@ export function ConversationCard({
             <div key={task.id} className="text-sm">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-zinc-300 font-medium">
-                  {task.agent} ({task.task_type})
+                  {task.agent}
                 </span>
                 <div className="flex gap-3 text-zinc-500 text-xs">
                   {task.token_in != null && <span>{task.token_in.toLocaleString()} in</span>}
