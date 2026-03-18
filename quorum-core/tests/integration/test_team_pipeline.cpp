@@ -47,7 +47,8 @@ static void init_schema(sui::quorum::Database& db) {
         "  completed_at TEXT,"
         "  paused_reason TEXT,"
         "  current_agent TEXT,"
-        "  path_index INTEGER NOT NULL DEFAULT 0"
+        "  path_index INTEGER NOT NULL DEFAULT 0,"
+        "  team TEXT"
         ")"
     );
     db.execute(
