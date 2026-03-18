@@ -34,6 +34,7 @@ dist/
 
 # Data (runtime)
 data/
+data-e2e/
 *.db
 *.db-wal
 *.db-shm

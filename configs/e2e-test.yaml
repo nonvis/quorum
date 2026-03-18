@@ -1,0 +1,26 @@
+# E2E Verification — Team Mode Test
+# ==================================
+# Phase 2 milestone: 4-agent team builds a C++ hello world.
+# Run from repo root: ./build/quorum_daemon --config configs/e2e-test.yaml converse "..."
+
+daemon:
+  pid_file: /tmp/quorum-e2e-test.pid
+  data_dir: ./data-e2e
+  log_level: info
+  target_dir: /tmp/quorum-e2e-target
+
+budget:
+  hourly_limit_usd: 2.00
+
+conversations:
+  enabled: true
+  leader: leader
+  default_path: [leader, thinker, doer, scribe]
+  default_max_rounds: 20
+  default_budget_usd: 5.0
+
+agents:
+  - config: configs/agents/e2e-test/leader.yaml
+  - config: configs/agents/e2e-test/thinker.yaml
+  - config: configs/agents/e2e-test/doer.yaml
+  - config: configs/agents/e2e-test/scribe.yaml

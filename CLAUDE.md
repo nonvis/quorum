@@ -16,9 +16,11 @@ quorum/
 ├── configs/                     # Project configs (one YAML per project)
 │   ├── mm-bot.yaml              # mm-bot project config (agents, budget, conversations)
 │   ├── hello-world.yaml         # hello-world verification project config
+│   ├── e2e-test.yaml            # E2E verification config (4-agent team builds hello world)
 │   ├── agents/
 │   │   ├── mm-bot/              # mm-bot agent YAMLs (market_analyst, bot_analyst, etc.)
-│   │   └── hello-world/         # hello-world agent YAMLs (thinker, executor, reviewer)
+│   │   ├── hello-world/         # hello-world agent YAMLs (thinker, executor, reviewer)
+│   │   └── e2e-test/            # E2E test agent YAMLs (leader, thinker, doer, scribe)
 │   └── tasks/                   # Task YAML definitions
 ├── quorum-core/                 # C++20 (CLOSED SOURCE) — orchestrator daemon
 │   ├── CMakeLists.txt
@@ -367,8 +369,8 @@ Phase 2 tasks:
 6. ~~Config parser~~ ✓ (skill_file field in AgentMetadata + load_agent_config, auto-derive agent_class from role, validate_config checks leader/default_path/skill_file existence, 7 tests in test_config_validation.cpp)
 7. ~~State cleanup~~ ✓ (renamed display labels, removed legacy config fields)
 8. ~~Agent generator~~ ✓ (`agent create` CLI subcommand — scaffolds YAML config, vault dirs, CONTEXT.md; extracted run_command() to utils/subprocess.h; AI mode via claude -p or --no-ai offline mode with template copy/minimal fallback; role validation, duplicate prevention; 6 tests in test_agent_create.cpp, 16 tests pass)
-9. Integration tests — team mode end-to-end test suite
-10. E2E verification — full conversation loop with real agents
+9. ~~Integration tests~~ ✓ (10 team mode pipeline tests, 61 assertions)
+10. ~~E2E verification~~ ✓ (live 4-agent conversation: leader/thinker/doer/scribe built C++ hello world via real `claude -p` invocations. 7 tasks, 5 handoffs, session reuse confirmed, $0.47 total cost. Config: `configs/e2e-test.yaml`, target: `/tmp/quorum-e2e-target/`, data: `data-e2e/`. All 8 success criteria passed: conversation done, 5 handoffs, compilable code, 4 knowledge entries, scribe summary, consistent sessions, cost under budget, clean exit)
 
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 
@@ -423,6 +425,10 @@ cd ~/projects/myapp && claude -p "prompt" --dangerously-skip-permissions --outpu
 # Agent invocation with session (conversation mode)
 claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" --session-id <uuid> --output-format json  # first use
 claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" -r <uuid> --output-format json            # resume
+
+# E2E test — 4-agent team builds hello world (uses data-e2e/, /tmp/quorum-e2e-target/)
+./build/quorum_daemon --config configs/e2e-test.yaml --verbose \
+  converse "Create a C++ hello world program in the target directory. The program should print 'Hello from Quorum!' and return 0. Include a simple test."
 
 # Troubleshooting: clear stale SQLite WAL/SHM if daemon sees wrong data
 rm -f data/quorum.db-wal data/quorum.db-shm

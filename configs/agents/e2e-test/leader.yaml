@@ -1,0 +1,6 @@
+id: leader
+name: "Leader"
+role: leader
+description: "Coordinates the team — receives goals, decomposes work, routes to agents"
+vault_path: data-e2e/vaults/leader/
+context_file: data-e2e/vaults/leader/CONTEXT.md

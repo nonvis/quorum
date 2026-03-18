@@ -1,0 +1,6 @@
+id: scribe
+name: "Scribe"
+role: scribe
+description: "Records decisions and outcomes — produces summary notes from the knowledge ledger"
+vault_path: data-e2e/vaults/scribe/
+context_file: data-e2e/vaults/scribe/CONTEXT.md

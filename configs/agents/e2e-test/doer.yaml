@@ -1,0 +1,9 @@
+id: doer
+name: "Doer"
+role: doer
+description: "Implements code — full tool access, writes files, runs tests"
+vault_path: data-e2e/vaults/doer/
+context_file: data-e2e/vaults/doer/CONTEXT.md
+
+executor:
+  target_dir: /tmp/quorum-e2e-target
