@@ -364,6 +364,8 @@ int main(int argc, char* argv[]) {
     }
     auto& cfg = *cfg_opt;
 
+    sui::quorum::validate_config(cfg);
+
     // Apply conversation defaults from config (sentinels -> config values)
     if (conv_budget < 0) conv_budget = cfg.conversations.default_budget_usd;
     if (conv_max_rounds < 0) conv_max_rounds = cfg.conversations.default_max_rounds;

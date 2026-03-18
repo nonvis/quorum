@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 
@@ -83,6 +84,7 @@ struct AgentMetadata {
     std::string config_path;
     std::string vault_path;
     std::string context_file;
+    std::string skill_file;               // path to SKILL.md (optional)
     std::string target_dir;               // working directory for claude -p (inherits from daemon.target_dir)
 };
 
@@ -133,6 +135,7 @@ inline std::optional<AgentMetadata> load_agent_config(const std::string& path) {
 
     AgentMetadata agent;
     agent.config_path = path;
+    bool agent_class_explicit = false;
     std::string line;
     std::string section;
 
@@ -162,18 +165,25 @@ inline std::optional<AgentMetadata> load_agent_config(const std::string& path) {
         // Top-level fields (indent < 2)
         if (indent < 2) {
             if (key == "id") agent.id = val;
-            else if (key == "agent_class") agent.agent_class = val;
+            else if (key == "agent_class") { agent.agent_class = val; agent_class_explicit = true; }
             else if (key == "name") agent.name = val;
             else if (key == "description") agent.description = val;
             else if (key == "role") agent.role = val;
             else if (key == "vault_path") agent.vault_path = val;
             else if (key == "context_file") agent.context_file = val;
+            else if (key == "skill_file") agent.skill_file = val;
         }
 
         // Fields inside "executor" section
         if (section == "executor") {
             if (key == "target_dir") agent.target_dir = val;
         }
+    }
+
+    // Auto-derive agent_class from role (doer -> executor)
+    // Only when agent_class was NOT explicitly set in YAML
+    if (!agent_class_explicit && agent.role == "doer") {
+        agent.agent_class = "executor";
     }
 
     if (agent.id.empty()) {
@@ -334,6 +344,55 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
     }
 
     return cfg;
+}
+
+inline bool validate_config(const QuorumConfig& cfg) {
+    bool valid = true;
+
+    // Check leader exists in agents list
+    if (!cfg.conversations.leader.empty()) {
+        bool found = false;
+        for (const auto& a : cfg.agents) {
+            if (a.id == cfg.conversations.leader) { found = true; break; }
+        }
+        if (!found) {
+            std::cerr << "WARNING: conversations.leader '"
+                      << cfg.conversations.leader
+                      << "' not found in agents list\n";
+            valid = false;
+        }
+    }
+
+    // Check default_path agents exist in agents list
+    for (const auto& path_agent : cfg.conversations.default_path) {
+        bool found = false;
+        for (const auto& a : cfg.agents) {
+            if (a.id == path_agent) { found = true; break; }
+        }
+        if (!found) {
+            std::cerr << "WARNING: default_path agent '"
+                      << path_agent
+                      << "' not found in agents list\n";
+            valid = false;
+        }
+    }
+
+    // Check skill_file paths exist (expand ~ to HOME)
+    for (const auto& a : cfg.agents) {
+        if (!a.skill_file.empty()) {
+            std::string path = a.skill_file;
+            if (path.starts_with("~/")) {
+                auto home = std::getenv("HOME");
+                if (home) path = std::string(home) + path.substr(1);
+            }
+            if (!std::filesystem::exists(path)) {
+                std::cerr << "WARNING: agent '" << a.id
+                          << "' skill_file not found: " << path << "\n";
+            }
+        }
+    }
+
+    return valid;
 }
 
 } // namespace sui::quorum

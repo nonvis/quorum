@@ -77,6 +77,7 @@ public:
                                         const std::string& task_type,
                                         const std::string& task_description,
                                         const std::string& team_roster = {},
+                                        const std::string& skill_file = {},
                                         ContextBudget budget = {}) const {
         std::string prompt;
         size_t files_loaded = 0;
@@ -90,6 +91,25 @@ public:
                 prompt += content;
                 prompt += "\n\n";
                 ++files_loaded;
+            }
+        }
+
+        // Load SKILL.md if provided
+        if (!skill_file.empty()) {
+            std::string spath = skill_file;
+            if (spath.starts_with("~/")) {
+                auto home = std::getenv("HOME");
+                if (home) spath = std::string(home) + spath.substr(1);
+            }
+            auto skill_path = std::filesystem::path(spath);
+            if (std::filesystem::exists(skill_path)) {
+                auto content = read_file(skill_path);
+                if (!content.empty()) {
+                    prompt += "# Skill Reference\n\n";
+                    prompt += content;
+                    prompt += "\n\n";
+                    ++files_loaded;
+                }
             }
         }
 

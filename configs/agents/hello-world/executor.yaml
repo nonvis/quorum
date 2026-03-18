@@ -4,7 +4,6 @@
 # Runs in target_dir, writes code, compiles, tests.
 
 id: executor
-agent_class: executor
 name: "Executor"
 role: doer
 description: "Implements proposals — full tool access, writes and tests code"

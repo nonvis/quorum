@@ -127,3 +127,7 @@ add_test(NAME test_team_pipeline COMMAND test_team_pipeline)
 add_executable(test_roster_injection tests/unit/test_roster_injection.cpp)
 target_include_directories(test_roster_injection PRIVATE src)
 add_test(NAME test_roster_injection COMMAND test_roster_injection)
+
+add_executable(test_config_validation tests/unit/test_config_validation.cpp)
+target_include_directories(test_config_validation PRIVATE src)
+add_test(NAME test_config_validation COMMAND test_config_validation)

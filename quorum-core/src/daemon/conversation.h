@@ -300,18 +300,20 @@ private:
             // Build roster
             auto roster = ContextAssembler::build_roster(agents_, agent, cfg_);
 
-            // Find agent metadata for vault path
+            // Find agent metadata for vault path + skill file
             std::string vault_dir;
+            std::string skill_file;
             for (const auto& a : agents_) {
                 if (a.id == agent) {
                     vault_dir = a.vault_path;
+                    skill_file = a.skill_file;
                     break;
                 }
             }
 
             // Assemble full prompt with vault context + roster + task
             if (!vault_dir.empty()) {
-                final_prompt = assembler_->assemble(agent, vault_dir, task_type, prompt, roster);
+                final_prompt = assembler_->assemble(agent, vault_dir, task_type, prompt, roster, skill_file);
             } else {
                 // No vault -- just roster + task
                 final_prompt = roster + "\n---\n\n# Current Task\n\n" + prompt + "\n";
