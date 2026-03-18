@@ -131,3 +131,7 @@ add_test(NAME test_roster_injection COMMAND test_roster_injection)
 add_executable(test_config_validation tests/unit/test_config_validation.cpp)
 target_include_directories(test_config_validation PRIVATE src)
 add_test(NAME test_config_validation COMMAND test_config_validation)
+
+add_executable(test_agent_create tests/unit/test_agent_create.cpp)
+target_include_directories(test_agent_create PRIVATE src)
+add_test(NAME test_agent_create COMMAND test_agent_create)

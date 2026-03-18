@@ -30,7 +30,7 @@ quorum/
 │   │   ├── chain/               # [DEFERRED] Sui RPC client, proposals, audit, PTB
 │   │   ├── seal/                # [DEFERRED] Seal encrypt/decrypt, access policies
 │   │   ├── storage/             # SQLite (WAL mode) — task queue, token tracking, conversations, knowledge ledger
-│   │   ├── utils/               # HTTP (libcurl), JSON (manual), crypto (ed25519), config, UUID
+│   │   ├── utils/               # HTTP (libcurl), JSON (manual), crypto (ed25519), config, UUID, subprocess
 │   │   ├── sdk/                 # [DEFERRED] libquorum public API
 │   │   └── cli/                 # quorum binary CLI commands
 │   └── tests/
@@ -190,7 +190,7 @@ Agents also produce VAULT_UPDATE blocks for persistent findings written to their
 
 Conversation Mode seeds a single goal and lets the daemon coordinate a team of agents. The `ConversationEngine` (`src/daemon/conversation.h`) manages state transitions and budget enforcement per conversation.
 
-**NOTE:** Legacy pipelines were stripped in task #0. HANDOFF parsing in task #1. KNOWLEDGE parsing + ledger in task #2. Team mode ConversationEngine with generic ball-passing loop in task #3. Team roster injection into agent prompts in task #4. Web dashboard updated for team mode in task #5 (removed gate/pipeline/auto-approve, added respond controls for `waiting_for_human`, updated states to active/waiting_for_human/done/closed/paused).
+**NOTE:** Legacy pipelines were stripped in task #0. HANDOFF parsing in task #1. KNOWLEDGE parsing + ledger in task #2. Team mode ConversationEngine with generic ball-passing loop in task #3. Team roster injection into agent prompts in task #4. Web dashboard updated for team mode in task #5 (removed gate/pipeline/auto-approve, added respond controls for `waiting_for_human`, updated states to active/waiting_for_human/done/closed/paused). Config parser (skill_file, auto-derive agent_class, validate_config) in task #6. State cleanup (rename labels, remove legacy fields) in task #7. Agent generator CLI (`agent create` subcommand, subprocess.h extraction) in task #8.
 
 **States:** `active`, `waiting_for_human`, `done`, `closed`, `paused` (enum `ConvState`).
 
@@ -352,7 +352,7 @@ Phase 1 completed items (preserved for reference):
 9. ~~Conversation schema + CRUD~~ ✓
 10. ~~Session resume in Invoker~~ ✓
 11. ~~Sequential dispatch enforcement~~ ✓
-12. ~~CLI subcommands~~ ✓ (`converse`, `status`, `resume`, `close`)
+12. ~~CLI subcommands~~ ✓ (`converse`, `status`, `resume`, `close`, `agent create`)
 13. ~~ConversationConfig~~ ✓ (enabled, default_max_rounds, default_budget_usd)
 14. ~~AgentMetadata + executor support in Invoker~~ ✓
 15. ~~Multi-project config layout~~ ✓
@@ -364,9 +364,9 @@ Phase 2 tasks:
 3. ~~Generic conversation loop~~ ✓ (ConversationEngine rewritten with team mode ball-passing via HANDOFF blocks, on_task_complete() routes to next agent or human, budget/round enforcement, default_path fallback)
 4. ~~Team roster injection~~ ✓ (context assembler injects agent roster and routing instructions into leader/team prompts)
 5. ~~Web dashboard team mode~~ ✓ (removed gate/pipeline/auto-approve from server+client, added POST /api/respond/:id endpoint, added RespondControls component for waiting_for_human state, updated StateBadge to team mode states, updated ConfigPanel with leader/default_path fields, deleted GateControls.tsx, 12 files changed + 1 created + 1 deleted)
-6. Config parser — parse leader, default_path, role, skill_file from YAML
-7. State simplification — clean up ConvState transitions for team mode
-8. Agent generator — scaffold new agent configs from archetypes
+6. ~~Config parser~~ ✓ (skill_file field in AgentMetadata + load_agent_config, auto-derive agent_class from role, validate_config checks leader/default_path/skill_file existence, 7 tests in test_config_validation.cpp)
+7. ~~State cleanup~~ ✓ (renamed display labels, removed legacy config fields)
+8. ~~Agent generator~~ ✓ (`agent create` CLI subcommand — scaffolds YAML config, vault dirs, CONTEXT.md; extracted run_command() to utils/subprocess.h; AI mode via claude -p or --no-ai offline mode with template copy/minimal fallback; role validation, duplicate prevention; 6 tests in test_agent_create.cpp, 16 tests pass)
 9. Integration tests — team mode end-to-end test suite
 10. E2E verification — full conversation loop with real agents
 
@@ -407,6 +407,12 @@ cmake -B build && cmake --build build -j$(nproc)
 
 # Close a conversation (no PID lock, no daemon)
 ./build/quorum_daemon --config configs/mm-bot.yaml close --conversation 1
+
+# Scaffold a new agent (AI-generated CONTEXT.md)
+./build/quorum_daemon --config configs/mm-bot.yaml agent create --role thinker --name my-agent --project mm-bot --description "Analyzes X"
+
+# Scaffold a new agent (offline — copy template as-is)
+./build/quorum_daemon --config configs/mm-bot.yaml agent create --role doer --name my-doer --project mm-bot --target-dir ~/myproject --no-ai
 
 # Agent invocation — analyst (what the daemon spawns, read-only tools)
 claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" --output-format json

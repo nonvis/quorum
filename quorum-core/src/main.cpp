@@ -22,6 +22,7 @@
 #include "agent/context_assembler.h"
 #include "agent/output_parser.h"
 #include "vault/vault_manager.h"
+#include "cli/agent_create.h"
 
 namespace fs = std::filesystem;
 
@@ -125,13 +126,22 @@ static void print_usage(const char* prog) {
               << "  " << prog << " --config <path> resume --conversation <id> Resume paused\n"
               << "  " << prog << " --config <path> close --conversation <id>  Close conversation\n"
               << "  " << prog << " --config <path> respond --conversation <id> \"text\"  Respond to human request\n"
+              << "  " << prog << " --config <path> agent create --role <r> --name <n> --project <p>\n"
               << "\nOptions:\n"
               << "  --config <path>      Path to config YAML (required, e.g. configs/mm-bot.yaml)\n"
               << "  --verbose            Enable verbose logging\n"
               << "  --budget <usd>       Per-conversation budget (default: 5.0)\n"
               << "  --max-rounds <n>     Max revision rounds (default: 3)\n"
               << "  --conversation <id>  Conversation ID for resume/close\n"
-              << "  --help               Show this message\n";
+              << "  --help               Show this message\n"
+              << "\nAgent create options:\n"
+              << "  --role <role>        Agent role (leader|thinker|doer|reviewer|scribe|librarian)\n"
+              << "  --name <name>        Agent ID\n"
+              << "  --project <name>     Project subfolder in configs/agents/\n"
+              << "  --description <d>    Agent description (optional)\n"
+              << "  --skill-file <path>  Path to SKILL.md (optional)\n"
+              << "  --target-dir <path>  Working directory for doer agents (optional)\n"
+              << "  --no-ai              Skip AI generation, copy template as-is\n";
 }
 
 // Initialize all database tables
@@ -307,6 +317,8 @@ int main(int argc, char* argv[]) {
     int64_t conv_id_arg = 0;
     std::string goal_text;
     std::string response_text;
+    std::string agent_subcmd;
+    sui::quorum::cli::AgentCreateParams agent_params;
 
     if (subcommand == "converse") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
@@ -324,6 +336,26 @@ int main(int argc, char* argv[]) {
                 conv_id_arg = std::stoll(sub_args[++i]);
             } else if (subcommand == "respond") {
                 response_text = sub_args[i];
+            }
+        }
+    } else if (subcommand == "agent") {
+        for (size_t i = 0; i < sub_args.size(); ++i) {
+            if (agent_subcmd.empty() && sub_args[i] == "create") {
+                agent_subcmd = "create";
+            } else if (sub_args[i] == "--role" && i + 1 < sub_args.size()) {
+                agent_params.role = sub_args[++i];
+            } else if (sub_args[i] == "--name" && i + 1 < sub_args.size()) {
+                agent_params.name = sub_args[++i];
+            } else if (sub_args[i] == "--project" && i + 1 < sub_args.size()) {
+                agent_params.project = sub_args[++i];
+            } else if (sub_args[i] == "--description" && i + 1 < sub_args.size()) {
+                agent_params.description = sub_args[++i];
+            } else if (sub_args[i] == "--skill-file" && i + 1 < sub_args.size()) {
+                agent_params.skill_file = sub_args[++i];
+            } else if (sub_args[i] == "--target-dir" && i + 1 < sub_args.size()) {
+                agent_params.target_dir = sub_args[++i];
+            } else if (sub_args[i] == "--no-ai") {
+                agent_params.no_ai = true;
             }
         }
     } else if (!subcommand.empty() && subcommand != "status") {
@@ -347,6 +379,20 @@ int main(int argc, char* argv[]) {
     auto& cfg = *cfg_opt;
 
     sui::quorum::validate_config(cfg);
+
+    // ── Agent subcommand early exit (no DB, no daemon) ──────────────────
+    if (subcommand == "agent") {
+        if (agent_subcmd != "create") {
+            std::cerr << "ERROR: unknown agent subcommand. Usage: agent create ...\n";
+            return 1;
+        }
+        if (agent_params.role.empty() || agent_params.name.empty() || agent_params.project.empty()) {
+            std::cerr << "ERROR: agent create requires --role, --name, and --project\n";
+            return 1;
+        }
+        agent_params.data_dir = cfg.daemon.data_dir;
+        return sui::quorum::cli::create_agent(agent_params);
+    }
 
     // Apply conversation defaults from config (sentinels -> config values)
     if (conv_budget < 0) conv_budget = cfg.conversations.default_budget_usd;
