@@ -264,24 +264,6 @@ static std::string get_task_agent(sui::quorum::Database& db, int64_t task_id) {
     return agent;
 }
 
-// Look up the task_type for a given task id.
-// Returns empty string if the task doesn't exist.
-static std::string get_task_type(sui::quorum::Database& db, int64_t task_id) {
-    std::string task_type;
-    db.query(
-        "SELECT task_type FROM tasks WHERE id = ?",
-        [&](sqlite3_stmt* stmt) {
-            sqlite3_bind_int64(stmt, 1, task_id);
-        },
-        [&](sqlite3_stmt* stmt) {
-            const char* text = reinterpret_cast<const char*>(
-                sqlite3_column_text(stmt, 0));
-            if (text) task_type = text;
-        }
-    );
-    return task_type;
-}
-
 int main(int argc, char* argv[]) {
     // Disable stdout buffering for real-time log tailing when redirected to file
     std::setbuf(stdout, nullptr);
