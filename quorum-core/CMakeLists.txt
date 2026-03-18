@@ -136,3 +136,7 @@ add_test(NAME test_config_validation COMMAND test_config_validation)
 add_executable(test_agent_create tests/unit/test_agent_create.cpp)
 target_include_directories(test_agent_create PRIVATE src)
 add_test(NAME test_agent_create COMMAND test_agent_create)
+
+add_executable(test_quorum_init tests/unit/test_quorum_init.cpp)
+target_include_directories(test_quorum_init PRIVATE src)
+add_test(NAME test_quorum_init COMMAND test_quorum_init)

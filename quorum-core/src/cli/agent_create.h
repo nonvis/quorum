@@ -36,11 +36,14 @@ inline int create_agent(const AgentCreateParams& p) {
         return 1;
     }
 
+    // 1b. Detect project-local .quorum/ layout
+    bool is_local = fs::exists(".quorum");
+
     // 2. Derive paths
     auto agent_class = (p.role == "doer") ? "executor" : "analyst";
-    auto config_dir = "configs/agents/" + p.project;
+    auto config_dir = is_local ? std::string(".quorum/agents") : ("configs/agents/" + p.project);
     auto config_path = config_dir + "/" + p.name + ".yaml";
-    auto vault_dir = p.data_dir + "/vaults/" + p.name;
+    auto vault_dir = is_local ? (".quorum/vaults/" + p.name) : (p.data_dir + "/vaults/" + p.name);
     auto context_path = vault_dir + "/CONTEXT.md";
     auto knowledge_dir = vault_dir + "/knowledge";
 
@@ -63,8 +66,10 @@ inline int create_agent(const AgentCreateParams& p) {
         yaml += "description: \"" + p.description + "\"\n";
     }
     yaml += "\n";
-    yaml += "vault_path: " + vault_dir + "/\n";
-    yaml += "context_file: " + context_path + "\n";
+    auto yaml_vault = is_local ? (".quorum/vaults/" + p.name + "/") : (vault_dir + "/");
+    auto yaml_context = is_local ? (".quorum/vaults/" + p.name + "/CONTEXT.md") : context_path;
+    yaml += "vault_path: " + yaml_vault + "\n";
+    yaml += "context_file: " + yaml_context + "\n";
     if (!p.skill_file.empty()) {
         yaml += "skill_file: " + p.skill_file + "\n";
     }
@@ -178,8 +183,16 @@ inline int create_agent(const AgentCreateParams& p) {
     }
 
     std::cout << "  Created: " << knowledge_dir << "/\n";
-    std::cout << "\nAgent '" << p.name << "' scaffolded. Add to your project YAML:\n";
-    std::cout << "  - config: " << config_path << "\n";
+
+    if (is_local) {
+        // Auto-append to .quorum/config.yaml
+        std::ofstream cfg_out(".quorum/config.yaml", std::ios::app);
+        cfg_out << "  - config: .quorum/agents/" << p.name << ".yaml\n";
+        std::cout << "\nAgent '" << p.name << "' added to .quorum/config.yaml\n";
+    } else {
+        std::cout << "\nAgent '" << p.name << "' scaffolded. Add to your project YAML:\n";
+        std::cout << "  - config: " << config_path << "\n";
+    }
 
     return 0;
 }

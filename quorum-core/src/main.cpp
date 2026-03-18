@@ -23,6 +23,7 @@
 #include "agent/output_parser.h"
 #include "vault/vault_manager.h"
 #include "cli/agent_create.h"
+#include "cli/init.h"
 
 namespace fs = std::filesystem;
 
@@ -119,6 +120,7 @@ static void print_conversations(sui::quorum::Database& db) {
 
 static void print_usage(const char* prog) {
     std::cerr << "Usage:\n"
+              << "  " << prog << " init                                      Initialize .quorum/ in current directory\n"
               << "  " << prog << " --config <path>                            Start daemon\n"
               << "  " << prog << " --config <path> converse \"goal text\"       Start conversation + daemon\n"
               << "  " << prog << " --config <path> converse --budget 3.0 \"g\"  Custom budget\n"
@@ -358,10 +360,17 @@ int main(int argc, char* argv[]) {
                 agent_params.no_ai = true;
             }
         }
+    } else if (subcommand == "init") {
+        // No additional flags needed
     } else if (!subcommand.empty() && subcommand != "status") {
         std::cerr << "Unknown subcommand: " << subcommand << "\n";
         print_usage(argv[0]);
         return 1;
+    }
+
+    // Init doesn't need --config -- it creates the config
+    if (subcommand == "init") {
+        return sui::quorum::cli::init_project();
     }
 
     if (config_path.empty()) {

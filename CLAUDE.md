@@ -4,7 +4,7 @@
 
 Quorum is a **multi-agent orchestration framework**. A deterministic C++20 daemon orchestrates independent AI agents that coordinate through structured HANDOFF blocks and persist knowledge in local vaults.
 
-**Current phase: Phase 2 — Team Mode.** Pure local orchestration on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) are deferred indefinitely.
+**Current phase: Phase 3 — Project-Local Layout.** Pure local orchestration on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) are deferred indefinitely.
 
 **Tagline:** "Define your agents, point them at your project, let the daemon run."
 
@@ -34,7 +34,7 @@ quorum/
 │   │   ├── storage/             # SQLite (WAL mode) — task queue, token tracking, conversations, knowledge ledger
 │   │   ├── utils/               # HTTP (libcurl), JSON (manual), crypto (ed25519), config, UUID, subprocess
 │   │   ├── sdk/                 # [DEFERRED] libquorum public API
-│   │   └── cli/                 # quorum binary CLI commands
+│   │   └── cli/                 # quorum binary CLI commands (init.h, agent_create.h)
 │   └── tests/
 ├── data/                        # Runtime data (gitignored)
 │   └── vaults/                  # Per-agent vaults (CONTEXT.md, knowledge/)
@@ -192,7 +192,7 @@ Agents also produce VAULT_UPDATE blocks for persistent findings written to their
 
 Conversation Mode seeds a single goal and lets the daemon coordinate a team of agents. The `ConversationEngine` (`src/daemon/conversation.h`) manages state transitions and budget enforcement per conversation.
 
-**NOTE:** Legacy pipelines were stripped in task #0. HANDOFF parsing in task #1. KNOWLEDGE parsing + ledger in task #2. Team mode ConversationEngine with generic ball-passing loop in task #3. Team roster injection into agent prompts in task #4. Web dashboard updated for team mode in task #5 (removed gate/pipeline/auto-approve, added respond controls for `waiting_for_human`, updated states to active/waiting_for_human/done/closed/paused). Config parser (skill_file, auto-derive agent_class, validate_config) in task #6. State cleanup (rename labels, remove legacy fields) in task #7. Agent generator CLI (`agent create` subcommand, subprocess.h extraction) in task #8.
+**NOTE:** Legacy pipelines were stripped in task #0. HANDOFF parsing in task #1. KNOWLEDGE parsing + ledger in task #2. Team mode ConversationEngine with generic ball-passing loop in task #3. Team roster injection into agent prompts in task #4. Web dashboard updated for team mode in task #5 (removed gate/pipeline/auto-approve, added respond controls for `waiting_for_human`, updated states to active/waiting_for_human/done/closed/paused). Config parser (skill_file, auto-derive agent_class, validate_config) in task #6. State cleanup (rename labels, remove legacy fields) in task #7. Agent generator CLI (`agent create` subcommand, subprocess.h extraction) in task #8. Phase 3 task #0: `quorum init` creates `.quorum/` project-local layout; `agent create` auto-detects it.
 
 **States:** `active`, `waiting_for_human`, `done`, `closed`, `paused` (enum `ConvState`).
 
@@ -313,6 +313,30 @@ executor:
 
 **Config loading:** At startup, `load_config()` reads the project config YAML (e.g. `mm-bot.yaml`) agent list, then calls `load_agent_config()` for each entry. This parses the individual agent YAML into `AgentMetadata` structs (id, name, agent_class, config_path, vault_path, context_file, target_dir). The Invoker receives `AgentMetadata` at dispatch time to build the appropriate `claude -p` command.
 
+### Project-Local Layout (`.quorum/`)
+
+`quorum init` creates a self-contained `.quorum/` directory in any project root:
+
+```
+myproject/
+└── .quorum/
+    ├── config.yaml              # Project config (budget, conversations, agent list)
+    ├── .gitignore               # Ignores quorum.db, WAL/SHM, knowledge/ dirs
+    ├── agents/                  # Agent YAML configs
+    │   └── leader.yaml          # Default leader (created by init)
+    ├── vaults/                  # Per-agent vaults
+    │   └── leader/
+    │       ├── CONTEXT.md       # Agent identity + instructions
+    │       └── knowledge/       # Accumulated findings
+    └── teams/                   # Team definitions (future)
+```
+
+**Two layouts coexist:**
+- **Centralized** (`configs/` + `data/`): existing multi-project layout, requires `--config`
+- **Project-local** (`.quorum/`): self-contained per-project layout, created by `quorum init`
+
+`agent create` auto-detects `.quorum/` in the current directory. When present, it writes configs to `.quorum/agents/`, vaults to `.quorum/vaults/`, and auto-appends to `.quorum/config.yaml`. When absent, it uses the centralized `configs/agents/` + `data/vaults/` layout.
+
 ## Move Contract Conventions (Deferred — Phase 1+)
 
 - All proposal state transitions enforce the state machine (assert on invalid transitions)
@@ -340,7 +364,7 @@ executor:
 
 ## Current Phase
 
-**Phase 2: Team Mode** — Replace legacy analyst/executor pipelines with flexible team-based agent coordination.
+**Phase 3: Project-Local Layout** — Make Quorum work from any project directory with `quorum init` + `.quorum/` convention. Phase 2 (Team Mode) complete.
 
 Phase 1 completed items (preserved for reference):
 1. ~~C++ daemon skeleton~~ ✓
@@ -354,7 +378,7 @@ Phase 1 completed items (preserved for reference):
 9. ~~Conversation schema + CRUD~~ ✓
 10. ~~Session resume in Invoker~~ ✓
 11. ~~Sequential dispatch enforcement~~ ✓
-12. ~~CLI subcommands~~ ✓ (`converse`, `status`, `resume`, `close`, `agent create`)
+12. ~~CLI subcommands~~ ✓ (`init`, `converse`, `status`, `resume`, `close`, `agent create`)
 13. ~~ConversationConfig~~ ✓ (enabled, default_max_rounds, default_budget_usd)
 14. ~~AgentMetadata + executor support in Invoker~~ ✓
 15. ~~Multi-project config layout~~ ✓
@@ -372,6 +396,9 @@ Phase 2 tasks:
 9. ~~Integration tests~~ ✓ (10 team mode pipeline tests, 61 assertions)
 10. ~~E2E verification~~ ✓ (live 4-agent conversation: leader/thinker/doer/scribe built C++ hello world via real `claude -p` invocations. 7 tasks, 5 handoffs, session reuse confirmed, $0.47 total cost. Config: `configs/e2e-test.yaml`, target: `/tmp/quorum-e2e-target/`, data: `data-e2e/`. All 8 success criteria passed: conversation done, 5 handoffs, compilable code, 4 knowledge entries, scribe summary, consistent sessions, cost under budget, clean exit)
 
+Phase 3 tasks:
+0. ~~`quorum init`~~ ✓ (`init` CLI subcommand — creates `.quorum/` directory with config.yaml, leader agent YAML, CONTEXT.md, .gitignore, vault dirs; `agent create` detects `.quorum/` and uses project-local paths + auto-appends to config.yaml; no `--config` required for init; 6 tests in test_quorum_init.cpp, 25 assertions pass)
+
 **Goal:** Daemon spawns `claude -p` processes, manages task queue, coordinates multiple agents through filesystem vaults. Fully automated, runs unattended for hours.
 
 ### Known Issues
@@ -388,6 +415,12 @@ Phase 2 tasks:
 ```bash
 # Build
 cmake -B build && cmake --build build -j$(nproc)
+
+# Initialize a new project (creates .quorum/ in current directory)
+cd ~/myproject && quorum init
+
+# Add agents to an initialized project
+quorum --config .quorum/config.yaml agent create --role doer --name my-dev --project . --target-dir .
 
 # Run daemon (no subcommand — plain daemon mode)
 ./build/quorum_daemon --config configs/mm-bot.yaml
