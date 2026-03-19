@@ -686,8 +686,7 @@ int main(int argc, char* argv[]) {
     std::cout << "  Dispatch:   sequential (one task at a time)\n";
     std::cout << "  Conversations: "
               << (cfg.conversations.enabled ? "enabled" : "disabled")
-              << " (budget: $" << cfg.conversations.default_budget_usd
-              << ", max_turns: " << cfg.conversations.default_max_rounds
+              << " (max_turns: " << cfg.conversations.default_max_rounds
               << ")\n";
     {
         auto window = get_budget_window(db);

@@ -46,7 +46,6 @@ inline int init_project() {
             << "conversations:\n"
             << "  enabled: true\n"
             << "  default_max_rounds: 20\n"
-            << "  default_budget_usd: 5.0\n"
             << "  leader: leader\n";
     }
     std::cout << "  Created: .quorum/config.yaml\n";
