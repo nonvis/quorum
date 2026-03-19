@@ -39,11 +39,45 @@ inline std::string generate_context_md(
     bool no_ai)
 {
     auto agent_class_str = (role == "doer") ? "executor" : "analyst";
-    auto template_path = std::string("docs/templates/CONTEXT_TEMPLATE.md");
-    bool template_exists = fs::exists(template_path);
 
-    if (no_ai || !template_exists) {
-        if (template_exists) {
+    // Role-specific template (primary), generic (fallback)
+    auto role_template = std::string("templates/agents/") + role + ".md";
+    auto generic_template = std::string("docs/templates/CONTEXT_TEMPLATE.md");
+    std::string template_path;
+    if (fs::exists(role_template))
+        template_path = role_template;
+    else if (fs::exists(generic_template))
+        template_path = generic_template;
+    bool template_exists = !template_path.empty();
+
+    if (no_ai) {
+        if (fs::exists(role_template)) {
+            // Read role template and substitute placeholders
+            std::ifstream tmpl(role_template);
+            std::string content{
+                std::istreambuf_iterator<char>(tmpl),
+                std::istreambuf_iterator<char>()
+            };
+            auto replace_all = [](std::string& s, const std::string& from, const std::string& to) {
+                size_t pos = 0;
+                while ((pos = s.find(from, pos)) != std::string::npos) {
+                    s.replace(pos, from.size(), to);
+                    pos += to.size();
+                }
+            };
+            replace_all(content, "{agent_name}", agent_name);
+            replace_all(content, "{description}", description.empty() ? std::string("Agent for this project") : description);
+            replace_all(content, "{target_dir}", target_dir.empty() ? std::string(".") : target_dir);
+            auto sname = std::string("none");
+            if (!skill_file.empty()) {
+                auto slash = skill_file.rfind('/');
+                sname = (slash != std::string::npos) ? skill_file.substr(slash + 1) : skill_file;
+            }
+            replace_all(content, "{skill_name}", sname);
+            std::ofstream ctx(context_path, std::ios::trunc);
+            ctx << content;
+            return "from role template";
+        } else if (template_exists) {
             fs::copy_file(template_path, context_path, fs::copy_options::overwrite_existing);
             return "template copy -- fill placeholders";
         } else {
@@ -54,6 +88,15 @@ inline std::string generate_context_md(
             ctx.close();
             return "minimal -- template not found";
         }
+    }
+
+    if (!template_exists) {
+        std::ofstream ctx(context_path, std::ios::trunc);
+        ctx << "# " << agent_name << " -- Agent Context\n\n"
+            << "## Role\n\nYou are the **" << agent_name << "** ("
+            << role << "). " << description << "\n";
+        ctx.close();
+        return "minimal -- template not found";
     }
 
     // AI mode: use claude -p to fill the template
@@ -161,6 +204,19 @@ inline int create_agent(const AgentCreateParams& p) {
     fs::create_directories(config_dir);
     fs::create_directories(knowledge_dir);
 
+    // 4b. Auto-detect role skill if none specified
+    auto skill_file = p.skill_file;
+    if (skill_file.empty() && !p.role.empty()) {
+        auto home = std::getenv("HOME");
+        if (home) {
+            auto role_skill = std::string(home) + "/.claude/skills/quorum-roles/" + p.role + "/SKILL.md";
+            if (fs::exists(role_skill)) {
+                skill_file = role_skill;
+                std::cout << "  Auto-detected skill: quorum-roles/" << p.role << "\n";
+            }
+        }
+    }
+
     // 5. Generate YAML config
     std::string yaml;
     yaml += "id: " + p.name + "\n";
@@ -174,8 +230,8 @@ inline int create_agent(const AgentCreateParams& p) {
     auto yaml_context = is_local ? (".quorum/vaults/" + p.name + "/CONTEXT.md") : context_path;
     yaml += "vault_path: " + yaml_vault + "\n";
     yaml += "context_file: " + yaml_context + "\n";
-    if (!p.skill_file.empty()) {
-        yaml += "skill_file: " + p.skill_file + "\n";
+    if (!skill_file.empty()) {
+        yaml += "skill_file: " + skill_file + "\n";
     }
     if (p.role == "doer") {
         yaml += "\nexecutor:\n";
@@ -195,7 +251,7 @@ inline int create_agent(const AgentCreateParams& p) {
 
     // 6. Generate CONTEXT.md
     auto gen_type = generate_context_md(context_path, p.name, p.role,
-                                         p.description, p.skill_file,
+                                         p.description, skill_file,
                                          p.target_dir, p.no_ai);
     std::cout << "  Created: " << context_path << " (" << gen_type << ")\n";
 
@@ -209,7 +265,7 @@ inline int create_agent(const AgentCreateParams& p) {
     }
 
     // Suggest skills for doer agents
-    if (p.role == "doer" && p.skill_file.empty()) {
+    if (p.role == "doer" && skill_file.empty()) {
         auto root = sui::quorum::discover_project_root();
         if (root) {
             auto skills = sui::quorum::cli::discover_skills(*root);
