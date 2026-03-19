@@ -160,6 +160,16 @@ static void print_usage(const char* prog) {
               << "  --regenerate         Regenerate CONTEXT.md without changing fields\n";
 }
 
+// Check if a column exists in a table (used to guard ALTER TABLE migrations)
+static bool column_exists(sui::quorum::Database& db, const std::string& table, const std::string& column) {
+    bool found = false;
+    db.query(
+        "SELECT 1 FROM pragma_table_info('" + table + "') WHERE name = '" + column + "'",
+        [&](sqlite3_stmt*) { found = true; }
+    );
+    return found;
+}
+
 // Initialize all database tables
 static void init_schema(sui::quorum::Database& db) {
     db.execute(
@@ -240,12 +250,17 @@ static void init_schema(sui::quorum::Database& db) {
         "  spent_usd REAL NOT NULL DEFAULT 0.0"
         ")"
     );
-    // Migration for existing databases
-    db.execute("ALTER TABLE tasks ADD COLUMN conversation_id INTEGER REFERENCES conversations(id)");
-    db.execute("ALTER TABLE tasks ADD COLUMN session_id TEXT");
-    db.execute("ALTER TABLE conversations ADD COLUMN current_agent TEXT");
-    db.execute("ALTER TABLE conversations ADD COLUMN path_index INTEGER NOT NULL DEFAULT 0");
-    db.execute("ALTER TABLE conversations ADD COLUMN team TEXT");
+    // Migrations for databases created before these columns existed
+    if (!column_exists(db, "tasks", "conversation_id"))
+        db.execute("ALTER TABLE tasks ADD COLUMN conversation_id INTEGER REFERENCES conversations(id)");
+    if (!column_exists(db, "tasks", "session_id"))
+        db.execute("ALTER TABLE tasks ADD COLUMN session_id TEXT");
+    if (!column_exists(db, "conversations", "current_agent"))
+        db.execute("ALTER TABLE conversations ADD COLUMN current_agent TEXT");
+    if (!column_exists(db, "conversations", "path_index"))
+        db.execute("ALTER TABLE conversations ADD COLUMN path_index INTEGER NOT NULL DEFAULT 0");
+    if (!column_exists(db, "conversations", "team"))
+        db.execute("ALTER TABLE conversations ADD COLUMN team TEXT");
 }
 
 // Count currently active (running) tasks
