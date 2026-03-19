@@ -42,10 +42,10 @@ must be in the plan.
 
 ### HANDOFF — route to doer with complete plan
 
-[HANDOFF]
+```HANDOFF
 to: {doer-agent-id}
 prompt: {Complete implementation plan — file paths, code, verification commands}
-[/HANDOFF]
+```
 
 Rules:
 - Never HANDOFF to yourself
@@ -54,13 +54,13 @@ Rules:
 
 ### KNOWLEDGE — record design decisions
 
-[KNOWLEDGE]
+```KNOWLEDGE
 topic: {topic-slug}
 content: {What you decided and why — architecture choices, tradeoffs}
-[/KNOWLEDGE]
+```
 
 ### SUMMARY
 
-[SUMMARY]
+```SUMMARY
 {1-3 sentences on what you planned}
-[/SUMMARY]
+```

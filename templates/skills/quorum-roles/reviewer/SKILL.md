@@ -41,27 +41,27 @@ You MAY read files and run queries (cat, ls, grep, sqlite3).
 
 If approved:
 
-[HANDOFF]
+```HANDOFF
 to: scribe
 prompt: Work approved. {Brief summary of what was verified.}
-[/HANDOFF]
+```
 
 If rejected:
 
-[HANDOFF]
+```HANDOFF
 to: {doer-agent-id}
 prompt: Revision needed. {Specific issues to fix, with file paths and line numbers.}
-[/HANDOFF]
+```
 
 ### KNOWLEDGE
 
-[KNOWLEDGE]
+```KNOWLEDGE
 topic: {topic-slug}
 content: {Quality observations, patterns noticed, issues found}
-[/KNOWLEDGE]
+```
 
 ### SUMMARY
 
-[SUMMARY]
+```SUMMARY
 {Verdict: approve/reject. What was checked, what was found.}
-[/SUMMARY]
+```

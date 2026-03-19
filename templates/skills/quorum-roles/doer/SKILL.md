@@ -49,10 +49,10 @@ You have full tool access. Write files, run builds, execute tests.
 
 ### HANDOFF — route to scribe after completing work
 
-[HANDOFF]
+```HANDOFF
 to: scribe
 prompt: {What was done, files changed, build/test results}
-[/HANDOFF]
+```
 
 Rules:
 - Never HANDOFF to yourself
@@ -61,13 +61,13 @@ Rules:
 
 ### KNOWLEDGE — record what you built
 
-[KNOWLEDGE]
+```KNOWLEDGE
 topic: {topic-slug}
 content: {What you built, issues encountered, decisions made}
-[/KNOWLEDGE]
+```
 
 ### SUMMARY
 
-[SUMMARY]
+```SUMMARY
 {What was done, build pass/fail, test pass/fail}
-[/SUMMARY]
+```

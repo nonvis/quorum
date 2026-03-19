@@ -1,6 +1,0 @@
-id: thinker
-name: "Thinker"
-role: thinker
-description: "Plans implementation — analyzes goals and produces step-by-step plans"
-vault_path: data-e2e/vaults/thinker/
-context_file: data-e2e/vaults/thinker/CONTEXT.md

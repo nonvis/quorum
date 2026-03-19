@@ -4,16 +4,13 @@
 
 Quorum is a **multi-agent orchestration framework**. A deterministic C++20 daemon orchestrates independent AI agents that coordinate through structured HANDOFF blocks and persist knowledge in local vaults.
 
-**Current phase: Phase 3 — Project-Local Layout.** Pure local orchestration on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) are deferred indefinitely.
+**Current phase: Phase 5 — Agent Quality + Templates.** Pure local orchestration on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) are deferred indefinitely.
 
 ## Repo Layout
 
 ```
 quorum/
 ├── CLAUDE.md                    <- You are here
-├── configs/                     # Centralized project configs (one YAML per project)
-│   ├── agents/                  # Per-project agent YAMLs
-│   └── tasks/                   # Task YAML definitions
 ├── quorum-core/                 # C++20 (CLOSED SOURCE) — orchestrator daemon
 │   ├── src/
 │   │   ├── main.cpp             # Daemon entry, signal handling, PID lock, CLI subcommands
@@ -222,8 +219,6 @@ myproject/.quorum/
 
 **Auto-discovery:** Without `--config`, the daemon walks up from cwd for `.quorum/config.yaml`, then `chdir`s to project root. All CLI commands work without flags from anywhere inside a `.quorum/` project.
 
-**Two layouts coexist:** Project-local (`.quorum/`, preferred) and centralized (`configs/` + `data/`, requires `--config`).
-
 **Config loading:** If `agents/` dir exists next to config, `load_agents_from_directory()` scans for `.yaml`/`.yml` files sorted by id, replacing any explicit `agents:` list.
 
 **Web UI stale detection:** `GET /api/daemon/status` returns `{ running: boolean }` (checks PID file + `process.kill(pid, 0)`). When daemon is not running and active conversations exist, the UI shows an amber warning banner advising the user to run `quorum status` to trigger crash recovery.
@@ -279,14 +274,14 @@ quorum teams
 
 # Run daemon
 ./build/quorum_daemon                                          # auto-discover .quorum/
-./build/quorum_daemon --config configs/mm-bot.yaml --verbose   # explicit config
+./build/quorum_daemon --config /path/to/config.yaml --verbose  # explicit config (escape hatch)
 
 # Conversations
 quorum converse "Build a REST API"
 quorum converse --team quick-build "fix the login bug"
 quorum status
-./build/quorum_daemon --config configs/mm-bot.yaml resume --conversation 1
-./build/quorum_daemon --config configs/mm-bot.yaml close --conversation 1
+quorum resume --conversation 1
+quorum close --conversation 1
 
 # What the daemon spawns (for reference)
 claude -p "prompt" --dangerously-skip-permissions --disallowedTools "Write,Edit,NotebookEdit" --output-format json  # analyst

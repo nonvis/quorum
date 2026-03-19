@@ -53,30 +53,21 @@ A Quorum project is a YAML config that declares a leader and a set of agents. Ea
 ### Project Config
 
 ```yaml
-# configs/move-project.yaml
-
+# .quorum/config.yaml (created by `quorum init`)
 daemon:
-  pid_file: /tmp/quorum.pid
-  data_dir: ./data
+  data_dir: .quorum
+  pid_file: .quorum/quorum.pid
   log_level: info
 
 conversations:
+  enabled: true
   leader: leader
-  max_turns: 20
-  default_path: [leader, thinker, doer, scribe]
-  agents: [leader, architect, move-dev, security-reviewer, scribe]
-
-agents:
-  - config: configs/agents/move-project/leader.yaml
-  - config: configs/agents/move-project/architect.yaml
-  - config: configs/agents/move-project/move-dev.yaml
-  - config: configs/agents/move-project/security-reviewer.yaml
-  - config: configs/agents/move-project/scribe.yaml
+  default_max_rounds: 20
+  default_budget_usd: 5.0
 
 budget:
-  hourly_limit_usd: 2.00
-  daily_limit_usd: 10.00
-  task_timeout_seconds: 300
+  window_budget_usd: 100.00
+  window_hours: 5
 ```
 
 ### Agent YAMLs
@@ -84,39 +75,41 @@ budget:
 Each agent declares its role, archetype, and context paths:
 
 ```yaml
-# configs/agents/move-project/move-dev.yaml
+# .quorum/agents/move-dev.yaml
 id: move-dev
 name: "Move Developer"
 role: doer
 agent_class: executor
 description: "Writes Move smart contracts"
-vault_path: data/vaults/move-dev/
-context_file: data/vaults/move-dev/CONTEXT.md
-skill_file: data/vaults/move-dev/SKILL.md
+vault_path: .quorum/vaults/move-dev/
+context_file: .quorum/vaults/move-dev/CONTEXT.md
+skill_file: ~/.claude/skills/quorum-roles/doer/SKILL.md  # auto-detected from role
 executor:
   target_dir: ~/nonvis/my-move-project
 ```
 
 ```yaml
-# configs/agents/move-project/architect.yaml
+# .quorum/agents/architect.yaml
 id: architect
 name: "Architect"
 role: thinker
 agent_class: analyst
 description: "Plans module structure, designs APIs, reviews patterns"
-vault_path: data/vaults/architect/
-context_file: data/vaults/architect/CONTEXT.md
+vault_path: .quorum/vaults/architect/
+context_file: .quorum/vaults/architect/CONTEXT.md
+skill_file: ~/.claude/skills/quorum-roles/thinker/SKILL.md  # auto-detected from role
 ```
 
 ```yaml
-# configs/agents/move-project/security-reviewer.yaml
+# .quorum/agents/security-reviewer.yaml
 id: security-reviewer
 name: "Security Reviewer"
 role: reviewer
 agent_class: analyst
 description: "Validates Move code for vulnerabilities and access-control bugs"
-vault_path: data/vaults/security-reviewer/
-context_file: data/vaults/security-reviewer/CONTEXT.md
+vault_path: .quorum/vaults/security-reviewer/
+context_file: .quorum/vaults/security-reviewer/CONTEXT.md
+skill_file: ~/.claude/skills/quorum-roles/reviewer/SKILL.md  # auto-detected from role
 ```
 
 ### CONTEXT.md — Who the Agent Is
@@ -158,23 +151,26 @@ This scaffolds the YAML config, CONTEXT.md, and vault directory. Role skills are
 ### Example Team: Move Development
 
 ```
-move-project/
-  configs/
-    move-project.yaml
-    agents/move-project/
-      leader.yaml         # coordinator — receives goal, routes work
-      architect.yaml      # thinker — plans module structure
-      move-dev.yaml       # doer — writes Move code (full tools)
-      security-reviewer.yaml  # reviewer — validates for vulnerabilities
-      scribe.yaml         # scribe — writes project notes from knowledge ledger
-  data/
-    vaults/
-      leader/CONTEXT.md
-      architect/CONTEXT.md
-      move-dev/CONTEXT.md
-      security-reviewer/CONTEXT.md
-      scribe/CONTEXT.md
-    quorum.db             # SQLite (created on first run)
+my-move-project/
+├── .quorum/
+│   ├── config.yaml
+│   ├── quorum.db
+│   ├── agents/
+│   │   ├── leader.yaml
+│   │   ├── architect.yaml
+│   │   ├── move-dev.yaml
+│   │   ├── security-reviewer.yaml
+│   │   └── scribe.yaml
+│   ├── vaults/
+│   │   ├── leader/CONTEXT.md
+│   │   ├── architect/CONTEXT.md
+│   │   ├── move-dev/CONTEXT.md
+│   │   ├── security-reviewer/CONTEXT.md
+│   │   └── scribe/CONTEXT.md
+│   └── teams/
+│       └── default.yaml
+├── sources/                      # Move source code (target_dir)
+└── tests/
 ```
 
 ---
@@ -182,7 +178,7 @@ move-project/
 ## Start a Conversation
 
 ```bash
-./build/quorum_daemon --config configs/move-project.yaml converse \
+quorum converse \
   "Build a shared-object escrow module that lets two parties swap NFTs atomically"
 ```
 
@@ -191,7 +187,7 @@ What the daemon prints:
 ```
 [14:00:00] Quorum daemon starting...
 [14:00:00] Loaded 5 agents: leader, architect, move-dev, security-reviewer, scribe
-[14:00:00] SQLite database: data/quorum.db
+[14:00:00] SQLite database: .quorum/quorum.db
 [14:00:00] Conversation 1 created — goal: "Build a shared-object escrow..."
 [14:00:00] Dispatching to leader...
 ```
@@ -213,13 +209,13 @@ I've received the goal. This needs architectural planning before implementation.
 The architect should design the module structure, then the move developer
 can implement it.
 
-<<<HANDOFF>>>
+```HANDOFF
 to: architect
 prompt: Design a shared-object escrow module for atomic NFT swaps on Sui.
 Define the module structure, entry functions, and shared object lifecycle.
 Consider: (1) how two parties discover and accept a swap, (2) how to handle
 partial fulfillment and cancellation, (3) object ownership vs shared objects.
-<<<END_HANDOFF>>>
+```
 ```
 
 ### Step 2: Thinker Plans
@@ -237,20 +233,20 @@ The architect reads the prompt, plans the design, records a knowledge entry, and
 ### Shared Object Lifecycle
 Escrow is a shared object created on `create_escrow`, consumed on `accept_escrow` or `cancel_escrow`.
 
-<<<KNOWLEDGE>>>
+```KNOWLEDGE
 topic: escrow-architecture
 content: Escrow uses shared object pattern. Two entry points: create (locks initiator NFT,
 returns shared Escrow) and accept (locks responder NFT, executes atomic swap). Cancel only
 available to initiator before acceptance. No partial fulfillment in v1.
-<<<END_KNOWLEDGE>>>
+```
 
-<<<HANDOFF>>>
+```HANDOFF
 to: move-dev
 prompt: Implement the escrow module per the design above. Create sources/escrow.move
 with create_escrow, accept_escrow, and cancel_escrow functions. Write tests in
 tests/escrow_tests.move covering: successful swap, cancellation, and unauthorized
 cancel attempt (should abort). Compile and run tests.
-<<<END_HANDOFF>>>
+```
 ```
 
 ### Step 3: Doer Implements
@@ -268,19 +264,19 @@ I'll implement the escrow module now.
 All tests pass. The module implements create_escrow, accept_escrow, and
 cancel_escrow with proper access control.
 
-<<<KNOWLEDGE>>>
+```KNOWLEDGE
 topic: escrow-implementation
 content: Escrow module implemented in sources/escrow.move. 85 lines, 3 entry functions.
 All 3 tests pass: successful swap, initiator cancellation, unauthorized cancel abort.
 Uses dynamic_object_field to store NFTs inside the shared Escrow object.
-<<<END_KNOWLEDGE>>>
+```
 
-<<<HANDOFF>>>
+```HANDOFF
 to: security-reviewer
 prompt: Review sources/escrow.move for security vulnerabilities. Check for:
 (1) reentrancy via shared object access, (2) unauthorized cancellation,
 (3) type confusion in generic parameters, (4) object lifecycle correctness.
-<<<END_HANDOFF>>>
+```
 ```
 
 ### Step 4: Reviewer Validates
@@ -299,16 +295,16 @@ The security reviewer reads the code (read-only tools) and either approves or re
 
 No blocking issues found. Code is safe for deployment.
 
-<<<KNOWLEDGE>>>
+```KNOWLEDGE
 topic: escrow-security-review
 content: Security review passed. No vulnerabilities found. Minor note: self-swap not prevented
 but is harmless (gas waste only). Access control, object lifecycle, and type safety all verified.
-<<<END_KNOWLEDGE>>>
+```
 
-<<<HANDOFF>>>
+```HANDOFF
 to: leader
 prompt: Security review complete — no blocking issues. The escrow module is ready.
-<<<END_HANDOFF>>>
+```
 ```
 
 ### Step 5: Leader Decides
@@ -323,20 +319,20 @@ The leader has three options:
 The escrow module is complete. Architecture designed, code implemented, tests passing,
 security review clean. Handing off to scribe to record the work.
 
-<<<HANDOFF>>>
+```HANDOFF
 to: scribe
 prompt: Record the escrow module work. Summarize the architecture, implementation
 decisions, and security review findings from the knowledge ledger.
-<<<END_HANDOFF>>>
+```
 ```
 
 After the scribe finishes, the leader marks the conversation done:
 
 ```
-<<<HANDOFF>>>
+```HANDOFF
 to: done
 prompt: Goal complete — escrow module built, tested, and documented.
-<<<END_HANDOFF>>>
+```
 ```
 
 The daemon sets the conversation state to `done`.
@@ -361,11 +357,11 @@ When the leader needs human input, it hands off to `human`:
 I need clarification before proceeding. Should the escrow support
 multi-asset swaps (bundle of NFTs) or single-asset only?
 
-<<<HANDOFF>>>
+```HANDOFF
 to: human
 prompt: Should the escrow support multi-asset swaps (bundle of NFTs on each side)
 or single-asset swaps only? This affects the module design significantly.
-<<<END_HANDOFF>>>
+```
 ```
 
 The daemon sets conversation state to `waiting_for_human` and prints:
@@ -378,7 +374,7 @@ The daemon sets conversation state to `waiting_for_human` and prints:
 ### Responding via CLI
 
 ```bash
-./build/quorum_daemon --config configs/move-project.yaml respond \
+quorum respond \
   --conversation 1 "Single-asset only for v1. We can add bundles later."
 ```
 
@@ -392,13 +388,13 @@ The dashboard shows a conversation card with the pending question and a text inp
 
 ```bash
 # Check conversation status
-./build/quorum_daemon --config configs/move-project.yaml status
+quorum status
 
 # Resume a paused conversation (e.g., after budget pause)
-./build/quorum_daemon --config configs/move-project.yaml resume --conversation 1
+quorum resume --conversation 1
 
 # Close a conversation manually
-./build/quorum_daemon --config configs/move-project.yaml close --conversation 1
+quorum close --conversation 1
 ```
 
 ---
@@ -410,11 +406,11 @@ Every agent can emit KNOWLEDGE blocks during its turn. These are append-only ent
 ### KNOWLEDGE Block Format
 
 ```
-<<<KNOWLEDGE>>>
+```KNOWLEDGE
 topic: escrow-architecture
 content: Escrow uses shared object pattern. Create locks initiator NFT,
 accept executes atomic swap. Cancel only available to initiator.
-<<<END_KNOWLEDGE>>>
+```
 ```
 
 An agent can emit multiple KNOWLEDGE blocks in a single turn. The daemon parses them and appends each to the ledger with metadata (agent ID, turn number, timestamp).
@@ -478,7 +474,7 @@ Create a new project config. Different agents, different CONTEXT.md files, same 
 
 ```bash
 # Infrastructure monitoring team
-./build/quorum_daemon --config configs/infra-project.yaml converse \
+quorum converse \
   "Audit our fullnode configuration and identify performance bottlenecks"
 ```
 
@@ -496,7 +492,7 @@ The daemon pauses dispatch when the hourly or daily budget limit is reached:
 Resume manually after the budget window resets:
 
 ```bash
-./build/quorum_daemon --config configs/move-project.yaml resume --conversation 1
+quorum resume --conversation 1
 ```
 
 Or wait — the daemon auto-resumes when the hourly window rolls over.
@@ -518,17 +514,17 @@ Review the conversation history, then either resume with guidance or close it.
 
 ```bash
 # Start a conversation
-./build/quorum_daemon --config configs/project.yaml converse "goal text"
+quorum converse "goal text"
 
 # Check conversation status
-./build/quorum_daemon --config configs/project.yaml status
+quorum status
 
 # Respond to leader (when waiting_for_human)
-./build/quorum_daemon --config configs/project.yaml respond --conversation 1 "your response"
+quorum respond --conversation 1 "your response"
 
 # Resume a paused conversation
-./build/quorum_daemon --config configs/project.yaml resume --conversation 1
+quorum resume --conversation 1
 
 # Close a conversation
-./build/quorum_daemon --config configs/project.yaml close --conversation 1
+quorum close --conversation 1
 ```

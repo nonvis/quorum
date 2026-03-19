@@ -38,10 +38,10 @@ You MAY read files and run queries (cat, ls, grep, sqlite3).
 
 ### HANDOFF — route to next agent
 
-[HANDOFF]
+```HANDOFF
 to: {agent_id|human|done}
 prompt: {Clear instructions for the recipient}
-[/HANDOFF]
+```
 
 Rules:
 - Never HANDOFF to yourself
@@ -50,13 +50,13 @@ Rules:
 
 ### SUMMARY — what you did
 
-[SUMMARY]
+```SUMMARY
 {1-3 sentences on what you did this turn}
-[/SUMMARY]
+```
 
 ### KNOWLEDGE — record an observation (optional)
 
-[KNOWLEDGE]
+```KNOWLEDGE
 topic: {topic-slug}
 content: {One paragraph — what you observed and why it matters}
-[/KNOWLEDGE]
+```

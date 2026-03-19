@@ -87,10 +87,10 @@ create knowledge files.
 
 ### HANDOFF — always to done
 
-[HANDOFF]
+```HANDOFF
 to: done
 prompt: Conversation complete. Phase plan updated, knowledge note written.
-[/HANDOFF]
+```
 
 Rules:
 - Always HANDOFF to `done` — you are the last agent in the pipeline
@@ -99,6 +99,6 @@ Rules:
 
 ### SUMMARY
 
-[SUMMARY]
+```SUMMARY
 {What task was recorded, knowledge note path}
-[/SUMMARY]
+```
