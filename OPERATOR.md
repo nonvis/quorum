@@ -2,7 +2,7 @@
 
 Multi-agent orchestration daemon. C++20 daemon spawns `claude -p` subprocesses, manages conversations via team mode (ball-passing), coordinates agents through filesystem vaults and a knowledge ledger.
 
-Phase 2: Team Mode. Local-first, single machine. No blockchain.
+Phase 5: Agent Quality + Templates. Local-first, single machine. No blockchain.
 
 ## Build
 
@@ -23,17 +23,17 @@ cd build && ctest --output-on-failure
 ### Start a Conversation
 
 ```bash
-# Basic — leader receives goal, team takes over
-./build/quorum_daemon --config configs/mm-bot.yaml converse "Analyze mm-bot spread performance"
+# Basic — leader receives goal, team takes over (auto-discovers .quorum/)
+quorum converse "Analyze mm-bot spread performance"
 
 # With budget and turn limits
-./build/quorum_daemon --config configs/mm-bot.yaml converse --budget 3.0 --max-rounds 5 "goal"
+quorum converse --budget 3.0 --max-rounds 5 "goal"
 ```
 
 ### Check Status
 
 ```bash
-./build/quorum_daemon --config configs/mm-bot.yaml status
+quorum status
 ```
 
 ### Respond to Leader
@@ -41,19 +41,19 @@ cd build && ctest --output-on-failure
 When the leader is waiting for human input (`waiting_for_human` state):
 
 ```bash
-./build/quorum_daemon --config configs/mm-bot.yaml respond --conversation 1 "response text"
+quorum respond --conversation 1 "response text"
 ```
 
 ### Resume a Paused Conversation
 
 ```bash
-./build/quorum_daemon --config configs/mm-bot.yaml resume --conversation 1
+quorum resume --conversation 1
 ```
 
 ### Close a Conversation
 
 ```bash
-./build/quorum_daemon --config configs/mm-bot.yaml close --conversation 1
+quorum close --conversation 1
 ```
 
 ### Start Daemon Only
@@ -61,7 +61,7 @@ When the leader is waiting for human input (`waiting_for_human` state):
 Run without a conversation subcommand (processes existing queue):
 
 ```bash
-./build/quorum_daemon --config configs/mm-bot.yaml
+./build/quorum_daemon
 ```
 
 ## Web Dashboard
@@ -93,11 +93,11 @@ cd quorum-web/client && bun install && bun run dev   # http://localhost:3101
 
 | Location | What |
 |----------|------|
-| `data/quorum.db` | SQLite: task queue, conversations, knowledge ledger |
-| `data/vaults/{agent}/` | Agent vaults: CONTEXT.md + knowledge/ |
-| `configs/*.yaml` | Project configs (daemon settings + agent team) |
-| `configs/agents/*.yaml` | Agent definitions (archetype, model, budget) |
-| `/tmp/quorum.pid` | PID lock file |
+| `.quorum/quorum.db` | SQLite: task queue, conversations, knowledge ledger |
+| `.quorum/vaults/{agent}/` | Agent vaults: CONTEXT.md + knowledge/ |
+| `.quorum/agents/*.yaml` | Agent definitions (role, class, vault paths) |
+| `.quorum/config.yaml` | Project config (daemon settings, budget, conversations) |
+| `.quorum/quorum.pid` | PID lock file |
 
 ## Safety Features
 
@@ -111,16 +111,16 @@ cd quorum-web/client && bun install && bun run dev   # http://localhost:3101
 
 ```bash
 # Check if daemon is running
-cat /tmp/quorum.pid && kill -0 $(cat /tmp/quorum.pid) 2>/dev/null && echo "running" || echo "stopped"
+cat .quorum/quorum.pid && kill -0 $(cat .quorum/quorum.pid) 2>/dev/null && echo "running" || echo "stopped"
 
 # Query recent tasks
-sqlite3 data/quorum.db "SELECT id, status, agent, created_at FROM tasks ORDER BY created_at DESC LIMIT 10;"
+sqlite3 .quorum/quorum.db "SELECT id, status, agent, created_at FROM tasks ORDER BY created_at DESC LIMIT 10;"
 
 # Token usage (today)
-sqlite3 data/quorum.db "SELECT SUM(input_tokens), SUM(output_tokens), SUM(cost_usd) FROM task_results WHERE date(created_at) = date('now');"
+sqlite3 .quorum/quorum.db "SELECT SUM(input_tokens), SUM(output_tokens), SUM(cost_usd) FROM task_results WHERE date(created_at) = date('now');"
 
 # Active conversations
-sqlite3 data/quorum.db "SELECT id, status, goal, created_at FROM conversations WHERE status != 'closed' ORDER BY created_at DESC;"
+sqlite3 .quorum/quorum.db "SELECT id, status, goal, created_at FROM conversations WHERE status != 'closed' ORDER BY created_at DESC;"
 ```
 
 ## Known Issues
@@ -132,15 +132,15 @@ sqlite3 data/quorum.db "SELECT id, status, goal, created_at FROM conversations W
 
 - **Runs on**: macOS (local, single machine)
 - **Runtime dependency**: `claude` CLI must be installed and authenticated
-- **DB**: `data/quorum.db` (SQLite, WAL mode)
-- **PID file**: `/tmp/quorum.pid`
+- **DB**: `.quorum/quorum.db` (SQLite, WAL mode)
+- **PID file**: `.quorum/quorum.pid`
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| "PID file exists" on start | `rm /tmp/quorum.pid` if process is dead |
-| Stale SQLite WAL/SHM | `rm -f data/quorum.db-wal data/quorum.db-shm` |
+| "PID file exists" on start | `rm .quorum/quorum.pid` if process is dead |
+| Stale SQLite WAL/SHM | `rm -f .quorum/quorum.db-wal .quorum/quorum.db-shm` |
 | Agent invocation hangs | Check `claude` CLI auth; verify API key is valid |
 | Tasks stuck in pending | Check daemon log for invoker errors; verify token budget not exhausted |
 | Conversation stuck in `waiting_for_human` | Use `respond --conversation <id> "text"` to unblock |

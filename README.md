@@ -42,26 +42,31 @@ brew install openssl@3 sqlite
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 
-# Start a conversation
-./build/quorum_daemon --config configs/mm-bot.yaml converse "Analyze mm-bot spread performance"
+# Initialize a project
+cd ~/myproject && quorum init
+
+# Create agents
+quorum agent create --role leader --name leader
+quorum agent create --role thinker --name architect
+quorum agent create --role doer --name move-dev --target-dir .
+
+# Start a conversation (auto-discovers .quorum/)
+quorum converse "Analyze mm-bot spread performance"
 
 # With custom budget and turn limit
-./build/quorum_daemon --config configs/mm-bot.yaml converse --budget 3.0 --max-rounds 5 "goal"
+quorum converse --budget 3.0 --max-rounds 5 "goal"
 
 # Check status
-./build/quorum_daemon --config configs/mm-bot.yaml status
+quorum status
 
 # Respond to leader (when waiting for human input)
-./build/quorum_daemon --config configs/mm-bot.yaml respond --conversation 1 "response text"
+quorum respond --conversation 1 "response text"
 
 # Resume a paused conversation
-./build/quorum_daemon --config configs/mm-bot.yaml resume --conversation 1
+quorum resume --conversation 1
 
 # Close a conversation
-./build/quorum_daemon --config configs/mm-bot.yaml close --conversation 1
-
-# Start daemon only (no conversation subcommand)
-./build/quorum_daemon --config configs/mm-bot.yaml
+quorum close --conversation 1
 ```
 
 ## Agent Archetypes
@@ -112,14 +117,14 @@ cd quorum-web/client && bun install && bun run dev   # http://localhost:3101
 |-----------|---------|
 | `quorum-core/` | C++20 daemon (src/, tests/) |
 | `quorum-web/` | Bun + Hono API server + React frontend (web dashboard) |
-| `configs/` | Project YAML configs + agent YAMLs |
-| `data/` | Runtime data — vaults, SQLite (gitignored) |
+| `templates/` | Role skills, domain skills, agent CONTEXT.md templates |
+| `scripts/` | install-skills.sh, lint-templates.sh, update-templates.sh |
 | `docs/` | Design documents |
 | `.claude/commands/` | Claude Code skills |
 
 ## Status
 
-Phase 2 — Team Mode. See [Development Guide](DEVELOPMENT.md) for details.
+Phase 5 — Agent Quality + Templates. See [Development Guide](DEVELOPMENT.md) for details.
 
 ## License
 

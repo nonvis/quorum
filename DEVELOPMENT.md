@@ -9,7 +9,10 @@
 | 0.7 | Conversation Mode | Complete (2026-03-08) |
 | 1 | Executor Pipeline | Complete (2026-03-11) |
 | 1b | Web Dashboard | Complete (2026-03-11) |
-| 2 | Team Mode | In Progress |
+| 2 | Team Mode | Complete (2026-03-13) |
+| 3 | Project-Local Layout | Complete (2026-03-15) |
+| 4 | Web UI Management | Complete (2026-03-17) |
+| 5 | Agent Quality + Templates | In Progress |
 
 ## Architecture
 
@@ -77,19 +80,19 @@ cd quorum-web && bun install && cd client && bun install
 
 ```bash
 # Start a conversation (creates goal + starts daemon)
-./build/quorum_daemon --config configs/project.yaml converse "Analyze spread performance"
+quorum converse "Analyze spread performance"
 
 # List conversations
-./build/quorum_daemon --config configs/project.yaml status
+quorum status
 
 # Respond to a conversation (human input)
-./build/quorum_daemon --config configs/project.yaml respond --conversation 1 "text"
+quorum respond --conversation 1 "text"
 
 # Resume a paused conversation
-./build/quorum_daemon --config configs/project.yaml resume --conversation 1
+quorum resume --conversation 1
 
 # Close a conversation
-./build/quorum_daemon --config configs/project.yaml close --conversation 1
+quorum close --conversation 1
 ```
 
 ## Source Layout
