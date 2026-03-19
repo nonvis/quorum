@@ -44,9 +44,11 @@ Builds agents — either manually or using the `quorum agent create` generator, 
 
 Three things define an agent:
 
-1. **Agent YAML** (`configs/agents/project/agent.yaml`) — role (one of 6 archetypes), description, vault path
-2. **CONTEXT.md** (`data/vaults/{agent}/CONTEXT.md`) — agent identity, knowledge scope, behavioral boundaries
-3. **Optional SKILL.md** (`data/vaults/{agent}/SKILL.md`) — domain expertise, specialized instructions
+1. **Agent YAML** (`.quorum/agents/agent.yaml`) — role (one of 6 archetypes), description, vault path, skill file
+2. **CONTEXT.md** (`.quorum/vaults/{agent}/CONTEXT.md`) — agent identity, from `templates/agents/{role}.md`
+3. **SKILL.md** (auto-detected from `~/.claude/skills/quorum-roles/{role}/SKILL.md`) — behavioral patterns per role
+
+Most of this is generated automatically by `quorum agent create --no-ai`.
 
 ### Developer Mental Model
 
@@ -59,7 +61,7 @@ Quorum handles everything else: dispatching, ball-passing, knowledge ledger, bud
 
 ### The Generator Shortcut
 
-`quorum agent create` uses Claude Code to interview the developer and generate both the YAML config and CONTEXT.md. Useful for bootstrapping, but hand-editing is common as agents mature.
+`quorum agent create` scaffolds the YAML config, CONTEXT.md, and vault directory. In `--no-ai` mode it uses role-specific templates from `templates/agents/` with placeholder substitution. Without `--no-ai`, it uses Claude Code to generate a richer CONTEXT.md. Role skills are auto-detected and set in the YAML automatically.
 
 ### Key Insight
 

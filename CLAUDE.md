@@ -28,6 +28,16 @@ quorum/
 │   ├── config.ts                # Dynamic project config, state persistence
 │   ├── server/                  # index.ts (routes), db.ts, daemon.ts (PID check), sse.ts
 │   └── client/src/              # App.tsx, api.ts, types.ts, components/
+├── templates/                   # Single source of truth for all templates
+│   ├── skills/                  # SKILL.md files (behavioral + domain)
+│   │   ├── quorum-roles/        # Role skills (leader, thinker, doer, scribe, reviewer)
+│   │   ├── sui-dev-skills/      # Sui domain skills (sui-move, sui-ts-sdk, sui-frontend)
+│   │   └── move-code-quality/   # Move code quality checklist
+│   └── agents/                  # CONTEXT.md templates with {placeholders}
+├── scripts/                     # Utility scripts
+│   ├── install-skills.sh        # Install skills to ~/.claude/skills/ (copy or --link)
+│   ├── lint-templates.sh        # Validate template consistency
+│   └── update-templates.sh      # Review templates via claude -p
 ├── .claude/commands/            # Claude Code skills (project scaffolding)
 └── docs/                        # Design documents
 ```
@@ -168,9 +178,9 @@ name: "Market Analyst"
 role: thinker                    # leader, thinker, doer, reviewer, scribe, librarian
 agent_class: analyst             # auto-derived from role (doer=executor, all others=analyst)
 description: "Analyzes market structure"
-vault_path: data/vaults/market_analyst/
-context_file: data/vaults/market_analyst/CONTEXT.md
-skill_file: data/vaults/market_analyst/SKILL.md   # optional
+vault_path: .quorum/vaults/market_analyst/
+context_file: .quorum/vaults/market_analyst/CONTEXT.md
+skill_file: ~/.claude/skills/quorum-roles/thinker/SKILL.md  # auto-detected from role
 ```
 ```yaml
 # Executor (full tool access)
@@ -179,11 +189,21 @@ name: "Move Developer"
 role: doer
 agent_class: executor
 description: "Writes Move smart contracts"
-vault_path: data/vaults/move-dev/
-context_file: data/vaults/move-dev/CONTEXT.md
+vault_path: .quorum/vaults/move-dev/
+context_file: .quorum/vaults/move-dev/CONTEXT.md
+skill_file: ~/.claude/skills/quorum-roles/doer/SKILL.md     # auto-detected from role
 executor:
   target_dir: ~/nonvis/my-project   # supports ~/ expansion
 ```
+
+### Templates System
+
+**Agent identity** (CONTEXT.md) and **behavioral skills** (SKILL.md) are separate concerns:
+- `templates/agents/{role}.md` — CONTEXT.md templates with `{agent_name}`, `{description}`, `{target_dir}`, `{skill_name}` placeholders. Substituted by `agent_create.h` in `--no-ai` mode.
+- `templates/skills/quorum-roles/{role}/SKILL.md` — behavioral patterns per role. Auto-detected by `agent_create.h` from `~/.claude/skills/quorum-roles/{role}/SKILL.md`.
+- `templates/skills/sui-dev-skills/` and `templates/skills/move-code-quality/` — domain expertise skills. Installed via `scripts/install-skills.sh`.
+
+**Skill auto-detection:** When `agent create` runs without `--skill-file`, it checks `~/.claude/skills/quorum-roles/{role}/SKILL.md`. If found, it's automatically set in the agent YAML.
 
 ### Project-Local Layout (`.quorum/`)
 
@@ -241,13 +261,21 @@ cd build && ctest --output-on-failure
 cd ~/myproject && quorum init
 
 # Agent management (auto-discovers .quorum/)
-quorum agent create --role doer --name my-dev --target-dir .
+quorum agent create --role doer --name my-dev --target-dir .              # auto-detects role skill
+quorum agent create --role doer --name my-dev --target-dir . --no-ai     # uses templates/agents/doer.md
 quorum agent create --role doer --name my-dev --target-dir . --skill move-developer
 quorum agent modify --name my-dev --role thinker
 quorum agent modify --name my-dev --skill move-developer
 quorum agent list
 quorum skills
 quorum teams
+
+# Template management
+./scripts/lint-templates.sh                    # validate all templates
+./scripts/install-skills.sh                    # copy skills to ~/.claude/skills/
+./scripts/install-skills.sh --link             # symlink instead of copy
+./scripts/update-templates.sh                  # review all role skills via claude -p
+./scripts/update-templates.sh leader           # review one role skill
 
 # Run daemon
 ./build/quorum_daemon                                          # auto-discover .quorum/

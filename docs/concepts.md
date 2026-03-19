@@ -22,9 +22,10 @@ Quorum defines **6 archetypes** that determine what an agent can do:
 Role determines tool access. Doers get executor-class (`claude -p` with full tools). All others are analyst-class (`--disallowedTools "Write,Edit,NotebookEdit"`).
 
 An agent is defined by:
-- **YAML config** (`configs/agents/project/agent.yaml`) — role, description, vault path
-- **Vault CONTEXT.md** — who it is, what it knows, what it does and doesn't do
-- **Optional SKILL.md** — domain expertise, specialized instructions
+- **YAML config** (`.quorum/agents/agent.yaml`) — role, description, vault path, skill file
+- **Vault CONTEXT.md** — who it is, what it knows, what it does and doesn't do (generated from `templates/agents/{role}.md`)
+- **SKILL.md** — behavioral patterns for the role (auto-detected from `~/.claude/skills/quorum-roles/{role}/SKILL.md`)
+- **Optional domain SKILL.md** — specialized expertise (e.g., sui-move, sui-ts-sdk)
 
 Between invocations, an agent has no state. Everything it "remembers" comes from its vault, which the daemon loads into the LLM prompt.
 
@@ -37,11 +38,12 @@ Between invocations, an agent has no state. Everything it "remembers" comes from
 A vault is an **agent's working memory on disk** — a folder of files that grows over time.
 
 ```
-data/vaults/{agent}/
-├── CONTEXT.md          # Always loaded (role identity)
-├── SKILL.md            # Optional (domain expertise)
-└── knowledge/          # Accumulated findings, scribe-produced notes
+.quorum/vaults/{agent}/
+├── CONTEXT.md          # Always loaded (role identity, from templates/agents/{role}.md)
+├── knowledge/          # Accumulated findings, scribe-produced notes
 ```
+
+SKILL.md files live in `~/.claude/skills/` (installed via `scripts/install-skills.sh`) and are referenced by path in the agent YAML's `skill_file` field.
 
 The daemon's context assembler selects which vault files to include in each invocation, staying within the agent's token budget. CONTEXT.md always loads. Other files are selected by recency and relevance.
 

@@ -162,26 +162,26 @@ The `default_path` defines the happy path. The leader can override routing at an
 
 ## The Specialization Model
 
-Two agents with the same archetype differ only in their knowledge files:
+Two agents with the same archetype differ only in their context and skill files:
 
 ```
-move-dev (doer)                    ts-dev (doer)
-  CONTEXT.md: "You write Move"      CONTEXT.md: "You write TypeScript"
-  SKILL.md: Move patterns,          SKILL.md: Node.js patterns,
-    Sui object model,                 Express/Hono, testing with
-    testing with sui move test        vitest
-  target_dir: ~/my-move-project      target_dir: ~/my-ts-project
+move-dev (doer)                         ts-dev (doer)
+  CONTEXT.md: from templates/agents/      CONTEXT.md: from templates/agents/
+    move-dev.md                             ts-dev.md
+  Role skill: quorum-roles/doer           Role skill: quorum-roles/doer
+  Domain skill: sui-move +                Domain skill: sui-ts-sdk
+    move-code-quality
+  target_dir: ~/my-move-project           target_dir: ~/my-ts-project
 ```
 
 Both have full tool access (read, write, execute). Both emit KNOWLEDGE blocks. Both receive HANDOFF prompts the same way. The daemon treats them identically — it routes by agent ID, not by what they know.
 
 This means adding a new specialization is always the same steps:
 
-1. `quorum agent create --role doer --name python-dev --project my-project`
-2. Edit `CONTEXT.md` — describe the role
-3. Add a `SKILL.md` — paste in domain expertise (language idioms, framework patterns, API references)
-4. Add to project config `conversations.agents` list
-5. Restart daemon
+1. `quorum agent create --role doer --name python-dev --no-ai` (uses `templates/agents/doer.md`, auto-detects role skill)
+2. Edit `.quorum/vaults/python-dev/CONTEXT.md` if needed
+3. Optionally install a domain skill to `~/.claude/skills/` and set `skill_file` in the agent YAML
+4. Restart daemon
 
 ---
 

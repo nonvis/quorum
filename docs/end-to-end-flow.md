@@ -146,10 +146,14 @@ compile it, run tests, and fix issues until tests pass.
 Instead of hand-writing agent configs, use the generator:
 
 ```bash
-quorum agent create --role doer --name move-dev --project my-project
+# AI-assisted (uses claude -p to generate CONTEXT.md)
+quorum agent create --role doer --name move-dev --target-dir ~/my-project
+
+# Template-based (uses templates/agents/doer.md with placeholder substitution)
+quorum agent create --role doer --name move-dev --target-dir ~/my-project --no-ai
 ```
 
-This scaffolds the YAML config, CONTEXT.md, and vault directory structure. You then edit CONTEXT.md to add domain-specific instructions.
+This scaffolds the YAML config, CONTEXT.md, and vault directory. Role skills are auto-detected from `~/.claude/skills/quorum-roles/{role}/SKILL.md` (install via `scripts/install-skills.sh`). Specialized templates exist for `move-dev` and `ts-dev` roles.
 
 ### Example Team: Move Development
 
@@ -457,16 +461,13 @@ The dashboard shows:
 ### "I want to add another doer agent"
 
 ```bash
-# Generate the agent scaffold
-quorum agent create --role doer --name ts-dev --project move-project
+# Generate the agent scaffold (auto-detects role skill, uses template)
+quorum agent create --role doer --name ts-dev --target-dir . --no-ai
 
-# Edit the generated CONTEXT.md
-vim data/vaults/ts-dev/CONTEXT.md
+# Optionally edit the generated CONTEXT.md
+vim .quorum/vaults/ts-dev/CONTEXT.md
 
-# Add to project config
-# agents:
-#   - config: configs/agents/move-project/ts-dev.yaml
-# conversations.agents: [..., ts-dev]
+# Agent is auto-discovered from .quorum/agents/ — no config edits needed
 ```
 
 Restart the daemon to pick up the new agent.
