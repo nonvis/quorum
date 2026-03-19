@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import type { Conversation, Stats, ProjectConfig, ProjectState, Team, Agent } from "./types";
-import { fetchConversations, fetchStats, fetchConfig, fetchProjects, selectProject, fetchTeams, fetchAgents, fetchDaemonStatus } from "./api";
+import { fetchConversations, fetchStats, fetchConfig, fetchProjects, fetchTeams, fetchAgents, fetchDaemonStatus } from "./api";
 import { useSSE } from "./hooks/useSSE";
 import { StatsBanner } from "./components/StatsBanner";
 import { ProjectSelector } from "./components/ProjectSelector";
@@ -10,6 +10,9 @@ import { PromptInput } from "./components/PromptInput";
 import { ConversationCard } from "./components/ConversationCard";
 import { ConfigPanel } from "./components/ConfigPanel";
 import { BudgetPanel } from "./components/BudgetPanel";
+import { AgentCreateForm } from "./components/AgentCreateForm";
+import { TeamCreateForm } from "./components/TeamCreateForm";
+import { AgentContextEditor } from "./components/AgentContextEditor";
 
 export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -21,6 +24,7 @@ export default function App() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
   const [daemonRunning, setDaemonRunning] = useState(true);
+  const [editingAgent, setEditingAgent] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const [convs, st, daemon] = await Promise.all([
@@ -62,11 +66,8 @@ export default function App() {
   });
 
   const handleProjectSelect = async (path: string) => {
-    const result = await selectProject(path);
-    if (result.success) {
-      const p = await fetchProjects();
-      setProject(p);
-    }
+    const p = await fetchProjects();
+    setProject(p);
   };
 
   const ACTIVE_STATES = new Set(["active", "waiting_for_human"]);
@@ -100,11 +101,28 @@ export default function App() {
           {teams.length > 0 && (
             <TeamSelector teams={teams} selected={selectedTeam} onSelect={setSelectedTeam} />
           )}
+          {project.current && (
+            <div className="px-6 py-1">
+              <TeamCreateForm
+                agents={agents}
+                onCreated={() => fetchTeams().then((t) => {
+                  setTeams(t);
+                  if (t.length > 0 && !selectedTeam) setSelectedTeam(t[0].id);
+                })}
+              />
+            </div>
+          )}
           {agents.length > 0 && (
             <AgentRoster
               agents={agents}
               teamPath={teams.find((t) => t.id === selectedTeam)?.default_path ?? []}
+              onAgentClick={setEditingAgent}
             />
+          )}
+          {project.current && (
+            <div className="px-6 py-1">
+              <AgentCreateForm onCreated={() => fetchAgents().then(setAgents)} />
+            </div>
           )}
           <BudgetPanel />
           <PromptInput onSubmit={refresh} busy={busy} team={selectedTeam} />
@@ -130,6 +148,13 @@ export default function App() {
           <p className="text-lg mb-2">No project selected</p>
           <p className="text-sm">Enter a project path above to get started.</p>
         </div>
+      )}
+      {editingAgent && (
+        <AgentContextEditor
+          agentId={editingAgent}
+          agentName={agents.find(a => a.id === editingAgent)?.name ?? editingAgent}
+          onClose={() => setEditingAgent(null)}
+        />
       )}
       {showConfig && <ConfigPanel onClose={() => { setShowConfig(false); fetchConfig().then(setProjectConfig); }} />}
     </div>

@@ -101,6 +101,27 @@ export async function execDaemon(...args: string[]): Promise<DaemonResult> {
   };
 }
 
+// For commands that run without --config, using an explicit cwd (e.g. init)
+export async function execDaemonAt(cwd: string, ...args: string[]): Promise<DaemonResult> {
+  const proc = Bun.spawn([config.daemonBin, ...args], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: daemonEnv,
+  });
+
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  const exitCode = await proc.exited;
+
+  return {
+    success: exitCode === 0,
+    stdout: stdout.trim(),
+    stderr: stderr.trim(),
+    exitCode,
+  };
+}
+
 // For long-running commands (converse) — spawns detached, doesn't wait
 export function spawnDaemon(...args: string[]): void {
   const pc = getCurrentProjectConfig();

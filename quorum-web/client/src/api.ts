@@ -73,13 +73,75 @@ export async function selectProject(path: string): Promise<{ success: boolean; p
   return res.json();
 }
 
+export async function initProject(path: string): Promise<{ success: boolean; output?: string; error?: string }> {
+  const res = await fetch(`${BASE}/init`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  return res.json();
+}
+
 export async function fetchTeams(): Promise<Team[]> {
   const res = await fetch(`${BASE}/teams`);
   return res.json();
 }
 
+export async function createTeam(name: string, defaultPath: string[]): Promise<{ success: boolean; id?: string; error?: string }> {
+  const res = await fetch(`${BASE}/teams`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, defaultPath }),
+  });
+  return res.json();
+}
+
+export async function updateTeam(id: string, updates: { name?: string; defaultPath?: string[] }): Promise<{ success: boolean; error?: string }> {
+  const res = await fetch(`${BASE}/teams/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  return res.json();
+}
+
+export async function deleteTeam(id: string): Promise<{ success: boolean; error?: string }> {
+  const res = await fetch(`${BASE}/teams/${id}`, { method: "DELETE" });
+  return res.json();
+}
+
 export async function fetchAgents(): Promise<Agent[]> {
   const res = await fetch(`${BASE}/agents`);
+  return res.json();
+}
+
+export async function createAgent(params: {
+  role: string;
+  name: string;
+  description?: string;
+  targetDir?: string;
+  skill?: string;
+}): Promise<{ success: boolean; output?: string; error?: string }> {
+  const res = await fetch(`${BASE}/agents`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+export async function fetchAgentContext(agentId: string): Promise<{ id: string; content: string }> {
+  const res = await fetch(`${BASE}/agents/${agentId}/context`);
+  if (!res.ok) return { id: agentId, content: "" };
+  return res.json();
+}
+
+export async function updateAgentContext(agentId: string, content: string): Promise<{ success: boolean; error?: string }> {
+  const res = await fetch(`${BASE}/agents/${agentId}/context`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
   return res.json();
 }
 

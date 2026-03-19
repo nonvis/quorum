@@ -106,7 +106,7 @@ One `claude -p` task at a time, always. Design decision, not configuration.
 ### Vault System
 
 Each agent owns a vault: `{data_dir}/vaults/{agent_name}/`
-- `CONTEXT.md` — agent identity + instructions (auto-generated, never hand-edit)
+- `CONTEXT.md` — agent identity + instructions (auto-generated, or editable via web UI)
 - `knowledge/` — accumulated findings via VAULT_UPDATE blocks
 
 ### Knowledge System
@@ -207,6 +207,12 @@ myproject/.quorum/
 **Config loading:** If `agents/` dir exists next to config, `load_agents_from_directory()` scans for `.yaml`/`.yml` files sorted by id, replacing any explicit `agents:` list.
 
 **Web UI stale detection:** `GET /api/daemon/status` returns `{ running: boolean }` (checks PID file + `process.kill(pid, 0)`). When daemon is not running and active conversations exist, the UI shows an amber warning banner advising the user to run `quorum status` to trigger crash recovery.
+
+**Web UI management features:**
+- **Project init:** `POST /api/init` runs `quorum_daemon init` via `execDaemonAt(cwd)` (no `--config` flag). UI prompts "Initialize Quorum" when selecting a path without `.quorum/`.
+- **Agent creation:** `POST /api/agents` runs `quorum_daemon agent create --no-ai`. Form with role pills, name, description, optional target-dir (doer only).
+- **Team builder:** `POST /api/teams`, `PUT /api/teams/:id`, `DELETE /api/teams/:id` — direct YAML file operations (no daemon needed). Drag-to-build agent path UI.
+- **CONTEXT.md editor:** `GET/PUT /api/agents/:id/context` — read/write vault CONTEXT.md. Click any agent badge to open a modal markdown editor. Creates vault dir on first save.
 
 ## What NOT To Do
 

@@ -18,13 +18,15 @@ const ROLE_INITIALS: Record<string, string> = {
   librarian: "Lb",
 };
 
-function AgentBadge({ agent, dimmed }: { agent: Agent; dimmed: boolean }) {
+function AgentBadge({ agent, dimmed, onClick }: { agent: Agent; dimmed: boolean; onClick?: () => void }) {
   const dotColor = ROLE_COLORS[agent.role] ?? "bg-zinc-500";
   const initial = ROLE_INITIALS[agent.role] ?? "?";
+  const Wrapper = onClick ? "button" : "span";
 
   return (
-    <span
-      className={`inline-flex items-center gap-1 text-xs ${dimmed ? "opacity-50" : ""}`}
+    <Wrapper
+      onClick={onClick}
+      className={`inline-flex items-center gap-1 text-xs ${dimmed ? "opacity-50" : ""} ${onClick ? "cursor-pointer hover:bg-zinc-800 rounded px-1 -mx-1" : ""}`}
       title={agent.description}
     >
       <span className={`w-2 h-2 rounded-full ${dotColor}`} />
@@ -37,16 +39,18 @@ function AgentBadge({ agent, dimmed }: { agent: Agent; dimmed: boolean }) {
       {agent.skill_file && (
         <span className="text-amber-500 text-[10px] ml-0.5" title={`Skill: ${agent.skill_file}`}>&#9733;</span>
       )}
-    </span>
+    </Wrapper>
   );
 }
 
 export function AgentRoster({
   agents,
   teamPath,
+  onAgentClick,
 }: {
   agents: Agent[];
   teamPath: string[];
+  onAgentClick?: (agentId: string) => void;
 }) {
   if (agents.length === 0) return null;
 
@@ -67,11 +71,11 @@ export function AgentRoster({
       {inPath.map((agent, i) => (
         <span key={agent.id} className="inline-flex items-center gap-2">
           {i > 0 && <span className="text-zinc-600 text-xs">&rarr;</span>}
-          <AgentBadge agent={agent} dimmed={false} />
+          <AgentBadge agent={agent} dimmed={false} onClick={() => onAgentClick?.(agent.id)} />
         </span>
       ))}
       {outOfPath.map((agent) => (
-        <AgentBadge key={agent.id} agent={agent} dimmed={true} />
+        <AgentBadge key={agent.id} agent={agent} dimmed={true} onClick={() => onAgentClick?.(agent.id)} />
       ))}
     </div>
   );

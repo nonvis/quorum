@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { selectProject, initProject } from "../api";
 
 export function ProjectSelector({
   current,
@@ -11,14 +12,21 @@ export function ProjectSelector({
 }) {
   const [input, setInput] = useState("");
   const [showRecent, setShowRecent] = useState(false);
+  const [initNeeded, setInitNeeded] = useState(false);
 
   const basename = (p: string) => p.split("/").filter(Boolean).pop() ?? p;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
-    onSelect(input.trim());
-    setInput("");
+    const result = await selectProject(input.trim());
+    if (result.error?.includes("No .quorum/")) {
+      setInitNeeded(true);
+    } else if (result.success) {
+      onSelect(input.trim());
+      setInput("");
+      setInitNeeded(false);
+    }
   };
 
   // Other recent projects (exclude current)
@@ -75,7 +83,8 @@ export function ProjectSelector({
           {(current ? otherRecent : recent).map((path) => (
             <button
               key={path}
-              onClick={() => {
+              onClick={async () => {
+                await selectProject(path);
                 onSelect(path);
                 setShowRecent(false);
               }}
@@ -85,6 +94,33 @@ export function ProjectSelector({
               {basename(path)}
             </button>
           ))}
+        </div>
+      )}
+
+      {initNeeded && (
+        <div className="flex items-center gap-2 mt-2">
+          <span className="text-sm text-amber-400">
+            No .quorum/ found at this path.
+          </span>
+          <button
+            onClick={async () => {
+              const res = await initProject(input.trim());
+              if (res.success) {
+                onSelect(input.trim());
+                setInput("");
+                setInitNeeded(false);
+              }
+            }}
+            className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-500"
+          >
+            Initialize Quorum
+          </button>
+          <button
+            onClick={() => setInitNeeded(false)}
+            className="px-3 py-1 text-xs bg-zinc-700 text-zinc-300 rounded hover:bg-zinc-600"
+          >
+            Cancel
+          </button>
         </div>
       )}
     </div>

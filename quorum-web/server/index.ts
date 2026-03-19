@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { config, repoRoot, getState, setCurrentProject, getProjectConfig } from "../config";
 import { join } from "path";
-import { readFileSync, writeFileSync, readdirSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, readdirSync, existsSync, unlinkSync, mkdirSync } from "fs";
 import {
   getConversations,
   getConversation,
@@ -12,7 +12,7 @@ import {
   dbWrite,
   type Conversation,
 } from "./db";
-import { execDaemon, spawnDaemon, cleanupStaleDaemon, isDaemonRunning } from "./daemon";
+import { execDaemon, execDaemonAt, spawnDaemon, cleanupStaleDaemon, isDaemonRunning } from "./daemon";
 import { createSSEStream } from "./sse";
 
 const app = new Hono();
@@ -35,6 +35,23 @@ app.post("/api/projects/select", async (c) => {
   }
   setCurrentProject(body.path);
   return c.json({ success: true, path: body.path });
+});
+
+app.post("/api/init", async (c) => {
+  const body = await c.req.json<{ path: string }>();
+  if (!body.path?.trim()) {
+    return c.json({ error: "path is required" }, 400);
+  }
+  const quorumDir = join(body.path, ".quorum");
+  if (existsSync(quorumDir)) {
+    return c.json({ error: `Project already initialized: ${quorumDir} exists` }, 400);
+  }
+  const result = await execDaemonAt(body.path, "init");
+  if (result.success) {
+    setCurrentProject(body.path);
+    return c.json({ success: true, output: result.stdout });
+  }
+  return c.json({ success: false, error: result.stderr || result.stdout }, 500);
 });
 
 // -- Team endpoints --
@@ -64,6 +81,63 @@ app.get("/api/teams", (c) => {
   return c.json(teams);
 });
 
+app.post("/api/teams", async (c) => {
+  const body = await c.req.json<{ name: string; defaultPath: string[] }>();
+  if (!body.name?.trim() || !body.defaultPath?.length) {
+    return c.json({ error: "name and defaultPath are required" }, 400);
+  }
+  const state = getState();
+  if (!state.currentProject) return c.json({ error: "no project selected" }, 400);
+
+  const id = body.name.toLowerCase().replace(/\s+/g, "-");
+  const teamsDir = join(state.currentProject, ".quorum", "teams");
+  const filePath = join(teamsDir, id + ".yaml");
+
+  if (existsSync(filePath)) {
+    return c.json({ error: `Team "${id}" already exists` }, 400);
+  }
+
+  mkdirSync(teamsDir, { recursive: true });
+  const yaml = `name: ${body.name.trim()}\ndefault_path: [${body.defaultPath.join(", ")}]\n`;
+  writeFileSync(filePath, yaml);
+  return c.json({ success: true, id });
+});
+
+app.put("/api/teams/:id", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{ name?: string; defaultPath?: string[] }>();
+  const state = getState();
+  if (!state.currentProject) return c.json({ error: "no project selected" }, 400);
+
+  const filePath = join(state.currentProject, ".quorum", "teams", id + ".yaml");
+  if (!existsSync(filePath)) return c.json({ error: "team not found" }, 404);
+
+  let content = readFileSync(filePath, "utf-8");
+  if (body.name != null) {
+    content = content.replace(/^name:\s*.+/m, `name: ${body.name.trim()}`);
+  }
+  if (body.defaultPath != null) {
+    content = content.replace(
+      /^default_path:\s*.+/m,
+      `default_path: [${body.defaultPath.join(", ")}]`
+    );
+  }
+  writeFileSync(filePath, content);
+  return c.json({ success: true });
+});
+
+app.delete("/api/teams/:id", async (c) => {
+  const id = c.req.param("id");
+  const state = getState();
+  if (!state.currentProject) return c.json({ error: "no project selected" }, 400);
+
+  const filePath = join(state.currentProject, ".quorum", "teams", id + ".yaml");
+  if (!existsSync(filePath)) return c.json({ error: "team not found" }, 404);
+
+  unlinkSync(filePath);
+  return c.json({ success: true });
+});
+
 // -- Agent endpoints --
 
 app.get("/api/agents", (c) => {
@@ -91,6 +165,53 @@ app.get("/api/agents", (c) => {
   });
 
   return c.json(agents);
+});
+
+app.post("/api/agents", async (c) => {
+  const body = await c.req.json<{
+    role: string;
+    name: string;
+    description?: string;
+    targetDir?: string;
+    skill?: string;
+  }>();
+  if (!body.role || !body.name) {
+    return c.json({ error: "role and name are required" }, 400);
+  }
+  const args = ["agent", "create", "--role", body.role, "--name", body.name, "--no-ai"];
+  if (body.description) args.push("--description", body.description);
+  if (body.targetDir) args.push("--target-dir", body.targetDir);
+  if (body.skill) args.push("--skill", body.skill);
+  const result = await execDaemon(...args);
+  return c.json({
+    success: result.success,
+    output: result.stdout,
+    error: result.stderr || undefined,
+  });
+});
+
+app.get("/api/agents/:id/context", (c) => {
+  const id = c.req.param("id");
+  const state = getState();
+  if (!state.currentProject) return c.json({ error: "No project selected" }, 400);
+  const contextPath = join(state.currentProject, ".quorum", "vaults", id, "CONTEXT.md");
+  if (!existsSync(contextPath)) return c.json({ error: "CONTEXT.md not found", content: "" }, 404);
+  const content = readFileSync(contextPath, "utf-8");
+  return c.json({ id, content });
+});
+
+app.put("/api/agents/:id/context", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{ content: string }>();
+  const state = getState();
+  if (!state.currentProject) return c.json({ error: "No project selected" }, 400);
+  const vaultDir = join(state.currentProject, ".quorum", "vaults", id);
+  if (!existsSync(vaultDir)) {
+    mkdirSync(vaultDir, { recursive: true });
+  }
+  const contextPath = join(vaultDir, "CONTEXT.md");
+  writeFileSync(contextPath, body.content);
+  return c.json({ success: true });
 });
 
 // -- Daemon status --
