@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import type { Conversation, Stats, ProjectConfig, ProjectState, Team, Agent } from "./types";
-import { fetchConversations, fetchStats, fetchConfig, fetchProjects, selectProject, fetchTeams, fetchAgents } from "./api";
+import { fetchConversations, fetchStats, fetchConfig, fetchProjects, selectProject, fetchTeams, fetchAgents, fetchDaemonStatus } from "./api";
 import { useSSE } from "./hooks/useSSE";
 import { StatsBanner } from "./components/StatsBanner";
 import { ProjectSelector } from "./components/ProjectSelector";
@@ -20,11 +20,15 @@ export default function App() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
+  const [daemonRunning, setDaemonRunning] = useState(true);
 
   const refresh = useCallback(async () => {
-    const [convs, st] = await Promise.all([fetchConversations(), fetchStats()]);
+    const [convs, st, daemon] = await Promise.all([
+      fetchConversations(), fetchStats(), fetchDaemonStatus(),
+    ]);
     setConversations(convs);
     setStats(st);
+    setDaemonRunning(daemon.running);
   }, []);
 
   // Initial load — always fetch project state; conversations/stats only if project selected
@@ -81,6 +85,15 @@ export default function App() {
         recent={project.recent}
         onSelect={handleProjectSelect}
       />
+
+      {project.current && !daemonRunning && conversations.some(c =>
+        c.state === "active" || c.state === "waiting_for_human"
+      ) && (
+        <div className="mx-6 mt-3 px-4 py-2 bg-amber-900/30 border border-amber-800 rounded-lg text-amber-400 text-sm">
+          Daemon not running — active conversations may be stale.
+          Run <code className="bg-zinc-800 px-1.5 py-0.5 rounded text-xs">quorum status</code> to trigger recovery.
+        </div>
+      )}
 
       {project.current ? (
         <>

@@ -105,6 +105,11 @@ export async function fetchAgentCosts(): Promise<AgentCost[]> {
   return res.json();
 }
 
+export async function fetchDaemonStatus(): Promise<{ running: boolean }> {
+  const res = await fetch(`${BASE}/daemon/status`);
+  return res.json();
+}
+
 export async function updateConfig(updates: Record<string, string | number | boolean>) {
   const res = await fetch(`${BASE}/config`, {
     method: "POST",

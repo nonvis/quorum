@@ -20,13 +20,13 @@ quorum/
 │   │   ├── daemon/              # Scheduler, message bus, events, conversation engine
 │   │   ├── agent/               # Claude Code invoker, context assembler, output parser
 │   │   ├── vault/               # Local vault manager (filesystem-based)
-│   │   ├── storage/             # SQLite (WAL mode) — task queue, tokens, conversations, knowledge, budget
+│   │   ├── storage/             # SQLite (WAL mode) — schema.h, database.h, local_cache.h
 │   │   ├── utils/               # HTTP, JSON (manual), config, UUID, subprocess, discover
 │   │   └── cli/                 # CLI commands (init.h, agent_create.h, skills.h)
 │   └── tests/
 ├── quorum-web/                  # Web dashboard (Hono API + React frontend)
 │   ├── config.ts                # Dynamic project config, state persistence
-│   ├── server/                  # index.ts (routes), db.ts, daemon.ts, sse.ts
+│   ├── server/                  # index.ts (routes), db.ts, daemon.ts (PID check), sse.ts
 │   └── client/src/              # App.tsx, api.ts, types.ts, components/
 ├── .claude/commands/            # Claude Code skills (project scaffolding)
 └── docs/                        # Design documents
@@ -187,14 +187,16 @@ executor:
 
 ### Project-Local Layout (`.quorum/`)
 
-`quorum init` creates a self-contained `.quorum/` directory:
+`quorum init` creates a self-contained `.quorum/` directory with a ready-to-use SQLite database:
 ```
 myproject/.quorum/
-  config.yaml, .gitignore, quorum.db, quorum.pid
+  config.yaml, .gitignore, quorum.db (schema pre-created), quorum.pid
   agents/     — agent YAML configs (auto-discovered)
   vaults/     — per-agent vaults (CONTEXT.md + knowledge/)
   teams/      — team presets (named default_path configs)
 ```
+
+**Schema management:** `storage/schema.h` defines `create_schema()` — all CREATE TABLE/INDEX statements in one place. Called by both `quorum init` (so DB is usable immediately) and `init_schema()` in main.cpp (which additionally runs ALTER TABLE migrations for old databases).
 
 **Team presets** (`teams/*.yaml`): `name` + `default_path` array. Selected via `--team <name>`. Overrides `conversations.default_path` for that conversation. All agents remain available for HANDOFF regardless of team.
 
@@ -203,6 +205,8 @@ myproject/.quorum/
 **Two layouts coexist:** Project-local (`.quorum/`, preferred) and centralized (`configs/` + `data/`, requires `--config`).
 
 **Config loading:** If `agents/` dir exists next to config, `load_agents_from_directory()` scans for `.yaml`/`.yml` files sorted by id, replacing any explicit `agents:` list.
+
+**Web UI stale detection:** `GET /api/daemon/status` returns `{ running: boolean }` (checks PID file + `process.kill(pid, 0)`). When daemon is not running and active conversations exist, the UI shows an amber warning banner advising the user to run `quorum status` to trigger crash recovery.
 
 ## What NOT To Do
 

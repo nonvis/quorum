@@ -64,6 +64,7 @@ static void test_init_creates_structure() {
     check(fs::exists(".quorum/agents"), "A: .quorum/agents/ exists");
     check(fs::exists(".quorum/vaults/leader/knowledge"), "A: .quorum/vaults/leader/knowledge/ exists");
     check(fs::exists(".quorum/teams"), "A: .quorum/teams/ exists");
+    check(fs::exists(".quorum/quorum.db"), "A: .quorum/quorum.db exists");
 
     fs::current_path(original_cwd);
     cleanup_temp(tmp);

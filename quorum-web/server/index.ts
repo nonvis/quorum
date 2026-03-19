@@ -12,7 +12,7 @@ import {
   dbWrite,
   type Conversation,
 } from "./db";
-import { execDaemon, spawnDaemon, cleanupStaleDaemon } from "./daemon";
+import { execDaemon, spawnDaemon, cleanupStaleDaemon, isDaemonRunning } from "./daemon";
 import { createSSEStream } from "./sse";
 
 const app = new Hono();
@@ -91,6 +91,12 @@ app.get("/api/agents", (c) => {
   });
 
   return c.json(agents);
+});
+
+// -- Daemon status --
+
+app.get("/api/daemon/status", (c) => {
+  return c.json({ running: isDaemonRunning() });
 });
 
 // -- Read endpoints --

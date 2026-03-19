@@ -5,6 +5,8 @@
 #include <iostream>
 #include <string>
 
+#include "storage/schema.h"
+
 namespace fs = std::filesystem;
 namespace sui::quorum::cli {
 
@@ -117,6 +119,15 @@ inline int init_project() {
             << "# Keep: config.yaml, agents/, teams/\n";
     }
     std::cout << "  Created: .quorum/.gitignore\n";
+
+    // 6a. Create quorum.db with schema
+    {
+        sui::quorum::Database db(".quorum/quorum.db");
+        if (db.is_open()) {
+            sui::quorum::create_schema(db);
+            std::cout << "  Created: .quorum/quorum.db\n";
+        }
+    }
 
     // 6b. Write default team preset
     {

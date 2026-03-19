@@ -139,10 +139,12 @@ add_test(NAME test_agent_create COMMAND test_agent_create)
 
 add_executable(test_quorum_init tests/unit/test_quorum_init.cpp)
 target_include_directories(test_quorum_init PRIVATE src)
+target_link_libraries(test_quorum_init PRIVATE SQLite::SQLite3)
 add_test(NAME test_quorum_init COMMAND test_quorum_init)
 
 add_executable(test_discover tests/unit/test_discover.cpp)
 target_include_directories(test_discover PRIVATE src)
+target_link_libraries(test_discover PRIVATE SQLite::SQLite3)
 add_test(NAME test_discover COMMAND test_discover)
 
 add_executable(test_team_presets tests/unit/test_team_presets.cpp)

@@ -52,6 +52,20 @@ export function cleanupStaleDaemon(): void {
   } catch {}
 }
 
+// Check if daemon process is alive (non-destructive — signal 0)
+export function isDaemonRunning(): boolean {
+  const pidFile = getPidFilePath();
+  if (!pidFile || !existsSync(pidFile)) return false;
+  try {
+    const pid = parseInt(readFileSync(pidFile, "utf-8").trim(), 10);
+    if (isNaN(pid)) return false;
+    process.kill(pid, 0); // throws if dead
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface DaemonResult {
   success: boolean;
   stdout: string;
