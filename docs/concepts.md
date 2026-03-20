@@ -22,10 +22,11 @@ Quorum defines **6 archetypes** that determine what an agent can do:
 Role determines tool access. Doers get executor-class (`claude -p` with full tools). All others are analyst-class (`--disallowedTools "Write,Edit,NotebookEdit"`).
 
 An agent is defined by:
-- **YAML config** (`.quorum/agents/agent.yaml`) — role, description, vault path, skill file
-- **Vault CONTEXT.md** — who it is, what it knows, what it does and doesn't do (generated from `templates/agents/{role}.md`)
+- **YAML config** (`.quorum/agents/agent.yaml`) — role, description, vault path, skill file, optional model override
+- **Vault CONTEXT.md** — who it is, what it knows, what it does and doesn't do (generated from `templates/agents/{role}.md`, includes Universal Rules for HANDOFF discipline)
 - **SKILL.md** — behavioral patterns for the role (auto-detected from `~/.claude/skills/quorum-roles/{role}/SKILL.md`)
 - **Optional domain SKILL.md** — specialized expertise (e.g., sui-move, sui-ts-sdk)
+- **Optional `model`** — per-agent model override (e.g., `sonnet`, `opus`). When set, adds `--model` to `claude -p`. Useful for running cheap agents on sonnet and quality-critical agents on opus.
 
 Between invocations, an agent has no state. Everything it "remembers" comes from its vault, which the daemon loads into the LLM prompt.
 
@@ -70,10 +71,12 @@ prompt: <instructions for the next agent>
 ```
 
 **Routing priority:**
-1. HANDOFF block present → route to specified agent
-2. No HANDOFF, `default_path` configured → next in path
-3. No HANDOFF, no `default_path` → leader
-4. Destination uncertain → leader
+1. HANDOFF block present → route to specified agent (path_index synced if target is in default_path)
+2. No HANDOFF, `default_path` configured → next in path (path_index incremented)
+3. No HANDOFF, no `default_path` → conversation done
+4. Unknown agent → fallback to leader
+
+**Universal Rules:** All agent templates enforce HANDOFF discipline via a `## Universal Rules` section: never self-HANDOFF, always SUMMARY before HANDOFF, preserve "Task N:" prefix through the chain, and role-specific routing (doers/reviewers -> scribe, scribe -> done, leader -> architect/thinker).
 
 **Special values:**
 - `human` — leader holds the ball and waits for operator input (`waiting_for_human` state)

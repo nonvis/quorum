@@ -1,4 +1,5 @@
 import { readFileSync, unlinkSync, existsSync } from "fs";
+import { join } from "path";
 import { config, repoRoot, getState, getProjectConfig } from "../config";
 
 // Resolve dynamic project config, falling back to legacy hardcoded paths
@@ -17,7 +18,11 @@ function getPidFilePath(): string | null {
     const pc = getCurrentProjectConfig();
     const yaml = readFileSync(pc.configPath, "utf-8");
     const match = yaml.match(/pid_file:\s*(.+)/);
-    return match ? match[1].trim() : null;
+    if (!match) return null;
+    const pidFileRel = match[1].trim();
+    // Absolute paths used as-is; relative paths resolved against project root
+    if (pidFileRel.startsWith("/")) return pidFileRel;
+    return join(pc.projectPath, pidFileRel);
   } catch {
     return null;
   }

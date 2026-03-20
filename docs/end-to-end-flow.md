@@ -84,6 +84,7 @@ description: "Writes Move smart contracts"
 vault_path: .quorum/vaults/move-dev/
 context_file: .quorum/vaults/move-dev/CONTEXT.md
 skill_file: ~/.claude/skills/quorum-roles/doer/SKILL.md  # auto-detected from role
+model: opus                                               # optional: per-agent model override
 executor:
   target_dir: ~/nonvis/my-move-project
 ```
@@ -98,6 +99,7 @@ description: "Plans module structure, designs APIs, reviews patterns"
 vault_path: .quorum/vaults/architect/
 context_file: .quorum/vaults/architect/CONTEXT.md
 skill_file: ~/.claude/skills/quorum-roles/thinker/SKILL.md  # auto-detected from role
+model: sonnet                                               # optional: cheaper model for planning
 ```
 
 ```yaml
@@ -341,9 +343,10 @@ The daemon sets the conversation state to `done`.
 
 When the daemon receives a HANDOFF block, it resolves the next agent:
 
-1. **HANDOFF `to:` field** — explicit target, always wins
-2. **`default_path`** — if no HANDOFF block, follow the configured path
-3. **Leader fallback** — if neither, route back to leader
+1. **HANDOFF `to:` field** — explicit target, always wins. If the target is in `default_path`, `path_index` is synced so subsequent no-HANDOFF turns route correctly.
+2. **`default_path`** — if no HANDOFF block, follow the configured path (increment `path_index`)
+3. **End of path** — if no HANDOFF and `default_path` exhausted, conversation completes
+4. **Unknown agent** — fallback to leader
 
 The `to:` field accepts an agent ID (`move-dev`), `human` (pause for user input), or `done` (end conversation).
 

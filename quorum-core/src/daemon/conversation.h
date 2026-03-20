@@ -120,6 +120,15 @@ public:
             } else {
                 next_agent = h.to;
                 next_prompt = h.prompt;
+                // Keep path_index in sync when HANDOFF target is in default_path
+                if (!cfg_.default_path.empty()) {
+                    for (int i = 0; i < static_cast<int>(cfg_.default_path.size()); ++i) {
+                        if (cfg_.default_path[i] == h.to) {
+                            update_path_index(conv_id, i);
+                            break;
+                        }
+                    }
+                }
             }
         } else {
             // No HANDOFF -- follow default_path or complete

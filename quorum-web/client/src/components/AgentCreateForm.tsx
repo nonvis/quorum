@@ -18,6 +18,7 @@ export function AgentCreateForm({ onCreated }: { onCreated: () => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [targetDir, setTargetDir] = useState("");
+  const [skill, setSkill] = useState("");
   const [loading, setLoading] = useState(false);
 
   const resetForm = () => {
@@ -25,6 +26,7 @@ export function AgentCreateForm({ onCreated }: { onCreated: () => void }) {
     setName("");
     setDescription("");
     setTargetDir("");
+    setSkill("");
   };
 
   const handleCreate = async () => {
@@ -37,6 +39,7 @@ export function AgentCreateForm({ onCreated }: { onCreated: () => void }) {
       };
       if (description.trim()) params.description = description.trim();
       if (role === "doer" && targetDir.trim()) params.targetDir = targetDir.trim();
+      if (skill.trim()) params.skill = skill.trim();
       const res = await createAgent(params);
       if (res.success) {
         resetForm();
@@ -112,6 +115,19 @@ export function AgentCreateForm({ onCreated }: { onCreated: () => void }) {
             value={targetDir}
             onChange={(e) => setTargetDir(e.target.value)}
             placeholder="~/path/to/working/dir"
+            className="w-full px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+          />
+        </div>
+      )}
+
+      {role === "doer" && (
+        <div>
+          <label className="text-xs text-zinc-500 block mb-1">Skill file (optional)</label>
+          <input
+            type="text"
+            value={skill}
+            onChange={(e) => setSkill(e.target.value)}
+            placeholder="e.g. sui-move or path/to/SKILL.md"
             className="w-full px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
           />
         </div>

@@ -123,6 +123,11 @@ public:
             disallowed_tools_flag = " --disallowedTools \"Write,Edit,NotebookEdit\"";
         }
 
+        std::string model_flag;
+        if (!agent_meta.model.empty()) {
+            model_flag = " --model " + agent_meta.model;
+        }
+
         std::string cwd_prefix;
         if (!agent_meta.target_dir.empty()) {
             // Expand ~ to HOME
@@ -137,6 +142,7 @@ public:
         auto cmd = cwd_prefix + "env -u CLAUDECODE cat " + temp_path
             + " | claude -p --dangerously-skip-permissions"
             + disallowed_tools_flag
+            + model_flag
             + session_flag
             + " --output-format json 2>&1";
 
@@ -171,6 +177,7 @@ public:
                 auto retry_cmd = cwd_prefix + "env -u CLAUDECODE cat " + temp_path
                     + " | claude -p --dangerously-skip-permissions"
                     + disallowed_tools_flag
+                    + model_flag
                     + " --session-id " + task_session_id
                     + " --output-format json 2>&1";
 

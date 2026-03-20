@@ -90,6 +90,8 @@ daemon -> assembles prompt (vault + task) -> spawns `claude -p` with class-appro
 - **`analyst`** (default, all roles except doer): `--disallowedTools "Write,Edit,NotebookEdit"` — read-only
 - **`executor`** (doer role): full tool access, `target_dir` sets working directory
 
+**Per-agent model selection:** Optional `model` field in agent YAML (e.g., `model: sonnet`). When set, adds `--model <value>` to the `claude -p` command. Empty = use claude default.
+
 **Session management** (conversation mode only):
 - First use: `--session-id <uuid>` — Subsequent: `-r <uuid>` (resume)
 - Resume fallback: if `-r` fails, retries with `--session-id` (fresh session)
@@ -178,6 +180,7 @@ description: "Analyzes market structure"
 vault_path: .quorum/vaults/market_analyst/
 context_file: .quorum/vaults/market_analyst/CONTEXT.md
 skill_file: ~/.claude/skills/quorum-roles/thinker/SKILL.md  # auto-detected from role
+model: sonnet                   # optional: per-agent model override
 ```
 ```yaml
 # Executor (full tool access)
@@ -189,6 +192,7 @@ description: "Writes Move smart contracts"
 vault_path: .quorum/vaults/move-dev/
 context_file: .quorum/vaults/move-dev/CONTEXT.md
 skill_file: ~/.claude/skills/quorum-roles/doer/SKILL.md     # auto-detected from role
+model: opus                     # optional: per-agent model override
 executor:
   target_dir: ~/nonvis/my-project   # supports ~/ expansion
 ```
@@ -201,6 +205,8 @@ executor:
 - `templates/skills/sui-dev-skills/` and `templates/skills/move-code-quality/` — domain expertise skills. Installed via `scripts/install-skills.sh`.
 
 **Skill auto-detection:** When `agent create` runs without `--skill-file`, it checks `~/.claude/skills/quorum-roles/{role}/SKILL.md`. If found, it's automatically set in the agent YAML.
+
+**Universal Rules:** All agent templates include a `## Universal Rules` section that enforces HANDOFF discipline: never self-HANDOFF, always include SUMMARY before HANDOFF, preserve task number prefixes ("Task N:") through the chain, and role-specific routing (doers/reviewers -> scribe, scribe -> done, leader -> architect/thinker).
 
 ### Project-Local Layout (`.quorum/`)
 
@@ -221,11 +227,13 @@ myproject/.quorum/
 
 **Config loading:** If `agents/` dir exists next to config, `load_agents_from_directory()` scans for `.yaml`/`.yml` files sorted by id, replacing any explicit `agents:` list.
 
-**Web UI stale detection:** `GET /api/daemon/status` returns `{ running: boolean }` (checks PID file + `process.kill(pid, 0)`). When daemon is not running and active conversations exist, the UI shows an amber warning banner advising the user to run `quorum status` to trigger crash recovery.
+**Web UI stale detection:** `GET /api/daemon/status` returns `{ running: boolean }` (checks PID file + `process.kill(pid, 0)`, resolves relative PID paths against project root). When daemon is not running and active conversations exist, the UI shows an amber warning banner advising the user to run `quorum status` to trigger crash recovery.
+
+**Web UI converse behavior:** `POST /api/converse` checks `isDaemonRunning()` first. If daemon is running, uses `execDaemon()` (CLI inserts conversation, exits immediately). If not running, uses `spawnDaemon()` (starts daemon in background).
 
 **Web UI management features:**
 - **Project init:** `POST /api/init` runs `quorum_daemon init` via `execDaemonAt(cwd)` (no `--config` flag). UI prompts "Initialize Quorum" when selecting a path without `.quorum/`.
-- **Agent creation:** `POST /api/agents` runs `quorum_daemon agent create --no-ai`. Form with role pills, name, description, optional target-dir (doer only).
+- **Agent creation:** `POST /api/agents` runs `quorum_daemon agent create --no-ai`. Form with role pills, name, description, optional target-dir and skill file (doer only).
 - **Team builder:** `POST /api/teams`, `PUT /api/teams/:id`, `DELETE /api/teams/:id` — direct YAML file operations (no daemon needed). Drag-to-build agent path UI.
 - **CONTEXT.md editor:** `GET/PUT /api/agents/:id/context` — read/write vault CONTEXT.md. Click any agent badge to open a modal markdown editor. Creates vault dir on first save.
 

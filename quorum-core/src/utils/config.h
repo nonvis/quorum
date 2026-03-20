@@ -86,6 +86,7 @@ struct AgentMetadata {
     std::string context_file;
     std::string skill_file;               // path to SKILL.md (optional)
     std::string target_dir;               // working directory for claude -p (inherits from daemon.target_dir)
+    std::string model;                    // per-agent model override (e.g., "opus", "sonnet")
 };
 
 struct TeamPreset {
@@ -179,6 +180,7 @@ inline std::optional<AgentMetadata> load_agent_config(const std::string& path) {
             else if (key == "vault_path") agent.vault_path = val;
             else if (key == "context_file") agent.context_file = val;
             else if (key == "skill_file") agent.skill_file = val;
+            else if (key == "model") agent.model = val;
         }
 
         // Fields inside "executor" section

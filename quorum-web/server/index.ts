@@ -432,13 +432,19 @@ app.post("/api/converse", async (c) => {
   );
   const maxIdBefore = before[0]?.max_id ?? 0;
 
-  // Spawn daemon in background — it creates the conversation and runs the dispatch loop
   const teamTag = body.team ? ` [team: ${body.team}]` : "";
-  console.log(`[converse] spawning daemon for: "${body.goal}"${teamTag}`);
-  if (body.team) {
-    spawnDaemon("converse", "--team", body.team, body.goal);
+  const args: string[] = ["converse"];
+  if (body.team) args.push("--team", body.team);
+  args.push(body.goal);
+
+  if (isDaemonRunning()) {
+    // Daemon already running — just insert conversation via CLI (it exits immediately)
+    console.log(`[converse] daemon running, exec: "${body.goal}"${teamTag}`);
+    await execDaemon(...args);
   } else {
-    spawnDaemon("converse", body.goal);
+    // No daemon — spawn one (it creates conversation + runs dispatch loop)
+    console.log(`[converse] spawning daemon for: "${body.goal}"${teamTag}`);
+    spawnDaemon(...args);
   }
 
   // Poll for the new conversation (fresh connection each time to bypass WAL snapshot)
