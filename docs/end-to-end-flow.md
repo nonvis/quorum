@@ -483,22 +483,21 @@ quorum converse \
 
 The daemon, conversation loop, HANDOFF/KNOWLEDGE parsing, and knowledge ledger work identically. Only the agents change. See `docs/domain-templates.md` for pre-built team compositions.
 
-### "Conversation paused because of budget"
+### "Window budget exhausted"
 
-The daemon pauses dispatch when the hourly or daily budget limit is reached:
+The daemon pauses dispatch when the window budget is exhausted:
 
 ```
-[15:30:00] Budget limit reached (hourly: $2.00/$2.00)
-[15:30:00] Conversation 1 paused — will resume when budget resets
+[15:30:00] Window budget exhausted ($100.00/$100.00)
+[15:30:00] Dispatch paused — will resume when window resets
 ```
 
-Resume manually after the budget window resets:
+The window budget covers all conversations, not individual ones. When exhausted, no new tasks are dispatched until the window resets (after `window_hours`) or the budget is increased via the web UI.
 
 ```bash
+# Or resume manually after increasing budget
 quorum resume --conversation 1
 ```
-
-Or wait — the daemon auto-resumes when the hourly window rolls over.
 
 ### "An agent is going in circles"
 

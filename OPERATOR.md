@@ -102,8 +102,8 @@ cd quorum-web/client && bun install && bun run dev   # http://localhost:3101
 ## Safety Features
 
 - **Per-task token cap**: kills `claude -p` subprocess if exceeded
-- **Hourly budget**: daemon pauses all invocations when hit
-- **Per-conversation budget + max turns**: set via `--budget` and `--max-rounds`
+- **Window budget**: daemon pauses all invocations when the window budget is exhausted (resets after `window_hours`)
+- **Max turns per conversation**: set via `--max-rounds`, pauses conversation when reached
 - **Sequential dispatch**: one task at a time, no concurrent agent invocations
 - **PID lock**: prevents duplicate daemons on the same machine
 
@@ -144,4 +144,4 @@ sqlite3 .quorum/quorum.db "SELECT id, status, goal, created_at FROM conversation
 | Agent invocation hangs | Check `claude` CLI auth; verify API key is valid |
 | Tasks stuck in pending | Check daemon log for invoker errors; verify token budget not exhausted |
 | Conversation stuck in `waiting_for_human` | Use `respond --conversation <id> "text"` to unblock |
-| Budget exhausted mid-conversation | Conversation pauses automatically; increase budget and `resume` |
+| Window budget exhausted | Daemon pauses dispatch; increase budget via web UI or wait for window reset |

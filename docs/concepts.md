@@ -113,7 +113,7 @@ A **deterministic C++20 process** that orchestrates agent invocations. It has th
 |-----------|-------------|
 | **ConversationEngine** | Manages conversation state, dispatches agents, processes HANDOFF blocks |
 | **Scheduler** | Fires agent invocations based on ball-passing and default paths |
-| **Budget Enforcer** | Tracks token/cost usage, enforces per-cycle and per-agent limits |
+| **Budget Enforcer** | Tracks token/cost usage, enforces window budget and per-conversation max turns |
 
 **Critical property:** The daemon never calls an LLM. All routing, dispatching, and state management is pure compiled code. LLM calls happen only inside agent subprocesses (`claude -p`), which the daemon spawns but does not participate in.
 
