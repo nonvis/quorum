@@ -18,10 +18,8 @@ export function ConversationCard({
   const c = conversation;
 
   useEffect(() => {
-    if (expanded) {
-      fetchConversation(c.id).then((data) => setTasks(data.tasks));
-    }
-  }, [expanded, c.id, c.state]);
+    fetchConversation(c.id).then((data) => setTasks(data.tasks));
+  }, [c.id, c.state, c.round]);
 
   const showRespond = c.state === "waiting_for_human";
 

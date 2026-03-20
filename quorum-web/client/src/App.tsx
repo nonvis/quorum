@@ -65,7 +65,7 @@ export default function App() {
     fetchStats().then(setStats);
   });
 
-  const handleProjectSelect = async (path: string) => {
+  const handleProjectSelect = async (_path: string) => {
     const p = await fetchProjects();
     setProject(p);
   };

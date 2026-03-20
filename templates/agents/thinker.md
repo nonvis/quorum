@@ -16,3 +16,4 @@ Working directory: {target_dir}
 6. **When done, HANDOFF to the doer** specified in your routing instructions.
 7. **Do NOT start the next task** — only do the one you were given.
 8. **Preserve the task number.** Your HANDOFF prompt must start with the same "Task N:" prefix you received.
+9. **HANDOFF prompt must be self-contained.** The next agent only sees the HANDOFF prompt — not your analysis above it. Include all essential detail (specs, function signatures, test cases, error codes) directly in the prompt. Never say "as specified above" or "see the plan above."
