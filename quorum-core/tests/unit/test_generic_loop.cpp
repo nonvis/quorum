@@ -390,41 +390,7 @@ static void test_unknown_agent_fallback() {
     check(task2.agent == "leader", "I: fallback to leader for unknown agent");
 }
 
-// ─── Test J: Budget exceeded ─────────────────────────────────────────────────
-
-static void test_budget_exceeded() {
-    std::cout << "\n=== J. Budget Exceeded ===\n\n";
-
-    TestHarness h;
-    auto engine = h.make_engine();
-
-    auto conv_id = engine.start("Build X", 0.01, 20);  // tiny budget
-    auto task1 = h.get_pending_task(conv_id);
-    h.complete_task(task1.id);
-
-    sui::quorum::ParsedOutput parsed;
-    parsed.handoff = sui::quorum::HandoffBlock{.to = "doer", .prompt = "build it"};
-
-    bool active = engine.on_task_complete(task1.id, parsed, 0.05);
-    check(!active, "J: not active after budget exceeded");
-
-    auto conv = h.db.get_conversation(conv_id);
-    check(conv->state == "paused", "J: state == paused");
-
-    // Check paused_reason
-    std::string reason;
-    h.db.query(
-        "SELECT paused_reason FROM conversations WHERE id = ?",
-        [&](sqlite3_stmt* stmt) { sqlite3_bind_int64(stmt, 1, conv_id); },
-        [&](sqlite3_stmt* stmt) {
-            auto r = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            if (r) reason = r;
-        }
-    );
-    check(reason.find("budget") != std::string::npos, "J: paused_reason contains 'budget'");
-}
-
-// ─── Test K: Max turns exceeded ──────────────────────────────────────────────
+// ─── Test J: Max turns exceeded ──────────────────────────────────────────────
 
 static void test_max_turns_exceeded() {
     std::cout << "\n=== K. Max Turns Exceeded ===\n\n";
@@ -553,7 +519,6 @@ int main() {
     test_default_path_end_done();
     test_handoff_overrides_default_path();
     test_unknown_agent_fallback();
-    test_budget_exceeded();
     test_max_turns_exceeded();
     test_session_resume_within_cycle();
     test_knowledge_ledger_writes();

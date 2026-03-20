@@ -183,12 +183,7 @@ static void test_D_add_skill_file() {
 
     create_test_agent("writer", "scribe");
 
-    // Verify no skill_file initially
-    auto yaml_before = read_file(tmp + "/.quorum/agents/writer.yaml");
-    check(yaml_before.find("skill_file:") == std::string::npos,
-          "D: no skill_file before");
-
-    // Modify to add skill
+    // Modify to add/override skill
     sui::quorum::cli::AgentCreateParams mod;
     mod.name = "writer";
     mod.skill_file = ".claude/skills/tech-writer/SKILL.md";

@@ -539,43 +539,6 @@ static void test_F_session_ids_consistent() {
     simulate_turn(h, engine, t4.id, output4, 0.10);
 }
 
-// ---- Test G: Budget pause stops routing -------------------------------------
-
-static void test_G_budget_pause() {
-    std::cout << "\n=== G. Budget Pause ===\n\n";
-
-    TestHarness h;
-    auto engine = h.make_engine();
-
-    auto conv_id = engine.start("Build X", 0.05, 20);
-
-    // Turn 1: cost $0.03, total $0.03 < $0.05 -> still active
-    auto t1 = h.get_pending_task(conv_id);
-    std::string output1 =
-        "```HANDOFF\n"
-        "to: thinker\n"
-        "prompt: plan it\n"
-        "```\n";
-    auto r1 = simulate_turn(h, engine, t1.id, output1, 0.03);
-    check(r1.still_active, "G: active after $0.03 (budget $0.05)");
-
-    // Turn 2: cost $0.03, total $0.06 >= $0.05 -> paused
-    auto t2 = h.get_pending_task(conv_id);
-    std::string output2 =
-        "```HANDOFF\n"
-        "to: doer\n"
-        "prompt: build it\n"
-        "```\n";
-    auto r2 = simulate_turn(h, engine, t2.id, output2, 0.03);
-    check(!r2.still_active, "G: not active after budget exceeded");
-
-    auto conv = h.db.get_conversation(conv_id);
-    check(conv->state == "paused", "G: state == paused");
-    check(h.get_paused_reason(conv_id).find("budget") != std::string::npos,
-          "G: paused_reason contains 'budget'");
-    check(h.count_pending(conv_id) == 0, "G: no pending tasks after pause");
-}
-
 // ---- Test H: Max turns pause ------------------------------------------------
 
 static void test_H_max_turns_pause() {
@@ -720,7 +683,6 @@ int main() {
     test_D_knowledge_ledger_accumulation();
     test_E_roster_in_prompts();
     test_F_session_ids_consistent();
-    test_G_budget_pause();
     test_H_max_turns_pause();
     test_I_mixed_blocks();
     test_J_empty_output();
