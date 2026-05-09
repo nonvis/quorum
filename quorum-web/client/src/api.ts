@@ -22,11 +22,21 @@ export async function fetchConfig(): Promise<ProjectConfig> {
   return res.json();
 }
 
-export async function startConversation(goal: string, team?: string) {
+export type ConversationMode = "generic" | "brainstorm";
+
+export async function startConversation(
+  goal: string,
+  team?: string,
+  mode?: ConversationMode,
+) {
   const res = await fetch(`${BASE}/converse`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ goal, team: team ?? undefined }),
+    body: JSON.stringify({
+      goal,
+      team: team ?? undefined,
+      mode: mode ?? undefined,
+    }),
   });
   return res.json();
 }

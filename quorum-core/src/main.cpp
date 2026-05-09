@@ -149,6 +149,7 @@ static void print_usage(const char* prog) {
               << "  --budget <usd>       Per-conversation budget (default: 5.0)\n"
               << "  --max-rounds <n>     Max revision rounds (default: 3)\n"
               << "  --team <name>        Team preset from .quorum/teams/ (optional)\n"
+              << "  --mode <generic|brainstorm>  Conversation mode (default: generic)\n"
               << "  --conversation <id>  Conversation ID for resume/close\n"
               << "  --help               Show this message\n"
               << "\nAgent create options:\n"
@@ -391,6 +392,7 @@ int main(int argc, char* argv[]) {
     std::string agent_subcmd;
     sui::quorum::cli::AgentCreateParams agent_params;
     std::string team_name;
+    std::string mode_name;
 
     if (subcommand == "converse") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
@@ -400,6 +402,13 @@ int main(int argc, char* argv[]) {
                 conv_max_rounds = std::stoi(sub_args[++i]);
             } else if (sub_args[i] == "--team" && i + 1 < sub_args.size()) {
                 team_name = sub_args[++i];
+            } else if (sub_args[i] == "--mode" && i + 1 < sub_args.size()) {
+                mode_name = sub_args[++i];
+                if (mode_name != "generic" && mode_name != "brainstorm") {
+                    std::cerr << "ERROR: --mode must be 'generic' or 'brainstorm' (got '"
+                              << mode_name << "')\n";
+                    return 1;
+                }
             } else {
                 goal_text = sub_args[i]; // last positional = goal
             }
@@ -726,7 +735,7 @@ int main(int argc, char* argv[]) {
                     std::cerr << "ERROR: converse requires a goal string\n";
                     return 1;
                 }
-                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, team_name);
+                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, team_name, mode_name);
                 std::cout << "Conversation " << id << " created.\n";
                 std::cout << "Daemon already running — it will pick up the conversation.\n";
             } else if (subcommand == "resume") {
@@ -772,7 +781,7 @@ int main(int argc, char* argv[]) {
             release_pid_lock(cfg.daemon.pid_file);
             return 1;
         }
-        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, team_name);
+        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, team_name, mode_name);
         std::cout << "Conversation " << id << " created. Starting daemon...\n";
         // fall through to daemon loop
     } else if (subcommand == "resume") {

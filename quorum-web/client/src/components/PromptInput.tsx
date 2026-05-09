@@ -1,5 +1,23 @@
 import { useState } from "react";
-import { startConversation } from "../api";
+import { startConversation, type ConversationMode } from "../api";
+
+const MODES: { id: ConversationMode; label: string; hint: string }[] = [
+  {
+    id: "generic",
+    label: "generic",
+    hint: "Agents may modify the project",
+  },
+  {
+    id: "brainstorm",
+    label: "brainstorm",
+    hint: "Read-only; scribe curates vault writes",
+  },
+];
+
+const MODE_COLORS: Record<ConversationMode, { active: string; inactive: string }> = {
+  generic:    { active: "bg-zinc-600 text-white",  inactive: "bg-zinc-800 text-zinc-400 hover:bg-zinc-700" },
+  brainstorm: { active: "bg-amber-600 text-white", inactive: "bg-zinc-800 text-amber-400 hover:bg-zinc-700" },
+};
 
 export function PromptInput({
   onSubmit,
@@ -11,6 +29,7 @@ export function PromptInput({
   team?: string | null;
 }) {
   const [goal, setGoal] = useState("");
+  const [mode, setMode] = useState<ConversationMode>("generic");
   const [loading, setLoading] = useState(false);
 
   const disabled = loading || busy;
@@ -20,7 +39,7 @@ export function PromptInput({
     if (!goal.trim() || disabled) return;
     setLoading(true);
     try {
-      await startConversation(goal.trim(), team ?? undefined);
+      await startConversation(goal.trim(), team ?? undefined, mode);
       setGoal("");
       onSubmit();
     } finally {
@@ -28,8 +47,34 @@ export function PromptInput({
     }
   };
 
+  const activeHint = MODES.find((m) => m.id === mode)?.hint ?? "";
+
   return (
     <form onSubmit={handleSubmit} className="px-6 py-4">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs text-zinc-500 uppercase tracking-wide">Mode</span>
+        <div className="flex items-center gap-1">
+          {MODES.map((m) => {
+            const colors = MODE_COLORS[m.id];
+            const isActive = mode === m.id;
+            return (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setMode(m.id)}
+                disabled={disabled}
+                title={m.hint}
+                className={`px-3 py-0.5 text-xs rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  isActive ? colors.active : colors.inactive
+                }`}
+              >
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
+        <span className="text-xs text-zinc-600">{activeHint}</span>
+      </div>
       <div className="flex gap-3 items-center">
         <input
           type="text"

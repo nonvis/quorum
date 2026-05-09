@@ -479,8 +479,15 @@ app.get("/api/events", (c) => {
 // -- Write endpoints (via daemon CLI) --
 
 app.post("/api/converse", async (c) => {
-  const body = await c.req.json<{ goal: string; team?: string }>();
+  const body = await c.req.json<{ goal: string; team?: string; mode?: string }>();
   if (!body.goal) return c.json({ error: "goal is required" }, 400);
+
+  // Validate mode early — must match what the C++ CLI accepts.
+  if (body.mode != null && body.mode !== "generic" && body.mode !== "brainstorm") {
+    return c.json({
+      error: `mode must be 'generic' or 'brainstorm' (got '${body.mode}')`,
+    }, 400);
+  }
 
   // Record current max ID before spawning
   const before = freshQuery<{ max_id: number | null }>(
@@ -489,17 +496,19 @@ app.post("/api/converse", async (c) => {
   const maxIdBefore = before[0]?.max_id ?? 0;
 
   const teamTag = body.team ? ` [team: ${body.team}]` : "";
+  const modeTag = body.mode ? ` [mode: ${body.mode}]` : "";
   const args: string[] = ["converse"];
   if (body.team) args.push("--team", body.team);
+  if (body.mode) args.push("--mode", body.mode);
   args.push(body.goal);
 
   if (isDaemonRunning()) {
     // Daemon already running — just insert conversation via CLI (it exits immediately)
-    console.log(`[converse] daemon running, exec: "${body.goal}"${teamTag}`);
+    console.log(`[converse] daemon running, exec: "${body.goal}"${teamTag}${modeTag}`);
     await execDaemon(...args);
   } else {
     // No daemon — spawn one (it creates conversation + runs dispatch loop)
-    console.log(`[converse] spawning daemon for: "${body.goal}"${teamTag}`);
+    console.log(`[converse] spawning daemon for: "${body.goal}"${teamTag}${modeTag}`);
     spawnDaemon(...args);
   }
 
