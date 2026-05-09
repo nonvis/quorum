@@ -192,3 +192,8 @@ add_test(NAME test_invoker_cache_fields COMMAND test_invoker_cache_fields)
 add_executable(test_invoker_sysprompt_flag tests/unit/test_invoker_sysprompt_flag.cpp)
 target_include_directories(test_invoker_sysprompt_flag PRIVATE src)
 add_test(NAME test_invoker_sysprompt_flag COMMAND test_invoker_sysprompt_flag)
+
+# Phase 8 Track 2 / Track 6 #24 — rubric format + loader + resolver
+add_executable(test_rubric_parser tests/unit/test_rubric_parser.cpp)
+target_include_directories(test_rubric_parser PRIVATE src)
+add_test(NAME test_rubric_parser COMMAND test_rubric_parser)
