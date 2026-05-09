@@ -188,6 +188,8 @@ static void init_schema(sui::quorum::Database& db) {
         db.execute("ALTER TABLE conversations ADD COLUMN path_index INTEGER NOT NULL DEFAULT 0");
     if (!column_exists(db, "conversations", "team"))
         db.execute("ALTER TABLE conversations ADD COLUMN team TEXT");
+    if (!column_exists(db, "conversations", "mode"))
+        db.execute("ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'generic'");
 }
 
 // Count currently active (running) tasks
@@ -555,6 +557,9 @@ int main(int argc, char* argv[]) {
         for (const auto& t : cfg.teams) {
             if (t.id == team_name) {
                 cfg.conversations.default_path = t.default_path;
+                if (!t.default_mode.empty()) {
+                    cfg.conversations.default_mode = t.default_mode;
+                }
                 found = true;
                 if (verbose) {
                     std::cout << "  Using team: " << t.name << "\n";

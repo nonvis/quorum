@@ -29,7 +29,8 @@ inline void create_schema(Database& db) {
         "  completed_at TEXT,"
         "  paused_reason TEXT,"
         "  current_agent TEXT,"
-        "  path_index INTEGER NOT NULL DEFAULT 0"
+        "  path_index INTEGER NOT NULL DEFAULT 0,"
+        "  mode TEXT NOT NULL DEFAULT 'generic'"
         ")"
     );
     db.execute(

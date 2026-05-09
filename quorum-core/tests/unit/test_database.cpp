@@ -44,7 +44,8 @@ static void init_conversations_table(sui::quorum::Database& db) {
         "  paused_reason TEXT,"
         "  current_agent TEXT,"
         "  path_index INTEGER NOT NULL DEFAULT 0,"
-        "  team TEXT"
+        "  team TEXT,"
+        "  mode TEXT NOT NULL DEFAULT 'generic'"
         ")"
     );
 }
@@ -248,6 +249,97 @@ static void test_get_nonexistent_conversation() {
     check(!result.has_value(), "8: returns nullopt for nonexistent conversation");
 }
 
+// ─── Test 9: Mode column migration (Phase 6 Track 1) ────────────────────────
+//
+// Synthesizes the pre-Phase-6 schema (no `mode` column), inserts a row,
+// runs the column-exists migration that ships with the daemon, and verifies:
+//   - existing rows surface as mode = 'generic' (DEFAULT applied by ALTER)
+//   - new INSERTs without an explicit mode also default to 'generic'
+//   - explicit INSERTs with mode = 'brainstorm' persist that value
+//
+// Helpers (column_exists / migrate) mirror src/main.cpp init_schema() — kept
+// inline so the test exercises the migration logic without pulling main.cpp.
+
+static bool column_exists(sui::quorum::Database& db,
+                          const std::string& table,
+                          const std::string& column) {
+    bool found = false;
+    db.query(
+        "SELECT 1 FROM pragma_table_info('" + table + "') WHERE name = '" + column + "'",
+        [&](sqlite3_stmt*) { found = true; }
+    );
+    return found;
+}
+
+static void init_pre_phase6_conversations_table(sui::quorum::Database& db) {
+    // Schema as it was before Phase 6 (no `mode` column)
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS conversations ("
+        "  id INTEGER PRIMARY KEY,"
+        "  goal TEXT NOT NULL,"
+        "  state TEXT NOT NULL DEFAULT 'active',"
+        "  round INTEGER NOT NULL DEFAULT 0,"
+        "  max_rounds INTEGER NOT NULL DEFAULT 3,"
+        "  budget_usd REAL NOT NULL DEFAULT 5.0,"
+        "  spent_usd REAL NOT NULL DEFAULT 0.0,"
+        "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
+        "  completed_at TEXT,"
+        "  paused_reason TEXT,"
+        "  current_agent TEXT,"
+        "  path_index INTEGER NOT NULL DEFAULT 0,"
+        "  team TEXT"
+        ")"
+    );
+}
+
+static void test_mode_column_migration() {
+    std::cout << "\n=== 9. Mode Column Migration ===\n\n";
+
+    sui::quorum::Database db(":memory:");
+
+    // 1. Synthesize pre-Phase-6 DB
+    init_pre_phase6_conversations_table(db);
+    check(!column_exists(db, "conversations", "mode"),
+          "9: pre-migration: mode column absent");
+
+    // Insert a row under the old schema
+    auto pre_id = db.create_conversation("legacy goal", 5.0, 3);
+    check(pre_id > 0, "9: pre-migration: legacy row inserted");
+
+    // 2. Run the migration (matches src/main.cpp init_schema migration)
+    if (!column_exists(db, "conversations", "mode")) {
+        db.execute("ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'generic'");
+    }
+    check(column_exists(db, "conversations", "mode"),
+          "9: post-migration: mode column present");
+
+    // 3. Existing row should now read mode = 'generic'
+    auto legacy = db.get_conversation(pre_id);
+    check(legacy.has_value(), "9: legacy row still readable");
+    check(legacy->mode == "generic",
+          "9: legacy row has mode = 'generic' after ALTER");
+
+    // 4. New INSERT without explicit mode → default 'generic'
+    auto new_id = db.create_conversation("post-migration goal", 5.0, 3);
+    auto new_rec = db.get_conversation(new_id);
+    check(new_rec.has_value(), "9: new row readable");
+    check(new_rec->mode == "generic",
+          "9: new row defaults to mode = 'generic'");
+
+    // 5. Explicit INSERT with mode = 'brainstorm' persists
+    db.execute(
+        "INSERT INTO conversations (goal, mode) VALUES (?, 'brainstorm')",
+        [&](sqlite3_stmt* stmt) {
+            sqlite3_bind_text(stmt, 1, "brainstorm goal", -1, SQLITE_TRANSIENT);
+        }
+    );
+    auto brain_id = db.last_insert_id();
+    auto brain_rec = db.get_conversation(brain_id);
+    check(brain_rec.has_value(), "9: brainstorm row readable");
+    check(brain_rec->mode == "brainstorm",
+          "9: explicit brainstorm value persists");
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -261,6 +353,7 @@ int main() {
     test_task_conversation_link();
     test_task_without_conversation();
     test_get_nonexistent_conversation();
+    test_mode_column_migration();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)
               << " tests passed ---\n";

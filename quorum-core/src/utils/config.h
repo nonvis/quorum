@@ -71,6 +71,7 @@ struct ConversationConfig {
     bool enabled = true;
     int default_max_rounds = 20;       // max turns per conversation
     double default_budget_usd = 5.0;
+    std::string default_mode{"generic"};  // "generic" (default) or "brainstorm"
     std::string leader;                // leader agent id (required for team mode)
     std::vector<std::string> default_path;  // optional default routing sequence
     std::string target_dir = ".";      // project root (for .quorum/current_phase.md lookup)
@@ -94,6 +95,7 @@ struct TeamPreset {
     std::string id;          // filename without extension
     std::string name;        // display name
     std::vector<std::string> default_path;
+    std::string default_mode;  // optional override: "generic" or "brainstorm"; empty = no override
 };
 
 struct QuorumConfig {
@@ -345,6 +347,15 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
             else if (key == "default_budget_usd") {
                 try { cfg.conversations.default_budget_usd = std::stod(val); } catch (...) {}
             }
+            else if (key == "default_mode") {
+                if (val == "generic" || val == "brainstorm") {
+                    cfg.conversations.default_mode = val;
+                } else {
+                    std::cerr << "WARNING: conversations.default_mode '" << val
+                              << "' not recognized — falling back to 'generic'\n";
+                    cfg.conversations.default_mode = "generic";
+                }
+            }
             else if (key == "leader") cfg.conversations.leader = val;
             else if (key == "default_path") {
                 auto stripped = val;
@@ -477,6 +488,14 @@ inline std::vector<TeamPreset> load_team_presets(const std::string& teams_dir) {
 
             if (key == "name") {
                 team.name = val;
+            } else if (key == "default_mode") {
+                if (val == "generic" || val == "brainstorm") {
+                    team.default_mode = val;
+                } else {
+                    std::cerr << "WARNING: team '" << team.id
+                              << "' default_mode '" << val
+                              << "' not recognized — ignoring\n";
+                }
             } else if (key == "default_path") {
                 // Parse "[leader, thinker, doer]" format
                 auto stripped = val;

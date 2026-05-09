@@ -25,6 +25,7 @@ struct ConversationRecord {
     std::string current_agent;  // who has the ball
     int path_index{0};          // position in default_path
     std::string team;
+    std::string mode{"generic"};  // execution mode: "generic" (default) or "brainstorm"
 };
 
 class Database {
@@ -127,7 +128,8 @@ public:
         bool found = false;
         query(
             "SELECT id, goal, state, round, max_rounds, budget_usd, spent_usd, "
-            "current_agent, path_index, team FROM conversations WHERE id = ?",
+            "current_agent, path_index, team, COALESCE(mode, 'generic') "
+            "FROM conversations WHERE id = ?",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_int64(stmt, 1, conv_id);
             },
@@ -147,6 +149,8 @@ public:
                 rec.path_index = sqlite3_column_int(stmt, 8);
                 auto tm = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
                 rec.team = tm ? tm : "";
+                auto md = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 10));
+                rec.mode = md ? md : "generic";
             }
         );
         return found ? std::optional{rec} : std::nullopt;
