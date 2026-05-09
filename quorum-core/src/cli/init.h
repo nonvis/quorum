@@ -24,6 +24,14 @@ inline int init_project() {
     fs::create_directories(".quorum/agents");
     fs::create_directories(".quorum/vaults/leader/knowledge");
     fs::create_directories(".quorum/teams");
+    // Project-scope knowledge: rules/refs that apply to ALL agents.
+    // Phase 7 Track 2 — context_assembler resolves rules across project
+    // and per-agent vault scopes, with the cap operating on the union.
+    fs::create_directories(".quorum/knowledge");
+    {
+        std::ofstream gk(".quorum/knowledge/.gitkeep", std::ios::trunc);
+        // Empty file — keeps the directory under version control.
+    }
 
     // 3. Write .quorum/config.yaml
     {
@@ -143,6 +151,8 @@ inline int init_project() {
     // 7. Print next steps
     std::cout << "  Created: .quorum/vaults/leader/knowledge/\n";
     std::cout << "  Created: .quorum/teams/\n";
+    std::cout << "  Created: .quorum/knowledge/  "
+              << "(project-wide rules and references that apply to all agents)\n";
     std::cout << "\nQuorum initialized. Next steps:\n";
     std::cout << "  1. Add agents (auto-discovered from .quorum/agents/):\n";
     std::cout << "     quorum agent create --role doer --name my-dev\n";

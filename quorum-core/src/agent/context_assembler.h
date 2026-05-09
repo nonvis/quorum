@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -140,69 +142,155 @@ public:
             }
         }
 
-        // Load knowledge files. Phase 7 Track 1: filename-aware loading.
+        // Load knowledge files. Phase 7 Track 1+2: filename-aware loading,
+        // resolved across two scopes:
+        //   - project: <project_root>/.quorum/knowledge/  (applies to all agents)
+        //   - vault:   <vault_dir>/knowledge/             (agent-specific)
+        //
         //   rule-*.md  → preloaded, sorted by recency, hard-capped at MAX_RULES
+        //                (cap operates on the UNION of both scopes)
         //   ref-*.md   → NOT preloaded (search-on-demand in Track 4)
         //   anything else → plain narrative; recency-loaded under remaining budget
         //
+        // Dedup: if the SAME content appears in both scopes (std::hash match),
+        // the agent-vault copy wins (most-specific) and the project copy is
+        // suppressed silently — NOT counted as a cap eviction. Agent intent
+        // is identical regardless of which file the daemon loads.
+        //
         // Note: filesystem mtime stands in for createdAt. Once the daemon
         // tracks createdAt explicitly (Track 5/cache work), swap to that.
-        auto knowledge_dir = std::filesystem::path(vault_dir) / "knowledge";
-        if (std::filesystem::exists(knowledge_dir) && std::filesystem::is_directory(knowledge_dir)) {
-            auto all_files = list_files_by_recency(knowledge_dir);
 
-            std::vector<std::filesystem::path> rules;
-            std::vector<std::filesystem::path> plains;
-            // refs intentionally collected but not loaded — Track 4 search tool.
-            for (auto& f : all_files) {
-                switch (classify_knowledge_filename(f.filename().string())) {
-                    case KnowledgeKind::Rule:      rules.push_back(f); break;
-                    case KnowledgeKind::Reference: /* skip preload */    break;
-                    case KnowledgeKind::Plain:     plains.push_back(f); break;
+        // A loaded knowledge entry tagged with its origin scope.
+        struct ScopedFile {
+            std::filesystem::path path;
+            std::filesystem::file_time_type mtime;
+            std::string scope_label;  // "project" or "vault: <agent>"
+            std::string content;      // read once, reused for hash + emit
+        };
+
+        auto scope_for_vault = std::string("vault: ") + agent_name;
+
+        // Walk one scope and partition by filename kind. Reads file content
+        // eagerly so dedup can hash without re-reading.
+        auto walk_scope = [&](const std::filesystem::path& dir,
+                              const std::string& scope_label,
+                              std::vector<ScopedFile>& rules_out,
+                              std::vector<ScopedFile>& plains_out) {
+            if (!std::filesystem::exists(dir) || !std::filesystem::is_directory(dir)) return;
+            for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+                if (!entry.is_regular_file()) continue;
+                auto kind = classify_knowledge_filename(entry.path().filename().string());
+                if (kind == KnowledgeKind::Reference) continue;  // Track 4
+
+                ScopedFile sf;
+                sf.path = entry.path();
+                sf.mtime = entry.last_write_time();
+                sf.scope_label = scope_label;
+                sf.content = read_file(sf.path);
+                if (sf.content.empty()) continue;
+
+                if (kind == KnowledgeKind::Rule) {
+                    rules_out.push_back(std::move(sf));
+                } else {
+                    plains_out.push_back(std::move(sf));
                 }
             }
+        };
 
-            // Rules first, capped at MAX_RULES. Already sorted recency-DESC by
-            // list_files_by_recency, so truncating the tail evicts oldest.
-            size_t evicted = 0;
-            if (rules.size() > MAX_RULES) {
-                evicted = rules.size() - MAX_RULES;
-                rules.resize(MAX_RULES);
-            }
-            for (const auto& f : rules) {
-                if (files_loaded >= budget.max_files) break;
-                if (prompt.size() >= budget.max_chars) break;
+        std::vector<ScopedFile> all_rules;
+        std::vector<ScopedFile> all_plains;
 
-                auto content = read_file(f);
-                if (!content.empty()) {
-                    prompt += "# Knowledge: " + f.filename().string() + "\n\n";
-                    prompt += content;
-                    prompt += "\n\n";
-                    ++files_loaded;
-                }
-            }
-
-            // Transparency note: surface eviction so agents/operators see it.
-            if (evicted > 0) {
-                prompt += "[" + std::to_string(evicted) +
-                         " rules omitted — most-recent " + std::to_string(MAX_RULES) +
-                         " preserved; rename older rules or rotate as needed]\n\n";
-            }
-
-            // Plain narratives use whatever budget remains after rules.
-            for (const auto& f : plains) {
-                if (files_loaded >= budget.max_files) break;
-                if (prompt.size() >= budget.max_chars) break;
-
-                auto content = read_file(f);
-                if (!content.empty()) {
-                    prompt += "# Knowledge: " + f.filename().string() + "\n\n";
-                    prompt += content;
-                    prompt += "\n\n";
-                    ++files_loaded;
-                }
-            }
+        // Project scope (resolves to <project_root>/.quorum/knowledge/).
+        // Skipped silently when project_root unset (e.g. unit tests in /tmp).
+        if (!project_root.empty()) {
+            auto project_knowledge = std::filesystem::path(project_root) / ".quorum" / "knowledge";
+            walk_scope(project_knowledge, "project", all_rules, all_plains);
         }
+
+        // Track which entries are agent-vault sourced — dedup uses this to
+        // resolve identical-content collisions toward agent (most specific).
+        size_t project_rule_count = all_rules.size();
+        size_t project_plain_count = all_plains.size();
+
+        // Agent vault scope.
+        auto vault_knowledge = std::filesystem::path(vault_dir) / "knowledge";
+        walk_scope(vault_knowledge, scope_for_vault, all_rules, all_plains);
+
+        // Dedup: drop project entries whose content hash matches any agent
+        // entry. Suppression is silent and does NOT consume the eviction
+        // budget — duplicate content is the same rule, just colocated.
+        auto dedup_against_agent = [](std::vector<ScopedFile>& entries,
+                                       size_t project_count) {
+            if (project_count == 0 || entries.size() == project_count) return;
+            std::unordered_set<size_t> agent_hashes;
+            agent_hashes.reserve(entries.size() - project_count);
+            for (size_t i = project_count; i < entries.size(); ++i) {
+                agent_hashes.insert(std::hash<std::string>{}(entries[i].content));
+            }
+            std::vector<ScopedFile> kept;
+            kept.reserve(entries.size());
+            for (size_t i = 0; i < entries.size(); ++i) {
+                if (i < project_count) {
+                    auto h = std::hash<std::string>{}(entries[i].content);
+                    if (agent_hashes.count(h)) continue;  // suppressed by agent dup
+                }
+                kept.push_back(std::move(entries[i]));
+            }
+            entries = std::move(kept);
+        };
+        dedup_against_agent(all_rules, project_rule_count);
+        dedup_against_agent(all_plains, project_plain_count);
+
+        // Sort by mtime DESC so most-recent wins regardless of scope.
+        auto by_recency_desc = [](const ScopedFile& a, const ScopedFile& b) {
+            return a.mtime > b.mtime;
+        };
+        std::sort(all_rules.begin(), all_rules.end(), by_recency_desc);
+        std::sort(all_plains.begin(), all_plains.end(), by_recency_desc);
+
+        // Apply MAX_RULES cap on the UNION of both scopes (recency wins).
+        size_t evicted = 0;
+        if (all_rules.size() > MAX_RULES) {
+            evicted = all_rules.size() - MAX_RULES;
+            all_rules.resize(MAX_RULES);
+        }
+
+        // Emit rules with scope annotation. Header format:
+        //   # Knowledge: <filename> (<scope>)
+        // where scope is "project" or "vault: <agent>".
+        bool emitted_any_knowledge = false;
+        for (const auto& sf : all_rules) {
+            if (files_loaded >= budget.max_files) break;
+            if (prompt.size() >= budget.max_chars) break;
+
+            prompt += "# Knowledge: " + sf.path.filename().string() +
+                      " (" + sf.scope_label + ")\n\n";
+            prompt += sf.content;
+            prompt += "\n\n";
+            ++files_loaded;
+            emitted_any_knowledge = true;
+        }
+
+        // Transparency note for cap eviction (NOT for dedup suppression).
+        if (evicted > 0) {
+            prompt += "[" + std::to_string(evicted) +
+                     " rules omitted — most-recent " + std::to_string(MAX_RULES) +
+                     " preserved; rename older rules or rotate as needed]\n\n";
+        }
+
+        // Plain narratives — bucket-ordered after rules, share remaining budget.
+        for (const auto& sf : all_plains) {
+            if (files_loaded >= budget.max_files) break;
+            if (prompt.size() >= budget.max_chars) break;
+
+            prompt += "# Knowledge: " + sf.path.filename().string() +
+                      " (" + sf.scope_label + ")\n\n";
+            prompt += sf.content;
+            prompt += "\n\n";
+            ++files_loaded;
+            emitted_any_knowledge = true;
+        }
+        (void)emitted_any_knowledge;  // reserved for future tracing
 
         // Load inbox items
         auto inbox_dir = std::filesystem::path(vault_dir) / "inbox";
