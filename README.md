@@ -15,6 +15,23 @@ A deterministic C++20 daemon that orchestrates AI agents across different projec
 
 The daemon is 100% deterministic. No LLM in the control loop. LLMs only run in agent invocations via `claude -p` subprocesses.
 
+## Modes
+
+Every conversation runs in one of two modes, selected per-conversation:
+
+| Mode | Write surface | Output | When to use |
+|------|---------------|--------|-------------|
+| **generic** (default) | Project files via the doer's `target_dir` | Real artifacts — code, configs, docs | You want the team to *do* the work |
+| **brainstorm** | Team vaults only — scribe distributes curated knowledge files (`rule-*.md`, `ref-*.md`) across all agent vaults | A smarter team for next time | You want the team to *think out loud* and get smarter |
+
+In brainstorm mode, every agent — including the doer — is clamped read-only at the tool layer (the invoker overrides `agent_class` to analyst). Agents debate, plan, and reason; nothing in the project changes. At the end of the cycle the scribe emits cross-vault writes: knowledge files routed to *other* agents' vaults, so the next cycle starts with a sharper team.
+
+Sequential dispatch, HANDOFF protocol, and the agent roster are identical in both modes. Only the write surface differs.
+
+Selection:
+- CLI: `quorum converse --mode <generic|brainstorm> "goal"` (defaults to `generic`)
+- Web UI: mode pill on the prompt input
+
 ## Architecture
 
 ```
@@ -53,6 +70,9 @@ quorum agent create --role doer --name move-dev --target-dir .
 # Start a conversation (auto-discovers .quorum/)
 quorum converse "Analyze mm-bot spread performance"
 
+# Brainstorm mode — read-only team, scribe distributes cross-vault knowledge
+quorum converse --mode brainstorm "What should our caching strategy look like?"
+
 # With custom budget and turn limit
 quorum converse --budget 3.0 --max-rounds 5 "goal"
 
@@ -77,7 +97,7 @@ quorum close --conversation 1
 | **thinker** | Planner. Analyzes problems, proposes approaches, produces structured plans. | Read-only |
 | **doer** | Executor. Implements changes — code, config, files. Full tool access. | Full |
 | **reviewer** | Validator. Reviews doer output for correctness. Optional in team. | Read-only |
-| **scribe** | Knowledge to Obsidian. Distills the conversation transcript into vault notes. | Write (vault only) |
+| **scribe** | Knowledge to vaults. In generic mode, writes notes to the project. In brainstorm mode, distributes curated `rule-*.md` / `ref-*.md` files across all agent vaults. | Write (own vault in generic; cross-vault in brainstorm) |
 | **librarian** | Knowledge to human docs. Distills the conversation transcript into documentation. | Write (docs only) |
 
 ## Multi-Domain Customization

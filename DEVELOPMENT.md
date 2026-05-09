@@ -39,6 +39,17 @@ Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
 
 6 agent archetypes: leader, thinker, doer, reviewer, scribe, librarian.
 
+### Modes
+
+Conversations run in one of two modes, selected per-conversation via `--mode`:
+
+| Mode | Write surface | Use case |
+|------|---------------|----------|
+| `generic` (default) | Doer writes real artifacts in `target_dir` | Mutate the project |
+| `brainstorm` | All agents read-only; scribe distributes cross-vault knowledge files at end of cycle | Make the team smarter for next time |
+
+The mode is stored on the `conversations` row (`mode` column) and carried on `ConversationRecord`. In brainstorm mode, the invoker overrides every agent's class to `analyst` regardless of role — doers run read-only too.
+
 ## Agent Classes
 
 | Class | Tools | Invoker behavior | Use case |
@@ -81,6 +92,9 @@ cd quorum-web && bun install && cd client && bun install
 ```bash
 # Start a conversation (creates goal + starts daemon)
 quorum converse "Analyze spread performance"
+
+# Brainstorm mode — read-only team, cross-vault knowledge distribution
+quorum converse --mode brainstorm "Where should we draw module boundaries?"
 
 # List conversations
 quorum status
@@ -129,10 +143,11 @@ quorum close --conversation 1
 | main.cpp | Entry point, CLI subcommands, dispatch loop |
 | daemon/conversation.h | Conversation engine — team mode ball-passing (currently stub, being rewritten in task #3) |
 | daemon/scheduler.h | Periodic task scheduling |
-| agent/invoker.h | claude -p subprocess, session resume, agent-class tool policy |
+| agent/invoker.h | claude -p subprocess, session resume, agent-class tool policy. Mode-aware: brainstorm mode forces analyst tools regardless of role. |
 | agent/output_parser.h | HANDOFF/VAULT_UPDATE/SUMMARY blocks |
 | agent/context_assembler.h | Prompt builder from vault files |
-| storage/database.h | SQLite wrapper (WAL, mutex, RAII) |
+| storage/database.h | SQLite wrapper (WAL, mutex, RAII). `ConversationRecord` carries the `mode` field. |
+| vault/vault_manager.h | Per-agent vault filesystem. Mode-aware: `apply_all_updates_with_context` permits scribe cross-vault writes only in brainstorm mode. |
 | utils/config.h | YAML config parser, AgentMetadata, load_agent_config() |
 | utils/uuid.h | UUID v4 generation for session IDs |
 
@@ -143,9 +158,10 @@ quorum close --conversation 1
 | unit/test_output_parser.cpp | Block parsing, verdict normalization |
 | unit/test_handoff_parser.cpp | HANDOFF block parsing (9 cases, 22 assertions) |
 | unit/test_session_resume.cpp | UUID format, uniqueness, -r flag |
-| integration/test_team_pipeline.cpp | Placeholder for team mode tests |
+| unit/test_invoker_mode.cpp | Mode-aware tool policy (5 cases) — analyst stays analyst, executor stays executor in generic; both clamped to analyst in brainstorm. |
+| integration/test_team_pipeline.cpp | Team-mode pipeline + brainstorm e2e (#19 cross-vault scribe distribution, #20 read-only doer in brainstorm). |
 
-12 ctest targets currently passing.
+26 ctest targets currently passing.
 
 ## Design Notes
 

@@ -4,6 +4,12 @@
 
 Quorum is a **multi-agent orchestration framework**. A deterministic C++20 daemon orchestrates independent AI agents that coordinate through structured HANDOFF blocks and persist knowledge in local vaults.
 
+Every conversation runs in one of two **modes**:
+- **generic** (default) — agents mutate the project. Doers write real artifacts in their `target_dir`.
+- **brainstorm** — every agent is clamped read-only at the tool layer (invoker overrides `agent_class` to analyst). Scribe at end of cycle distributes curated knowledge files (`rule-*.md`, `ref-*.md`) across all agent vaults.
+
+Sequential dispatch, HANDOFF protocol, and the agent roster are identical in both modes. Only the write surface differs.
+
 **Current phase: Phase 5 — Agent Quality + Templates.** Pure local orchestration on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) are deferred indefinitely.
 
 ## Repo Layout
@@ -90,6 +96,8 @@ daemon -> assembles prompt (vault + task) -> spawns `claude -p` with class-appro
 - **`analyst`** (default, all roles except doer): `--disallowedTools "Write,Edit,NotebookEdit"` — read-only
 - **`executor`** (doer role): full tool access, `target_dir` sets working directory
 
+**Brainstorm-mode override:** When the conversation's `mode` is `brainstorm`, the invoker overrides `agent_class` to `analyst` for every agent regardless of role. Doers run read-only too. The override happens at the tool layer (`--disallowedTools`), not in agent YAML.
+
 **Per-agent model selection:** Optional `model` field in agent YAML (e.g., `model: sonnet`). When set, adds `--model <value>` to the `claude -p` command. Empty = use claude default.
 
 **Session management** (conversation mode only):
@@ -130,11 +138,13 @@ Each agent owns a vault: `{data_dir}/vaults/{agent_name}/`
 **States:** `active`, `waiting_for_human`, `done`, `closed`, `paused`
 
 **Key types:**
-- `ConversationRecord` — in `storage/database.h` (id, goal, state, round, max_rounds, budget_usd, spent_usd, current_agent, path_index, team)
+- `ConversationRecord` — in `storage/database.h` (id, goal, state, round, max_rounds, budget_usd, spent_usd, current_agent, path_index, team, **mode**)
 - `TeamPreset` — in `utils/config.h` (id, name, default_path)
 - `ConversationEngine` — header-only in `daemon/conversation.h`. Methods: `start()`, `on_task_complete()`, `respond()`, `resume()`, `close()`, `recover()`
 
-**Database tables:** `conversations`, `tasks` (with conversation_id, session_id), `budget_window` (singleton, tracks window spend with auto-reset)
+**Database tables:** `conversations` (with `mode` column — `generic` or `brainstorm`), `tasks` (with conversation_id, session_id), `budget_window` (singleton, tracks window spend with auto-reset)
+
+**Cross-vault writes (brainstorm only):** `VaultManager::apply_all_updates_with_context` validates that cross-vault writes (paths like `<other-agent>/knowledge/rule-X.md`) only happen when (a) the writer is a scribe and (b) the conversation mode is `brainstorm`. Other agents' VAULT_UPDATE blocks remain scoped to their own vault in both modes.
 
 ## Key Patterns
 

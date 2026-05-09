@@ -4,6 +4,23 @@ A glossary of everything you need to understand to use Quorum effectively.
 
 ---
 
+## Modes
+
+Every conversation runs in one of two modes. The mode is set per-conversation when the conversation is created (CLI `--mode <generic|brainstorm>`, or web UI mode pill) and is stored on the `conversations` row.
+
+| Mode | Write surface | Output |
+|------|---------------|--------|
+| **generic** (default) | Doers mutate the project via `target_dir`. Scribes write notes into the project's note directory. | Real artifacts — code, configs, docs, project notes |
+| **brainstorm** | All agents read-only at the tool layer (the invoker overrides `agent_class` to analyst regardless of role). At end of cycle, scribe distributes curated knowledge files (`rule-*.md`, `ref-*.md`) across **other** agents' vaults. | A smarter team — knowledge files routed cross-vault so the next cycle starts sharper |
+
+Same sequential dispatch. Same agents. Same HANDOFF protocol. Same `claude -p` invocation shape. The only difference is the **write surface**: generic writes to the project, brainstorm writes to team vaults.
+
+The mode is carried on `ConversationRecord` and consulted in two places:
+- The invoker, when assembling tool flags for `claude -p`
+- `VaultManager::apply_all_updates_with_context`, when deciding whether to allow a scribe's cross-vault write
+
+---
+
 ## Agent
 
 An agent is a **role, not a process**. It doesn't run continuously — the daemon invokes it via a `claude -p` subprocess when the ball reaches it. Each invocation is episodic: context in, structured output out, process exits.
@@ -146,10 +163,12 @@ Each agent sees the roster and can address HANDOFF blocks to any listed agent by
 
 Two archetypes that consume the conversation transcript at the end of a cycle. Same mechanism, different audiences:
 
-- **Scribe** — produces structured notes for agent consumption. Output feeds back into agent vaults, building institutional memory over time.
+- **Scribe** — produces structured notes for agent consumption. Behavior depends on mode:
+  - In **generic** mode, the scribe writes project notes (typically into a configured project note directory). These document what just shipped.
+  - In **brainstorm** mode, the scribe distributes curated knowledge files (`rule-*.md`, `ref-*.md`) **cross-vault** — into *other* agents' `knowledge/` directories. This is the only place in the system where one agent writes into another agent's vault, and it's gated by `VaultManager::apply_all_updates_with_context` (writer must be a scribe and conversation mode must be `brainstorm`).
 - **Librarian** — produces human-facing documentation. Output is formatted for the operator or developer to read.
 
-Both are analyst-class (no write access to code). Both read the full conversation transcript via `claude -p` session resume.
+Both are analyst-class (no write access to project code). Both read the full conversation transcript via `claude -p` session resume.
 
 The leader typically triggers the scribe as the last step before ending a cycle.
 

@@ -16,6 +16,8 @@ You define a team → Start a conversation with a goal → Leader receives goal
 
 The daemon is a deterministic C++20 process. Agents are `claude -p` subprocesses — stateless LLM calls that read context, think, and respond with structured blocks. One ball, always moving. One agent runs at a time. The daemon never calls an LLM itself; all intelligence lives in the agent layer.
 
+**Two modes:** every conversation runs as either **generic** (default — agents mutate the project, doers write real artifacts) or **brainstorm** (every agent is read-only at the tool layer; scribe distributes curated knowledge cross-vault at the end). Sequential dispatch, HANDOFF protocol, and the agent roster are identical in both. Only the write surface differs.
+
 ---
 
 ## Setup (~5 minutes)
@@ -331,6 +333,111 @@ The `to:` field accepts an agent ID (`move-dev`), `human` (pause for user input)
 
 ---
 
+## Brainstorm Mode Flow
+
+Same team, same dispatch, same HANDOFF protocol — but the project never changes. Brainstorm mode is for getting the team smarter, not for shipping artifacts.
+
+### Step 0: User Invokes Brainstorm
+
+```bash
+quorum converse --mode brainstorm \
+  "How should we partition the escrow module if we add multi-asset swaps later?
+   I'm not asking you to build it — I want the team to think out loud."
+```
+
+The daemon prints:
+
+```
+[14:00:00] Conversation 2 created — mode: brainstorm
+[14:00:00] Goal: "How should we partition the escrow module if we add..."
+[14:00:00] Dispatching to leader...
+```
+
+The conversation row is inserted with `mode='brainstorm'`. `ConversationRecord` carries that field through the whole cycle.
+
+### Step 1: Invoker Clamps Tools to Read-Only
+
+Every agent's `claude -p` invocation in this conversation gets analyst-class tool flags, regardless of role. The invoker reads `conversation.mode` and overrides:
+
+```bash
+# What the invoker spawns for the move-dev agent (a doer) in brainstorm mode:
+claude -p "prompt" --dangerously-skip-permissions \
+  --disallowedTools "Write,Edit,NotebookEdit" --output-format json
+```
+
+The doer's `target_dir` is irrelevant — it can't write there anyway. Doers in brainstorm mode are reasoning participants, not executors.
+
+### Step 2: Agents Reason Together
+
+The leader, architect, move-dev, and security-reviewer pass the ball through HANDOFF blocks the same way they do in generic mode. They produce SUMMARY and HANDOFF blocks. They reference each other's work. They debate trade-offs.
+
+What they do **not** do:
+- Write code. The doer can't, and won't try to.
+- Modify project files of any kind. The tool layer forbids it.
+- Write into their own vaults during the cycle. (Mid-cycle VAULT_UPDATE blocks remain scoped to each agent's own vault, just as in generic mode.)
+
+### Step 3: Scribe Distributes Knowledge Cross-Vault
+
+At the end of the cycle, the leader hands off to scribe. The scribe reads the full transcript and produces VAULT_UPDATE blocks whose paths target **other** agents' vaults:
+
+```
+```VAULT_UPDATE
+path: architect/knowledge/rule-escrow-partition-when-to-split.md
+content: |
+  When the escrow module's swap surface grows beyond single-asset, prefer a
+  separate `escrow_bundle` module over generic-parameter overload. ...
+```
+
+```VAULT_UPDATE
+path: move-dev/knowledge/ref-multi-asset-swap-patterns.md
+content: |
+  Reference patterns for multi-asset swaps on Sui: ...
+```
+
+```VAULT_UPDATE
+path: security-reviewer/knowledge/rule-bundle-swap-attack-surface.md
+content: |
+  Bundle swaps expand the attack surface in three ways: ...
+```
+```
+
+These are cross-vault writes — the scribe's own vault directory is `.quorum/vaults/scribe/`, but the paths above resolve to `architect/`, `move-dev/`, and `security-reviewer/`.
+
+### Step 4: VaultManager Validates the Cross-Vault Writes
+
+`VaultManager::apply_all_updates_with_context` is the gate. For each VAULT_UPDATE block:
+
+1. If the path stays inside the writer's own vault → allowed in any mode.
+2. If the path targets another agent's vault → **only allowed if** (a) the writer's role is `scribe` *and* (b) the conversation mode is `brainstorm`.
+
+Anything else is rejected. A doer can't sneak a cross-vault write in generic mode. A scribe can't sneak one in generic mode either.
+
+### Step 5: Cycle Ends — Project Unchanged, Vaults Smarter
+
+```
+[14:08:42] Conversation 2 done — mode: brainstorm
+[14:08:42] Project files modified: 0
+[14:08:42] Vault knowledge files written: 3 (across architect, move-dev, security-reviewer)
+```
+
+```
+my-move-project/
+├── sources/                            # ← unchanged
+├── tests/                              # ← unchanged
+└── .quorum/
+    └── vaults/
+        ├── architect/knowledge/
+        │   └── rule-escrow-partition-when-to-split.md       # ← new
+        ├── move-dev/knowledge/
+        │   └── ref-multi-asset-swap-patterns.md             # ← new
+        └── security-reviewer/knowledge/
+            └── rule-bundle-swap-attack-surface.md           # ← new
+```
+
+The next time any of these agents runs (in either mode), the context assembler picks up the new knowledge file and loads it into the prompt.
+
+---
+
 ## Human Interaction
 
 When the leader needs human input, it hands off to `human`:
@@ -470,8 +577,11 @@ Review the conversation history, then either resume with guidance or close it.
 ## CLI Quick Reference
 
 ```bash
-# Start a conversation
+# Start a conversation (generic mode — agents mutate the project)
 quorum converse "goal text"
+
+# Start a brainstorm conversation (read-only team, cross-vault knowledge)
+quorum converse --mode brainstorm "goal text"
 
 # Check conversation status
 quorum status
