@@ -3,8 +3,8 @@ name: quorum-roles
 description: >
   Quorum multi-agent role patterns. Automatically loaded when working
   in a Quorum-managed project. Provides behavioral patterns for leader,
-  thinker, doer, scribe, and reviewer agents. Use when setting up
-  Quorum agents or debugging agent behavior.
+  thinker, doer, scribe, reviewer, and librarian agents. Use when
+  setting up Quorum agents or debugging agent behavior.
 user-invocable: false
 ---
 # Quorum Role Skills
@@ -18,5 +18,6 @@ Sub-skills for each Quorum agent role. Each is self-contained.
 | doer | doer/SKILL.md | Agent writes code |
 | scribe | scribe/SKILL.md | Agent records outcomes |
 | reviewer | reviewer/SKILL.md | Agent validates results |
+| librarian | librarian/SKILL.md | Agent writes external docs |
 
 Load the sub-skill matching your agent's role.

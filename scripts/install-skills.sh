@@ -35,7 +35,7 @@ echo ""
 # Role skills
 echo "Quorum role skills:"
 install_skill "quorum-roles"
-for role in leader thinker doer scribe reviewer; do
+for role in leader thinker doer scribe reviewer librarian; do
     if [ -f "$DST_DIR/quorum-roles/$role/SKILL.md" ]; then
         echo "    ✅ $role ($(wc -l < "$DST_DIR/quorum-roles/$role/SKILL.md") lines)"
     else
