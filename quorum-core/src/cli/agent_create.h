@@ -27,6 +27,36 @@ struct AgentCreateParams {
     bool regenerate = false;   // regenerate CONTEXT.md without changing fields
 };
 
+// Universal rules appended to CONTEXT.md when template is unavailable.
+// Ensures every agent gets HANDOFF discipline even in minimal fallback.
+inline std::string universal_rules_for_role(const std::string& role) {
+    std::string rules;
+    rules += "\n## Universal Rules\n\n";
+    rules += "1. **Never HANDOFF to yourself.** Complete your work in one turn.\n";
+    if (role != "leader" && role != "scribe") {
+        rules += "2. **Never HANDOFF to leader.** You don't route — just do your work and pass forward.\n";
+    }
+    rules += "3. **HANDOFF must be the very last thing in your response.** Standalone fenced code block.\n";
+    rules += "4. **Complete your work in a single turn.**\n";
+    rules += "5. **Always include a SUMMARY block** before your HANDOFF.\n";
+    if (role == "scribe") {
+        rules += "6. **When done, HANDOFF to done** — always. This signals conversation completion.\n";
+    } else if (role == "leader") {
+        rules += "6. **When routing, HANDOFF to architect** (or thinker, depending on team config).\n";
+        rules += "7. **Include the task number** in your HANDOFF prompt: \"Task N: <description>\".\n";
+    } else if (role == "thinker") {
+        rules += "6. **When done, HANDOFF to the doer** specified in your routing instructions.\n";
+        rules += "7. **Do NOT start the next task** — only do the one you were given.\n";
+        rules += "8. **Preserve the task number.** Your HANDOFF prompt must start with the same \"Task N:\" prefix you received.\n";
+    } else {
+        rules += "6. **When done, HANDOFF to scribe** — always. Do NOT hand off to leader or architect.\n";
+        rules += "7. **Do NOT start the next task** — only do the one you were given.\n";
+        rules += "8. **Preserve the task number.** Your HANDOFF prompt must start with the same \"Task N:\" prefix you received.\n";
+    }
+    rules += "9. **HANDOFF prompt must be self-contained.** The next agent only sees the HANDOFF prompt — not your response above it. Include all essential detail directly in the prompt. Never say \"as described above\" or \"see the plan above.\"\n";
+    return rules;
+}
+
 // Generate (or regenerate) CONTEXT.md for an agent.
 // Returns description string: "AI-generated", "template copy", or "minimal".
 inline std::string generate_context_md(
@@ -84,7 +114,8 @@ inline std::string generate_context_md(
             std::ofstream ctx(context_path, std::ios::trunc);
             ctx << "# " << agent_name << " -- Agent Context\n\n"
                 << "## Role\n\nYou are the **" << agent_name << "** ("
-                << role << "). " << description << "\n";
+                << role << "). " << description << "\n"
+                << universal_rules_for_role(role);
             ctx.close();
             return "minimal -- template not found";
         }
@@ -94,7 +125,8 @@ inline std::string generate_context_md(
         std::ofstream ctx(context_path, std::ios::trunc);
         ctx << "# " << agent_name << " -- Agent Context\n\n"
             << "## Role\n\nYou are the **" << agent_name << "** ("
-            << role << "). " << description << "\n";
+            << role << "). " << description << "\n"
+            << universal_rules_for_role(role);
         ctx.close();
         return "minimal -- template not found";
     }
