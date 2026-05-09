@@ -1,11 +1,13 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -40,6 +42,239 @@ enum class KnowledgeKind {
     if (filename.rfind("rule-", 0) == 0) return KnowledgeKind::Rule;
     if (filename.rfind("ref-", 0) == 0) return KnowledgeKind::Reference;
     return KnowledgeKind::Plain;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7 Track 4 — search_knowledge ref retrieval
+// ---------------------------------------------------------------------------
+//
+// Refs (ref-*.md) are partitioned out of the rule preload (Track 1-3) and
+// surface only when relevant to the agent's current task. The daemon scores
+// each ref against the task prompt as the implicit query and emits the top-K
+// matches in a "## Searched References" section of the assembled prompt.
+//
+// Scoring is deliberately simple: tokenize the query, count matches in the
+// filename and content, weight filename matches 3x higher (filenames are
+// deliberate signal). No embeddings, no cosine, no MCP server. Agents can
+// read full content via the existing Read tool if an excerpt looks relevant.
+// If real usage ever demands explicit invocation, Phase 8 can add MCP.
+
+// One scored ref candidate produced by search_references(). Exposed here for
+// testability and so the assembler can render it directly into the prompt.
+struct ScoredRef {
+    std::filesystem::path path;
+    int scope_rank = 2;       // 0 agent, 1 role, 2 project (lower = more specific)
+    std::string scope_label;  // "vault: <agent>" | "role: <role>" | "project"
+    std::string excerpt;      // ~200 chars, frontmatter + leading H1 stripped
+    int score = 0;            // higher = better match; 0 → not surfaced
+    std::filesystem::file_time_type mtime{};  // tie-break (DESC)
+};
+
+// A ref entry produced by walking the 3-scope hierarchy. The assembler builds
+// these once per assemble() and feeds them to search_references().
+struct RefEntry {
+    std::filesystem::path path;
+    std::string scope_label;
+    int scope_rank = 2;
+    std::string content;
+    std::filesystem::file_time_type mtime{};
+};
+
+namespace detail {
+
+// Tiny English stopword list. Kept short and inline — these are the tokens
+// most likely to drown out real signal in short task prompts. Larger lists
+// risk dropping legitimate domain terms (e.g. "do" in "DOS").
+[[nodiscard]] inline bool is_stopword(const std::string& tok) {
+    static const std::unordered_set<std::string> sw = {
+        "a", "an", "the", "is", "of", "to", "in", "for", "with", "on", "at"
+    };
+    return sw.find(tok) != sw.end();
+}
+
+// Lowercase + split on whitespace and ASCII punctuation. Drops stopwords
+// and very short (<2 chars) tokens. No regex — std::isalnum check only.
+[[nodiscard]] inline std::vector<std::string> tokenize_lower(const std::string& s) {
+    std::vector<std::string> out;
+    std::string cur;
+    cur.reserve(16);
+    auto flush = [&]() {
+        if (cur.size() >= 2 && !is_stopword(cur)) out.push_back(cur);
+        cur.clear();
+    };
+    for (char c : s) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (std::isalnum(uc)) {
+            cur.push_back(static_cast<char>(std::tolower(uc)));
+        } else {
+            flush();
+        }
+    }
+    flush();
+    return out;
+}
+
+// Count occurrences of any query token in `haystack` (lowercase substring
+// match). Each token contributes its match count — multi-occurrence content
+// scores higher, which is the desired heuristic.
+[[nodiscard]] inline int count_token_matches(
+    const std::string& haystack_lower,
+    const std::vector<std::string>& tokens) {
+    int total = 0;
+    for (const auto& t : tokens) {
+        if (t.empty()) continue;
+        size_t pos = 0;
+        while ((pos = haystack_lower.find(t, pos)) != std::string::npos) {
+            ++total;
+            pos += t.size();
+        }
+    }
+    return total;
+}
+
+// Lowercase a string in-place copy.
+[[nodiscard]] inline std::string to_lower_copy(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        out.push_back(static_cast<char>(std::tolower(
+            static_cast<unsigned char>(c))));
+    }
+    return out;
+}
+
+// Extract a prompt-friendly ~200-char excerpt:
+//   - skip a leading YAML frontmatter block ('---' line ... '---' line)
+//   - skip a leading H1 line ('# Title')
+//   - collapse runs of whitespace (incl. newlines) into single spaces
+[[nodiscard]] inline std::string make_excerpt(const std::string& content,
+                                              size_t max_chars = 200) {
+    size_t i = 0;
+    const size_t n = content.size();
+
+    // Skip leading whitespace.
+    while (i < n && (content[i] == '\n' || content[i] == '\r' ||
+                     content[i] == ' ' || content[i] == '\t')) {
+        ++i;
+    }
+
+    // Skip YAML frontmatter if present: '---' on its own line ... '---'.
+    if (i + 3 <= n && content.compare(i, 3, "---") == 0 &&
+        (i + 3 == n || content[i + 3] == '\n' || content[i + 3] == '\r')) {
+        // Advance past the opening '---' line.
+        size_t lf = content.find('\n', i);
+        if (lf == std::string::npos) {
+            i = n;  // unterminated; nothing to extract
+        } else {
+            size_t scan = lf + 1;
+            // Find the closing '---' line.
+            while (scan < n) {
+                size_t end = content.find('\n', scan);
+                std::string line = (end == std::string::npos)
+                    ? content.substr(scan)
+                    : content.substr(scan, end - scan);
+                // Trim trailing CR.
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (line == "---") {
+                    i = (end == std::string::npos) ? n : end + 1;
+                    break;
+                }
+                if (end == std::string::npos) {
+                    // Unterminated frontmatter — give up and treat as content.
+                    break;
+                }
+                scan = end + 1;
+            }
+        }
+    }
+
+    // Skip leading whitespace again.
+    while (i < n && (content[i] == '\n' || content[i] == '\r' ||
+                     content[i] == ' ' || content[i] == '\t')) {
+        ++i;
+    }
+
+    // Skip a single leading H1 line ('# Title').
+    if (i < n && content[i] == '#') {
+        // Only strip if it's '#' followed by space (markdown H1/H2/etc).
+        size_t h = i;
+        while (h < n && content[h] == '#') ++h;
+        if (h < n && content[h] == ' ') {
+            size_t lf = content.find('\n', i);
+            i = (lf == std::string::npos) ? n : lf + 1;
+        }
+    }
+
+    // Skip leading whitespace once more before collecting.
+    while (i < n && (content[i] == '\n' || content[i] == '\r' ||
+                     content[i] == ' ' || content[i] == '\t')) {
+        ++i;
+    }
+
+    // Collect chars, collapsing whitespace runs into single spaces.
+    std::string out;
+    out.reserve(max_chars);
+    bool in_ws = false;
+    for (; i < n && out.size() < max_chars; ++i) {
+        char c = content[i];
+        if (c == '\n' || c == '\r' || c == '\t' || c == ' ') {
+            if (!in_ws && !out.empty()) {
+                out.push_back(' ');
+                in_ws = true;
+            }
+        } else {
+            out.push_back(c);
+            in_ws = false;
+        }
+    }
+    // Trim trailing space.
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out;
+}
+
+}  // namespace detail
+
+// Score `refs` against `query` and return the top `top_k` matches with
+// non-zero score, ordered by score DESC, mtime DESC tie-break. Pure
+// function — no filesystem access (refs are pre-loaded by the caller).
+[[nodiscard]] inline std::vector<ScoredRef> search_references(
+    const std::vector<RefEntry>& refs,
+    const std::string& query,
+    size_t top_k = 5) {
+
+    auto tokens = detail::tokenize_lower(query);
+    if (tokens.empty() || refs.empty()) return {};
+
+    std::vector<ScoredRef> scored;
+    scored.reserve(refs.size());
+
+    for (const auto& r : refs) {
+        auto fname_lower = detail::to_lower_copy(r.path.filename().string());
+        auto content_lower = detail::to_lower_copy(r.content);
+
+        int fn_hits = detail::count_token_matches(fname_lower, tokens);
+        int content_hits = detail::count_token_matches(content_lower, tokens);
+        int score = fn_hits * 3 + content_hits;
+        if (score <= 0) continue;
+
+        ScoredRef s;
+        s.path = r.path;
+        s.scope_rank = r.scope_rank;
+        s.scope_label = r.scope_label;
+        s.excerpt = detail::make_excerpt(r.content);
+        s.score = score;
+        s.mtime = r.mtime;
+        scored.push_back(std::move(s));
+    }
+
+    std::sort(scored.begin(), scored.end(),
+              [](const ScoredRef& a, const ScoredRef& b) {
+                  if (a.score != b.score) return a.score > b.score;
+                  return a.mtime > b.mtime;  // recency tie-break
+              });
+
+    if (scored.size() > top_k) scored.resize(top_k);
+    return scored;
 }
 
 // Assembles context for agent invocation from vault contents + task description.
@@ -188,17 +423,31 @@ public:
             : std::string("role: ") + agent_role;
 
         // Walk one scope and partition by filename kind. Reads file content
-        // eagerly so dedup can hash without re-reading.
+        // eagerly so dedup can hash without re-reading. Refs are collected
+        // separately for Track 4 search-on-demand.
         auto walk_scope = [&](const std::filesystem::path& dir,
                               const std::string& scope_label,
                               int scope_rank,
                               std::vector<ScopedFile>& rules_out,
-                              std::vector<ScopedFile>& plains_out) {
+                              std::vector<ScopedFile>& plains_out,
+                              std::vector<RefEntry>& refs_out) {
             if (!std::filesystem::exists(dir) || !std::filesystem::is_directory(dir)) return;
             for (const auto& entry : std::filesystem::directory_iterator(dir)) {
                 if (!entry.is_regular_file()) continue;
                 auto kind = classify_knowledge_filename(entry.path().filename().string());
-                if (kind == KnowledgeKind::Reference) continue;  // Track 4
+
+                if (kind == KnowledgeKind::Reference) {
+                    // Track 4: collect refs for search-on-demand. Empty
+                    // content is OK here — filename can still match.
+                    RefEntry r;
+                    r.path = entry.path();
+                    r.scope_label = scope_label;
+                    r.scope_rank = scope_rank;
+                    r.mtime = entry.last_write_time();
+                    r.content = read_file(r.path);
+                    refs_out.push_back(std::move(r));
+                    continue;
+                }
 
                 ScopedFile sf;
                 sf.path = entry.path();
@@ -218,12 +467,14 @@ public:
 
         std::vector<ScopedFile> all_rules;
         std::vector<ScopedFile> all_plains;
+        std::vector<RefEntry> all_refs;
 
         // Project scope (resolves to <project_root>/.quorum/knowledge/).
         // Skipped silently when project_root unset (e.g. unit tests in /tmp).
         if (!project_root.empty()) {
             auto project_knowledge = std::filesystem::path(project_root) / ".quorum" / "knowledge";
-            walk_scope(project_knowledge, "project", /*scope_rank=*/2, all_rules, all_plains);
+            walk_scope(project_knowledge, "project", /*scope_rank=*/2,
+                       all_rules, all_plains, all_refs);
 
             // Role scope (resolves to <project_root>/.quorum/knowledge/roles/<agent_role>/).
             // Skipped silently when agent_role is empty.
@@ -231,14 +482,14 @@ public:
                 auto role_knowledge = std::filesystem::path(project_root) /
                     ".quorum" / "knowledge" / "roles" / agent_role;
                 walk_scope(role_knowledge, scope_for_role, /*scope_rank=*/1,
-                           all_rules, all_plains);
+                           all_rules, all_plains, all_refs);
             }
         }
 
         // Agent vault scope.
         auto vault_knowledge = std::filesystem::path(vault_dir) / "knowledge";
         walk_scope(vault_knowledge, scope_for_vault, /*scope_rank=*/0,
-                   all_rules, all_plains);
+                   all_rules, all_plains, all_refs);
 
         // Dedup priority (agent > role > project): for any group of entries
         // with identical content, keep only the most-specific (lowest
@@ -321,6 +572,32 @@ public:
             emitted_any_knowledge = true;
         }
         (void)emitted_any_knowledge;  // reserved for future tracing
+
+        // Phase 7 Track 4: search refs against the task prompt and surface
+        // the top-5 most relevant in a "## Searched References" section.
+        // The query is the agent's task description (the implicit input to
+        // each turn). Section is omitted when no ref scores > 0 to keep the
+        // prompt clean.
+        if (!all_refs.empty()) {
+            constexpr size_t kRefTopK = 5;
+            auto matches = search_references(all_refs, task_description, kRefTopK);
+            if (!matches.empty()) {
+                prompt += "## Searched References (top " +
+                          std::to_string(matches.size()) + " of " +
+                          std::to_string(all_refs.size()) +
+                          " matched against your task)\n\n";
+                for (const auto& m : matches) {
+                    prompt += "### " + m.path.filename().string() +
+                              " (" + m.scope_label + ") — score: " +
+                              std::to_string(m.score) + "\n";
+                    if (!m.excerpt.empty()) {
+                        prompt += m.excerpt + "\n";
+                    }
+                    prompt += "\n";
+                }
+                prompt += "Use the Read tool to load full content if any look relevant.\n\n";
+            }
+        }
 
         // Load inbox items
         auto inbox_dir = std::filesystem::path(vault_dir) / "inbox";

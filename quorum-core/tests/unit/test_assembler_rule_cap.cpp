@@ -712,11 +712,219 @@ static void test_three_scope_cap() {
     cleanup(l.root);
 }
 
+// --- Track 4: search_knowledge ref retrieval -------------------------------
+
+// Helper: extract the score for a given ref filename from the rendered
+// "## Searched References" section. Returns -1 if the filename's section
+// isn't present. Score lines look like:
+//   "### ref-foo.md (vault: test-agent) — score: 12"
+static int extract_ref_score(const std::string& prompt,
+                             const std::string& ref_filename) {
+    auto needle = std::string("### ") + ref_filename + " (";
+    auto pos = prompt.find(needle);
+    if (pos == std::string::npos) return -1;
+    auto eol = prompt.find('\n', pos);
+    if (eol == std::string::npos) return -1;
+    auto line = prompt.substr(pos, eol - pos);
+    // Find the "score: " marker.
+    auto sp = line.find("score: ");
+    if (sp == std::string::npos) return -1;
+    try {
+        return std::stoi(line.substr(sp + 7));
+    } catch (...) {
+        return -1;
+    }
+}
+
+// --- Test P: basic ref scoring — content matches drive ranking --------------
+
+static void test_ref_basic_scoring() {
+    std::cout << "\n=== P. basic ref scoring (content matches drive ranking) ===\n\n";
+
+    auto vault = make_temp_vault();
+
+    // 3 refs whose content covers different topics. Filenames are intentionally
+    // generic ("ref-a/b/c.md") so the FILENAME doesn't dominate scoring —
+    // only content matches contribute.
+    write_knowledge(vault, "ref-a.md",
+                    "Notes on DOS attack patterns and amplification vectors.\n"
+                    "DOS mitigation requires rate limiting.\n");
+    write_knowledge(vault, "ref-b.md",
+                    "TLS handshake walkthrough. Client hello, server hello,\n"
+                    "key exchange.\n");
+    write_knowledge(vault, "ref-c.md",
+                    "Regex performance pitfalls. Catastrophic backtracking,\n"
+                    "linear-time alternatives.\n");
+
+    sui::quorum::ContextAssembler assembler;
+    auto prompt = assembler.assemble(
+        "test-agent", vault, "turn",
+        "Review handling of DOS attack vectors");
+
+    // Section appears.
+    check(prompt.find("## Searched References") != std::string::npos,
+          "P: '## Searched References' section present");
+
+    int dos_score = extract_ref_score(prompt, "ref-a.md");
+    int tls_score = extract_ref_score(prompt, "ref-b.md");
+    int regex_score = extract_ref_score(prompt, "ref-c.md");
+
+    check(dos_score > 0, "P: ref-a (DOS) has score > 0");
+    // tls and regex either don't surface (-1) or score 0 — both acceptable.
+    // What matters is they don't out-rank the DOS ref.
+    check(dos_score > tls_score, "P: ref-a (DOS) out-scores ref-b (TLS)");
+    check(dos_score > regex_score, "P: ref-a (DOS) out-scores ref-c (regex)");
+
+    // ref-a must appear FIRST in the section (highest score → first ###).
+    auto section = prompt.find("## Searched References");
+    auto first_entry = prompt.find("### ", section);
+    check(first_entry != std::string::npos, "P: at least one ### entry");
+    check(prompt.compare(first_entry, 11, "### ref-a.m") == 0,
+          "P: ref-a (DOS) ranks #1");
+
+    cleanup(vault);
+}
+
+// --- Test Q: filename matches outweigh content matches (3x weight) ---------
+
+static void test_ref_filename_outweighs_content() {
+    std::cout << "\n=== Q. filename match (×3) outweighs content match ===\n\n";
+
+    auto vault = make_temp_vault();
+
+    // ref-foo.md mentions DOS in content (1 content hit = score 1).
+    // ref-dos.md is an empty stub — but filename has 'dos' (1 fn hit = score 3).
+    write_knowledge(vault, "ref-foo.md",
+                    "General notes including a passing mention of DOS.\n");
+    write_knowledge(vault, "ref-dos.md", "");
+
+    sui::quorum::ContextAssembler assembler;
+    auto prompt = assembler.assemble(
+        "test-agent", vault, "turn", "DOS handling");
+
+    int foo_score = extract_ref_score(prompt, "ref-foo.md");
+    int dos_score = extract_ref_score(prompt, "ref-dos.md");
+
+    check(dos_score > 0, "Q: ref-dos (filename match) has score > 0");
+    check(dos_score > foo_score,
+          "Q: ref-dos (filename ×3) out-scores ref-foo (content ×1)");
+
+    // Confirm ordering in the rendered section: ref-dos appears before ref-foo.
+    auto dos_pos = prompt.find("### ref-dos.md");
+    auto foo_pos = prompt.find("### ref-foo.md");
+    check(dos_pos != std::string::npos, "Q: ref-dos rendered");
+    check(foo_pos != std::string::npos, "Q: ref-foo rendered");
+    check(dos_pos < foo_pos, "Q: ref-dos appears before ref-foo");
+
+    cleanup(vault);
+}
+
+// --- Test R: top-K cap (5) — only 5 surface even when 8 match -------------
+
+static void test_ref_top_k_cap() {
+    std::cout << "\n=== R. top-K cap: 8 matching refs → only 5 surface ===\n\n";
+
+    auto vault = make_temp_vault();
+
+    // 8 refs, all containing the query term in content. Filenames numbered
+    // 0..7 to keep them distinguishable. With identical content scores,
+    // mtime DESC tie-breaks → most-recent 5 win.
+    for (int i = 0; i < 8; ++i) {
+        write_knowledge(vault, "ref-" + std::to_string(i) + ".md",
+                        "DeepBook trading content for entry " +
+                        std::to_string(i) + ".\n");
+    }
+
+    sui::quorum::ContextAssembler assembler;
+    auto prompt = assembler.assemble(
+        "test-agent", vault, "turn", "DeepBook trading questions");
+
+    // Count "### ref-" entries in the search section.
+    size_t loaded = 0;
+    size_t pos = 0;
+    while ((pos = prompt.find("### ref-", pos)) != std::string::npos) {
+        ++loaded;
+        ++pos;
+    }
+    check(loaded == 5, "R: exactly 5 refs surfaced (top-K cap)");
+
+    // The header should advertise "top 5 of 8".
+    check(prompt.find("top 5 of 8") != std::string::npos,
+          "R: header says 'top 5 of 8'");
+
+    cleanup(vault);
+}
+
+// --- Test S: zero matches → section omitted entirely ------------------------
+
+static void test_ref_no_matches_omits_section() {
+    std::cout << "\n=== S. zero matches → '## Searched References' omitted ===\n\n";
+
+    auto vault = make_temp_vault();
+
+    // Cooking refs vs. trading query — no token should land.
+    write_knowledge(vault, "ref-pasta.md", "Boil water, salt generously.\n");
+    write_knowledge(vault, "ref-bread.md", "Knead dough until smooth.\n");
+    write_knowledge(vault, "ref-soup.md", "Saute onions until translucent.\n");
+
+    sui::quorum::ContextAssembler assembler;
+    auto prompt = assembler.assemble(
+        "test-agent", vault, "turn", "DeepBook trading strategy");
+
+    check(prompt.find("## Searched References") == std::string::npos,
+          "S: no '## Searched References' header");
+    check(prompt.find("### ref-") == std::string::npos,
+          "S: no '### ref-' entry rendered");
+
+    cleanup(vault);
+}
+
+// --- Test T: cross-scope refs surface with correct annotations -------------
+
+static void test_ref_cross_scope() {
+    std::cout << "\n=== T. cross-scope refs: project + role + agent ===\n\n";
+
+    auto l = make_scoped_layout("test-agent");
+    auto doer = role_kdir(l, "doer");
+
+    // One ref per scope, distinct filename tokens that all match the query.
+    write_kfile(l.project_kdir, "ref-arch.md",
+                "Architecture overview document.\n");
+    write_kfile(doer, "ref-impl.md",
+                "Implementation patterns and conventions.\n");
+    write_kfile(l.vault_kdir, "ref-debug.md",
+                "Debugging workflow notes.\n");
+
+    sui::quorum::ContextAssembler assembler;
+    auto prompt = assembler.assemble(
+        "test-agent", l.vault_dir, "turn",
+        "I need architecture, implementation, and debugging guidance",
+        {}, {}, l.root, /*agent_role=*/"doer");
+
+    // All three surface with their scope annotations.
+    check(prompt.find("### ref-arch.md (project)") != std::string::npos,
+          "T: ref-arch rendered with '(project)' annotation");
+    check(prompt.find("### ref-impl.md (role: doer)") != std::string::npos,
+          "T: ref-impl rendered with '(role: doer)' annotation");
+    check(prompt.find("### ref-debug.md (vault: test-agent)") != std::string::npos,
+          "T: ref-debug rendered with '(vault: test-agent)' annotation");
+
+    // All three scored > 0.
+    check(extract_ref_score(prompt, "ref-arch.md") > 0,
+          "T: ref-arch score > 0");
+    check(extract_ref_score(prompt, "ref-impl.md") > 0,
+          "T: ref-impl score > 0");
+    check(extract_ref_score(prompt, "ref-debug.md") > 0,
+          "T: ref-debug score > 0");
+
+    cleanup(l.root);
+}
+
 // --- main -------------------------------------------------------------------
 
 int main() {
     std::cout << "=====================================================\n";
-    std::cout << "  Phase 7 Track 1+2+3 — assembler scope/cap unit tests\n";
+    std::cout << "  Phase 7 Track 1+2+3+4 — assembler scope/cap/search tests\n";
     std::cout << "=====================================================\n";
 
     test_rule_cap_eviction();
@@ -734,6 +942,12 @@ int main() {
     test_three_scope_merge();
     test_three_scope_dedup_chain();
     test_three_scope_cap();
+    // Track 4: ref retrieval (search_knowledge).
+    test_ref_basic_scoring();
+    test_ref_filename_outweighs_content();
+    test_ref_top_k_cap();
+    test_ref_no_matches_omits_section();
+    test_ref_cross_scope();
 
     std::cout << "\n---------------------------------------------------\n";
     std::cout << "  passed: " << g_passed << "  failed: " << g_failed << "\n";

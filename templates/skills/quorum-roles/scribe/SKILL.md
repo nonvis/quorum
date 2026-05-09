@@ -129,6 +129,15 @@ In this phase, `context_assembler` doesn't yet distinguish these — but
 adopting the convention now means Phase 7 starts with sorted vaults
 rather than needing a mass rename.
 
+**Filename convention reminder:** when curating brainstorm output,
+prefer `ref-*.md` for things future runs may search for on-demand
+(case studies, edge cases, prior decisions). Reserve `rule-*.md` for
+things every future run should ALWAYS see (always-on directives, hard
+rules, invariants). The daemon eagerly searches refs against each
+agent's task prompt — well-named ref filenames boost retrieval
+precision (filename token matches are weighted 3x higher than content
+matches).
+
 ## Block Formats
 
 ### HANDOFF — always to done
