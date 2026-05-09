@@ -52,3 +52,6 @@ keystore/
 Thumbs.db
 .Spotlight-V100
 .Trashes
+
+# Manual-test sandbox (Phase 6 Track 9 — keep local-only)
+sample/
