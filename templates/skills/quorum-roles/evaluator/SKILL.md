@@ -86,16 +86,33 @@ If invoked in brainstorm anyway, score the curated knowledge files for clarity, 
 role: <role>-<specialty>
 rubric_version: <version>
 total: <0-100>
-items:
-  - id: <rubric-item-id>
-    weight: <int>
-    passed: <true|false>
-    notes: <optional reason>
+items_json: [{"id":"<item-id>","weight":<int>,"passed":<true|false>,"notes":"<optional>"}, ...]
 notes: <free-form summary>
-END_EVALUATION
+scored: <agent_id>
 ```
 
-The exact format is finalized in Track 3 (parser). For this cycle the block is a placeholder shape. Always emit it; downstream tooling will pick it up later.
+Field details:
+
+- `role`: the role-specialty being scored (e.g. `move-dev`). Required.
+- `rubric_version`: matches the `version` from the rubric file frontmatter (e.g. `v1`). Required.
+- `total`: numeric score, normalized 0-100. Plain number — do NOT include a `%` suffix. Required.
+- `items_json`: a **single-line JSON array** of per-item objects. Each object has `id` (string), `weight` (int), `passed` (bool), and optional `notes` (string). Keep it on one line so the daemon's parser doesn't have to handle nested YAML. Example:
+  `[{"id":"compile-clean","weight":5,"passed":true},{"id":"move-2024-idioms","weight":4,"passed":false,"notes":"uses old public fun for internal helpers"}]`
+- `notes`: free-form summary explaining the score (1-3 sentences).
+- `scored`: optional. The agent_id whose work was evaluated. If omitted, the daemon defaults to the most recent task agent in this conversation other than yourself. Set this explicitly when you want to be unambiguous (e.g. the team had multiple doers).
+
+Example, fully populated:
+
+```EVALUATION
+role: move-dev
+rubric_version: v1
+total: 78
+items_json: [{"id":"compile-clean","weight":5,"passed":true},{"id":"move-2024-idioms.public-package","weight":4,"passed":false,"notes":"uses old public fun for internal helpers"},{"id":"tests-cover-happy-path","weight":3,"passed":true}]
+notes: Solid implementation but missed several Move 2024 modernizations.
+scored: move-dev-1
+```
+
+If a required field is missing or `total` doesn't parse as a plain number (e.g. `78%`), the daemon drops the block entirely. Emit clean numeric values.
 
 ### HANDOFF — to scribe (or done)
 

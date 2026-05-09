@@ -307,6 +307,59 @@ public:
 
     sqlite3* handle() { return db_; }
 
+    // ── Evaluations (Phase 8 Track 3) ─────────────────────────────────────
+
+    // Insert an evaluation row. Returns the new row id.
+    // score_json is the raw per-item breakdown as a JSON string (stored as-is).
+    int64_t append_evaluation(int64_t conversation_id,
+                              const std::string& scored_agent_id,
+                              const std::string& evaluator_agent_id,
+                              const std::string& role_specialty,
+                              const std::string& rubric_version,
+                              double score_total,
+                              const std::string& score_json,
+                              const std::string& notes) {
+        execute(
+            "INSERT INTO evaluations "
+            "(conversation_id, scored_agent_id, evaluator_agent_id, "
+            " role_specialty, rubric_version, score_total, score_json, notes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, conversation_id);
+                sqlite3_bind_text(stmt, 2, scored_agent_id.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 3, evaluator_agent_id.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 4, role_specialty.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 5, rubric_version.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_double(stmt, 6, score_total);
+                sqlite3_bind_text(stmt, 7, score_json.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 8, notes.c_str(), -1, SQLITE_TRANSIENT);
+            }
+        );
+        return last_insert_id();
+    }
+
+    // Most recent task agent in a conversation other than `excluded_agent`.
+    // Used to deduce scored_agent_id when an EVALUATION block omits `scored:`.
+    // Returns empty string if no such task exists.
+    std::string previous_task_agent(int64_t conversation_id,
+                                    const std::string& excluded_agent) {
+        std::string agent;
+        query(
+            "SELECT agent FROM tasks "
+            "WHERE conversation_id = ? AND agent != ? "
+            "ORDER BY id DESC LIMIT 1",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, conversation_id);
+                sqlite3_bind_text(stmt, 2, excluded_agent.c_str(), -1, SQLITE_TRANSIENT);
+            },
+            [&](sqlite3_stmt* stmt) {
+                auto a = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                if (a) agent = a;
+            }
+        );
+        return agent;
+    }
+
 private:
     sqlite3* db_ = nullptr;
     std::mutex mutex_;

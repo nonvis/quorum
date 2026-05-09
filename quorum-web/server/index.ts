@@ -390,6 +390,12 @@ app.get("/api/budget/agents", (c) => {
     // cache_hit_ratio = cache_read / (cache_read + cache_creation + input)
     // — i.e. share of input-side tokens served from cache. Coalesce nulls
     // to 0 so legacy rows (pre-Track-5 columns) don't poison the math.
+    //
+    // Phase 8 Track 3 — avg_score column. Average of the last N (default 10)
+    // evaluations where this agent was the scored_agent_id. NULL when this
+    // agent has no evaluations on record (e.g. cleanly missing on dashboards
+    // with no scoring activity).
+    const N = 10;
     const rows = freshQuery<{
       agent: string;
       tasks: number;
@@ -399,28 +405,103 @@ app.get("/api/budget/agents", (c) => {
       cache_creation_tokens: number;
       input_tokens: number;
       cache_hit_ratio: number;
+      avg_score: number | null;
     }>(
-      "SELECT agent, COUNT(*) as tasks, " +
-      "ROUND(COALESCE(SUM(cost), 0), 2) as total_cost, " +
-      "ROUND(COALESCE(AVG(cost), 0), 2) as avg_cost, " +
-      "COALESCE(SUM(cache_read_input_tokens), 0) as cache_read_tokens, " +
-      "COALESCE(SUM(cache_creation_input_tokens), 0) as cache_creation_tokens, " +
-      "COALESCE(SUM(token_in), 0) as input_tokens, " +
+      "SELECT t.agent as agent, COUNT(*) as tasks, " +
+      "ROUND(COALESCE(SUM(t.cost), 0), 2) as total_cost, " +
+      "ROUND(COALESCE(AVG(t.cost), 0), 2) as avg_cost, " +
+      "COALESCE(SUM(t.cache_read_input_tokens), 0) as cache_read_tokens, " +
+      "COALESCE(SUM(t.cache_creation_input_tokens), 0) as cache_creation_tokens, " +
+      "COALESCE(SUM(t.token_in), 0) as input_tokens, " +
       "CASE WHEN " +
-      "  (COALESCE(SUM(cache_read_input_tokens), 0) + " +
-      "   COALESCE(SUM(cache_creation_input_tokens), 0) + " +
-      "   COALESCE(SUM(token_in), 0)) > 0 " +
+      "  (COALESCE(SUM(t.cache_read_input_tokens), 0) + " +
+      "   COALESCE(SUM(t.cache_creation_input_tokens), 0) + " +
+      "   COALESCE(SUM(t.token_in), 0)) > 0 " +
       "THEN ROUND(" +
-      "  CAST(COALESCE(SUM(cache_read_input_tokens), 0) AS REAL) / " +
-      "  (COALESCE(SUM(cache_read_input_tokens), 0) + " +
-      "   COALESCE(SUM(cache_creation_input_tokens), 0) + " +
-      "   COALESCE(SUM(token_in), 0)), 4) " +
-      "ELSE 0 END as cache_hit_ratio " +
-      "FROM tasks WHERE cost > 0 GROUP BY agent ORDER BY total_cost DESC"
+      "  CAST(COALESCE(SUM(t.cache_read_input_tokens), 0) AS REAL) / " +
+      "  (COALESCE(SUM(t.cache_read_input_tokens), 0) + " +
+      "   COALESCE(SUM(t.cache_creation_input_tokens), 0) + " +
+      "   COALESCE(SUM(t.token_in), 0)), 4) " +
+      "ELSE 0 END as cache_hit_ratio, " +
+      "COALESCE((SELECT ROUND(AVG(score_total), 2) FROM ( " +
+      "  SELECT score_total FROM evaluations " +
+      "  WHERE scored_agent_id = t.agent " +
+      "  ORDER BY created_at DESC, id DESC LIMIT " + N + " " +
+      ")), NULL) as avg_score " +
+      "FROM tasks t WHERE t.cost > 0 GROUP BY t.agent ORDER BY total_cost DESC"
     );
     return c.json(rows);
   } catch {
     return c.json([]);
+  }
+});
+
+// Phase 8 Track 3 — recent evaluations for a scored agent.
+// `:id` matches `evaluations.scored_agent_id`. Returns up to ?limit= rows
+// (default 20) ordered by recency. Omits score_json for compactness; use
+// the per-id detail endpoint for the full breakdown.
+app.get("/api/evaluations/agent/:id", (c) => {
+  try {
+    const id = c.req.param("id");
+    const limitParam = c.req.query("limit");
+    let limit = 20;
+    const parsed = limitParam ? parseInt(limitParam, 10) : NaN;
+    if (Number.isFinite(parsed) && parsed > 0 && parsed <= 200) {
+      limit = parsed;
+    }
+    const rows = freshQuery<{
+      id: number;
+      conversation_id: number;
+      evaluator_agent_id: string;
+      role_specialty: string;
+      rubric_version: string;
+      score_total: number;
+      notes: string | null;
+      created_at: string;
+    }>(
+      "SELECT id, conversation_id, evaluator_agent_id, role_specialty, " +
+      "rubric_version, score_total, notes, created_at " +
+      "FROM evaluations WHERE scored_agent_id = ? " +
+      "ORDER BY created_at DESC, id DESC LIMIT ?",
+      [id, limit]
+    );
+    return c.json(rows);
+  } catch {
+    return c.json([]);
+  }
+});
+
+// Phase 8 Track 3 — full evaluation detail including score_json. 404 if
+// no row matches the id.
+app.get("/api/evaluations/:id", (c) => {
+  try {
+    const id = parseInt(c.req.param("id"), 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return c.json({ error: "invalid id" }, 400);
+    }
+    const rows = freshQuery<{
+      id: number;
+      conversation_id: number;
+      scored_agent_id: string;
+      evaluator_agent_id: string;
+      role_specialty: string;
+      rubric_version: string;
+      score_total: number;
+      score_json: string;
+      notes: string | null;
+      created_at: string;
+    }>(
+      "SELECT id, conversation_id, scored_agent_id, evaluator_agent_id, " +
+      "role_specialty, rubric_version, score_total, score_json, notes, " +
+      "created_at FROM evaluations WHERE id = ?",
+      [id]
+    );
+    if (rows.length === 0) {
+      return c.json({ error: "not found" }, 404);
+    }
+    return c.json(rows[0]);
+  } catch {
+    return c.json({ error: "query failed" }, 500);
   }
 });
 

@@ -197,3 +197,14 @@ add_test(NAME test_invoker_sysprompt_flag COMMAND test_invoker_sysprompt_flag)
 add_executable(test_rubric_parser tests/unit/test_rubric_parser.cpp)
 target_include_directories(test_rubric_parser PRIVATE src)
 add_test(NAME test_rubric_parser COMMAND test_rubric_parser)
+
+# Phase 8 Track 3 / Track 6 #26 — EVALUATION block parser
+add_executable(test_evaluation_parser tests/unit/test_evaluation_parser.cpp)
+target_include_directories(test_evaluation_parser PRIVATE src)
+add_test(NAME test_evaluation_parser COMMAND test_evaluation_parser)
+
+# Phase 8 Track 3 / Track 6 #27 — evaluator pipeline E2E
+add_executable(test_evaluator_pipeline tests/integration/test_evaluator_pipeline.cpp)
+target_include_directories(test_evaluator_pipeline PRIVATE src)
+target_link_libraries(test_evaluator_pipeline PRIVATE SQLite::SQLite3)
+add_test(NAME test_evaluator_pipeline COMMAND test_evaluator_pipeline)

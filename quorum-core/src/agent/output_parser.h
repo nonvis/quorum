@@ -1,6 +1,8 @@
 #pragma once
 
+#include <iostream>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -39,6 +41,19 @@ struct HandoffBlock {
     std::string prompt;  // instructions for next agent (may be empty)
 };
 
+// EVALUATION block — Phase 8 Track 3.
+// Emitted by the evaluator archetype to score completed work against a rubric.
+// items_json is preserved as the raw JSON-array string (parsed lazily by
+// downstream tooling) so the parser stays tolerant of LLM-side malformations.
+struct EvaluationBlock {
+    std::string role_specialty;   // e.g. "move-dev"
+    std::string rubric_version;   // e.g. "v1"
+    double      total_score{0.0}; // normalized 0-100
+    std::string items_json;       // raw JSON array string for storage
+    std::string notes;            // evaluator's free-form summary
+    std::string scored;           // optional: explicit scored agent_id (may be empty)
+};
+
 struct ParsedOutput {
     std::string summary;                     // contents of SUMMARY block (empty if absent)
     std::vector<VaultUpdate> vault_updates;  // VAULT_UPDATE blocks
@@ -46,6 +61,7 @@ struct ParsedOutput {
     std::vector<Review>      reviews;        // REVIEW blocks
     std::vector<ParsedObservation> observations;  // OBSERVATION blocks
     std::optional<HandoffBlock> handoff;     // team mode routing (last HANDOFF wins)
+    std::optional<EvaluationBlock> evaluation;  // last EVALUATION wins
     std::string free_text;                   // everything outside structured blocks
     std::string raw;                         // original unmodified output
 };
@@ -54,7 +70,7 @@ struct ParsedOutput {
 
 // Parses structured blocks from agent output.
 //
-// Recognized block types: VAULT_UPDATE, PROPOSAL, REVIEW, OBSERVATION, SUMMARY, HANDOFF
+// Recognized block types: VAULT_UPDATE, PROPOSAL, REVIEW, OBSERVATION, SUMMARY, HANDOFF, EVALUATION
 //
 // Three accepted formats (in order of precedence):
 //
@@ -173,7 +189,8 @@ public:
                         auto ft = trim(line);
                         bool skip = false;
                         for (const char* t : {"VAULT_UPDATE", "PROPOSAL",
-                             "OBSERVATION", "SUMMARY", "REVIEW", "HANDOFF"}) {
+                             "OBSERVATION", "SUMMARY", "REVIEW", "HANDOFF",
+                             "EVALUATION"}) {
                             if (ft == t) {
                                 if (block_type.empty()) {
                                     block_type = t;
@@ -310,7 +327,8 @@ private:
         auto type = trim(line);
         if (type == "VAULT_UPDATE" || type == "PROPOSAL" ||
             type == "REVIEW"       || type == "SUMMARY"  ||
-            type == "OBSERVATION"  || type == "HANDOFF") {
+            type == "OBSERVATION"  || type == "HANDOFF"  ||
+            type == "EVALUATION") {
             return type;
         }
         return {};
@@ -369,7 +387,8 @@ private:
 
         // Check if remainder starts with a known type followed by non-alpha or end
         for (const char* t : {"VAULT_UPDATE", "PROPOSAL",
-             "OBSERVATION", "SUMMARY", "REVIEW", "HANDOFF"}) {
+             "OBSERVATION", "SUMMARY", "REVIEW", "HANDOFF",
+             "EVALUATION"}) {
             std::string_view type_sv(t);
             if (line.size() >= type_sv.size() &&
                 line.substr(0, type_sv.size()) == type_sv) {
@@ -594,6 +613,69 @@ private:
             }
             // agent and task_type are filled by the daemon, not parsed
             out.observations.push_back(std::move(obs));
+
+        } else if (type == "EVALUATION") {
+            // Phase 8 Track 3 — evaluator score block.
+            // Required fields: role, rubric_version, total. If any are
+            // missing OR `total` doesn't parse as a number, the block is
+            // dropped (out.evaluation stays nullopt). items_json is stored
+            // as the raw string — downstream tooling parses lazily.
+            auto bag = parse_kv(lines);
+            EvaluationBlock e;
+            e.role_specialty   = bag.get_str("role");
+            e.rubric_version   = bag.get_str("rubric_version");
+            std::string raw_total = bag.get_str("total");
+            e.notes            = bag.get_str("notes");
+            e.scored           = bag.get_str("scored");
+
+            // items_json deliberately bypasses parse_kv — its value starts
+            // with `[`, which the generic key-value parser would treat as a
+            // YAML-style list and split on commas (destroying the nested
+            // JSON). Re-extract it raw from the first matching block line.
+            for (const auto& l : lines) {
+                auto trimmed = trim(std::string_view(l));
+                std::string_view sv = trimmed;
+                static constexpr std::string_view kKey = "items_json:";
+                if (sv.size() >= kKey.size() &&
+                    sv.substr(0, kKey.size()) == kKey) {
+                    auto rest = trim_sv(sv.substr(kKey.size()));
+                    e.items_json = std::string(rest);
+                    break;  // first match wins
+                }
+            }
+
+            // Required-field gate: role, rubric_version, total all present.
+            bool ok = !e.role_specialty.empty() &&
+                      !e.rubric_version.empty() &&
+                      !raw_total.empty();
+            if (ok) {
+                // Parse total as a double; accept "78" / "78.5" / "78.0".
+                // Reject "78%" or any trailing non-whitespace junk with a
+                // stderr warning — block is dropped.
+                try {
+                    size_t pos = 0;
+                    double v = std::stod(raw_total, &pos);
+                    while (pos < raw_total.size() &&
+                           (raw_total[pos] == ' ' ||
+                            raw_total[pos] == '\t')) ++pos;
+                    if (pos != raw_total.size()) {
+                        std::cerr << "[output_parser] EVALUATION total has "
+                                  << "trailing garbage: '" << raw_total
+                                  << "' — block dropped\n";
+                        ok = false;
+                    } else {
+                        e.total_score = v;
+                    }
+                } catch (const std::exception&) {
+                    std::cerr << "[output_parser] EVALUATION total not a "
+                              << "number: '" << raw_total
+                              << "' — block dropped\n";
+                    ok = false;
+                }
+            }
+            if (ok) {
+                out.evaluation = std::move(e);  // last EVALUATION wins
+            }
 
         } else if (type == "HANDOFF") {
             auto bag = parse_kv(lines);

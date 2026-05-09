@@ -73,6 +73,26 @@ inline void create_schema(Database& db) {
         "  spent_usd REAL NOT NULL DEFAULT 0.0"
         ")"
     );
+
+    // Phase 8 Track 3 — evaluator scores from EVALUATION blocks
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS evaluations ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  conversation_id INTEGER NOT NULL REFERENCES conversations(id),"
+        "  scored_agent_id TEXT NOT NULL,"
+        "  evaluator_agent_id TEXT NOT NULL,"
+        "  role_specialty TEXT NOT NULL,"
+        "  rubric_version TEXT NOT NULL,"
+        "  score_total REAL NOT NULL,"            // normalized 0-100
+        "  score_json TEXT NOT NULL,"             // per-item breakdown (JSON array)
+        "  notes TEXT,"                           // evaluator's free-form summary
+        "  created_at TEXT NOT NULL DEFAULT (datetime('now'))"
+        ")"
+    );
+    db.execute("CREATE INDEX IF NOT EXISTS idx_evaluations_conv "
+               "ON evaluations(conversation_id)");
+    db.execute("CREATE INDEX IF NOT EXISTS idx_evaluations_scored "
+               "ON evaluations(scored_agent_id)");
 }
 
 } // namespace sui::quorum

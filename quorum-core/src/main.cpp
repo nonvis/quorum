@@ -174,6 +174,18 @@ static bool column_exists(sui::quorum::Database& db, const std::string& table, c
     return found;
 }
 
+// Check if a table exists in the database (used to guard CREATE TABLE migrations
+// for tables introduced after the initial schema, on databases that pre-date
+// them). Mirrors column_exists().
+static bool table_exists(sui::quorum::Database& db, const std::string& table) {
+    bool found = false;
+    db.query(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '" + table + "'",
+        [&](sqlite3_stmt*) { found = true; }
+    );
+    return found;
+}
+
 // Initialize all database tables + run migrations
 static void init_schema(sui::quorum::Database& db) {
     sui::quorum::create_schema(db);
@@ -199,6 +211,31 @@ static void init_schema(sui::quorum::Database& db) {
         db.execute("ALTER TABLE tasks ADD COLUMN cache_creation_input_tokens INTEGER");
     if (!column_exists(db, "tasks", "cache_read_input_tokens"))
         db.execute("ALTER TABLE tasks ADD COLUMN cache_read_input_tokens INTEGER");
+
+    // Phase 8 Track 3 — evaluations table for evaluator archetype scores.
+    // create_schema() above already runs CREATE TABLE IF NOT EXISTS, so this
+    // block is normally a no-op. Kept as an explicit migration marker for old
+    // DBs and parity with the column_exists pattern used by Phase 5/7.
+    if (!table_exists(db, "evaluations")) {
+        db.execute(
+            "CREATE TABLE evaluations ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  conversation_id INTEGER NOT NULL REFERENCES conversations(id),"
+            "  scored_agent_id TEXT NOT NULL,"
+            "  evaluator_agent_id TEXT NOT NULL,"
+            "  role_specialty TEXT NOT NULL,"
+            "  rubric_version TEXT NOT NULL,"
+            "  score_total REAL NOT NULL,"
+            "  score_json TEXT NOT NULL,"
+            "  notes TEXT,"
+            "  created_at TEXT NOT NULL DEFAULT (datetime('now'))"
+            ")"
+        );
+        db.execute("CREATE INDEX idx_evaluations_conv "
+                   "ON evaluations(conversation_id)");
+        db.execute("CREATE INDEX idx_evaluations_scored "
+                   "ON evaluations(scored_agent_id)");
+    }
 }
 
 // Count currently active (running) tasks
@@ -956,6 +993,48 @@ int main(int argc, char* argv[]) {
                                   << " vault updates applied for " << agent_id
                                   << " (mode=" << task_mode
                                   << ", role=" << emitting_role << ")\n";
+                    }
+                }
+
+                // Phase 8 Track 3 — persist EVALUATION block to evaluations
+                // table. Evaluator agent ID = agent_id (the agent whose turn
+                // just produced the block). Scored agent ID is taken from
+                // the optional `scored:` field; if absent, fall back to the
+                // most recent task agent in this conversation other than the
+                // evaluator. Empty fallback => persist with empty string.
+                if (parsed.evaluation.has_value()) {
+                    auto conv_id_opt =
+                        db.get_conversation_for_task(task_id);
+                    if (conv_id_opt) {
+                        const auto& e = *parsed.evaluation;
+                        std::string scored = e.scored;
+                        if (scored.empty()) {
+                            scored = db.previous_task_agent(
+                                *conv_id_opt, agent_id);
+                        }
+                        auto eval_id = db.append_evaluation(
+                            *conv_id_opt,
+                            scored,
+                            agent_id,
+                            e.role_specialty,
+                            e.rubric_version,
+                            e.total_score,
+                            e.items_json,
+                            e.notes);
+                        if (verbose) {
+                            std::cout << "[dispatch] task " << task_id
+                                      << " — evaluation #" << eval_id
+                                      << " persisted ("
+                                      << e.role_specialty
+                                      << " v" << e.rubric_version
+                                      << ", score=" << e.total_score
+                                      << ", scored=" << scored
+                                      << ")\n";
+                        }
+                    } else if (verbose) {
+                        std::cout << "[dispatch] task " << task_id
+                                  << " — EVALUATION block ignored (no "
+                                  << "conversation context)\n";
                     }
                 }
 
