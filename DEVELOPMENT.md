@@ -27,7 +27,7 @@ Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
     | Agents  |  <- claude -p subprocesses (all LLM here)
     +----+----+
          |
-    SQLite --- task queue, conversations, knowledge ledger
+    SQLite --- task queue, conversations, agent sessions
     Vaults --- CONTEXT.md + knowledge/ per agent (filesystem)
 ```
 
@@ -130,9 +130,9 @@ quorum close --conversation 1
 | daemon/conversation.h | Conversation engine — team mode ball-passing (currently stub, being rewritten in task #3) |
 | daemon/scheduler.h | Periodic task scheduling |
 | agent/invoker.h | claude -p subprocess, session resume, agent-class tool policy |
-| agent/output_parser.h | HANDOFF/KNOWLEDGE/VAULT_UPDATE/SUMMARY blocks |
+| agent/output_parser.h | HANDOFF/VAULT_UPDATE/SUMMARY blocks |
 | agent/context_assembler.h | Prompt builder from vault files |
-| storage/database.h | SQLite wrapper (WAL, mutex, RAII), knowledge_ledger methods |
+| storage/database.h | SQLite wrapper (WAL, mutex, RAII) |
 | utils/config.h | YAML config parser, AgentMetadata, load_agent_config() |
 | utils/uuid.h | UUID v4 generation for session IDs |
 
@@ -142,8 +142,6 @@ quorum close --conversation 1
 |------|----------|
 | unit/test_output_parser.cpp | Block parsing, verdict normalization |
 | unit/test_handoff_parser.cpp | HANDOFF block parsing (9 cases, 22 assertions) |
-| unit/test_knowledge_parser.cpp | KNOWLEDGE block parsing (8 cases) |
-| unit/test_knowledge_ledger.cpp | Knowledge ledger DB operations (3 cases) |
 | unit/test_session_resume.cpp | UUID format, uniqueness, -r flag |
 | integration/test_team_pipeline.cpp | Placeholder for team mode tests |
 

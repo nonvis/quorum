@@ -128,7 +128,6 @@ compile it, run tests, and fix issues until tests pass.
 ## You Produce
 - Move modules in sources/
 - Move tests in tests/
-- KNOWLEDGE blocks documenting design decisions
 
 ## You Do NOT
 - Plan architecture (that's the architect)
@@ -235,13 +234,6 @@ The architect reads the prompt, plans the design, records a knowledge entry, and
 ### Shared Object Lifecycle
 Escrow is a shared object created on `create_escrow`, consumed on `accept_escrow` or `cancel_escrow`.
 
-```KNOWLEDGE
-topic: escrow-architecture
-content: Escrow uses shared object pattern. Two entry points: create (locks initiator NFT,
-returns shared Escrow) and accept (locks responder NFT, executes atomic swap). Cancel only
-available to initiator before acceptance. No partial fulfillment in v1.
-```
-
 ```HANDOFF
 to: move-dev
 prompt: Implement the escrow module per the design above. Create sources/escrow.move
@@ -265,13 +257,6 @@ I'll implement the escrow module now.
 
 All tests pass. The module implements create_escrow, accept_escrow, and
 cancel_escrow with proper access control.
-
-```KNOWLEDGE
-topic: escrow-implementation
-content: Escrow module implemented in sources/escrow.move. 85 lines, 3 entry functions.
-All 3 tests pass: successful swap, initiator cancellation, unauthorized cancel abort.
-Uses dynamic_object_field to store NFTs inside the shared Escrow object.
-```
 
 ```HANDOFF
 to: security-reviewer
@@ -297,12 +282,6 @@ The security reviewer reads the code (read-only tools) and either approves or re
 
 No blocking issues found. Code is safe for deployment.
 
-```KNOWLEDGE
-topic: escrow-security-review
-content: Security review passed. No vulnerabilities found. Minor note: self-swap not prevented
-but is harmless (gas waste only). Access control, object lifecycle, and type safety all verified.
-```
-
 ```HANDOFF
 to: leader
 prompt: Security review complete — no blocking issues. The escrow module is ready.
@@ -324,7 +303,7 @@ security review clean. Handing off to scribe to record the work.
 ```HANDOFF
 to: scribe
 prompt: Record the escrow module work. Summarize the architecture, implementation
-decisions, and security review findings from the knowledge ledger.
+decisions, and security review findings from the conversation transcript.
 ```
 ```
 
@@ -404,35 +383,11 @@ quorum close --conversation 1
 
 ## Knowledge Accumulation
 
-Every agent can emit KNOWLEDGE blocks during its turn. These are append-only entries in the knowledge ledger — a per-conversation log stored in SQLite.
+At the end of a conversation cycle, the leader hands off to a scribe. The scribe reads the full conversation transcript (via `claude -p` session resume) and produces structured notes — typically Obsidian markdown files written to a configured output directory.
 
-### KNOWLEDGE Block Format
+The scribe is a regular agent (`agent_class: analyst`, read-only tools for the project, write access to its notes directory). It synthesizes findings from the transcript and writes notes. The librarian archetype does the same but targets human-facing documentation (READMEs, API docs, changelogs).
 
-```
-```KNOWLEDGE
-topic: escrow-architecture
-content: Escrow uses shared object pattern. Create locks initiator NFT,
-accept executes atomic swap. Cancel only available to initiator.
-```
-```
-
-An agent can emit multiple KNOWLEDGE blocks in a single turn. The daemon parses them and appends each to the ledger with metadata (agent ID, turn number, timestamp).
-
-### The Ledger
-
-The knowledge ledger is a table in `quorum.db`:
-
-| turn | agent | topic | content |
-|------|-------|-------|---------|
-| 2 | architect | escrow-architecture | Escrow uses shared object pattern... |
-| 3 | move-dev | escrow-implementation | 85 lines, 3 entry functions, all tests pass... |
-| 4 | security-reviewer | escrow-security-review | No vulnerabilities found... |
-
-### Scribe Consumption
-
-At the end of a conversation cycle, the leader hands off to a scribe. The scribe receives the full knowledge ledger and produces structured notes — typically Obsidian markdown files written to a configured output directory.
-
-The scribe is a regular agent (`agent_class: analyst`, read-only tools for the project, write access to its notes directory). It reads the ledger, synthesizes findings, and writes notes. The librarian archetype does the same but targets human-facing documentation (READMEs, API docs, changelogs).
+Knowledge accumulates over time as scribe-distilled notes load into future agent invocations.
 
 ---
 
@@ -481,7 +436,7 @@ quorum converse \
   "Audit our fullnode configuration and identify performance bottlenecks"
 ```
 
-The daemon, conversation loop, HANDOFF/KNOWLEDGE parsing, and knowledge ledger work identically. Only the agents change. See `docs/domain-templates.md` for pre-built team compositions.
+The daemon, conversation loop, and HANDOFF parsing work identically. Only the agents change. See `docs/domain-templates.md` for pre-built team compositions.
 
 ### "Window budget exhausted"
 

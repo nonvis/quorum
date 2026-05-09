@@ -99,7 +99,7 @@ daemon -> assembles prompt (vault + task) -> spawns `claude -p` with class-appro
 
 ### Agent Output Rules (Defense-in-Depth)
 
-Analysts must produce structured blocks (VAULT_UPDATE, SUMMARY, HANDOFF, KNOWLEDGE) — never write files directly. Enforced at three layers:
+Analysts must produce structured blocks (VAULT_UPDATE, SUMMARY, HANDOFF) — never write files directly. Enforced at three layers:
 1. **`--disallowedTools`** — hard enforcement for analyst agents
 2. **CONTEXT.md** — per-agent instructions prohibiting file writes
 3. **Context assembler** — injected into every prompt as failsafe
@@ -120,8 +120,8 @@ Each agent owns a vault: `{data_dir}/vaults/{agent_name}/`
 
 ### Knowledge System
 
-- **KNOWLEDGE blocks** — ephemeral per-conversation, stored in `knowledge_ledger` SQLite table
 - **VAULT_UPDATE blocks** — persistent per-agent, written to `knowledge/` directory
+- **Conversation transcripts** — read by scribe at end of cycle (via `claude -p` session resume), distilled into vault notes
 
 ### Conversation Mode (Team Mode)
 
@@ -134,7 +134,7 @@ Each agent owns a vault: `{data_dir}/vaults/{agent_name}/`
 - `TeamPreset` — in `utils/config.h` (id, name, default_path)
 - `ConversationEngine` — header-only in `daemon/conversation.h`. Methods: `start()`, `on_task_complete()`, `respond()`, `resume()`, `close()`, `recover()`
 
-**Database tables:** `conversations`, `tasks` (with conversation_id, session_id), `knowledge_ledger`, `budget_window` (singleton, tracks window spend with auto-reset)
+**Database tables:** `conversations`, `tasks` (with conversation_id, session_id), `budget_window` (singleton, tracks window spend with auto-reset)
 
 ## Key Patterns
 

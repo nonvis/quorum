@@ -16,8 +16,8 @@ Quorum defines **6 archetypes** that determine what an agent can do:
 | **thinker** | 1+ | analyst | Plans, designs, architects |
 | **doer** | 1+ | executor (full tools) | Executes code changes in target repo |
 | **reviewer** | 0+ | analyst | Validates work. Optional. |
-| **scribe** | 0+ | analyst | Consumes knowledge ledger, produces project notes for agents |
-| **librarian** | 0+ | analyst | Consumes knowledge ledger, produces human-facing docs |
+| **scribe** | 0+ | analyst | Consumes the conversation transcript and produces project notes for agents |
+| **librarian** | 0+ | analyst | Consumes the conversation transcript and produces human-facing docs |
 
 Role determines tool access. Doers get executor-class (`claude -p` with full tools). All others are analyst-class (`--disallowedTools "Write,Edit,NotebookEdit"`).
 
@@ -86,25 +86,6 @@ The human only interacts with the leader. When user input is needed, the leader 
 
 ---
 
-## Knowledge Ledger
-
-An **append-only SQLite table** that accumulates observations during a cycle. Replaces the old inbox/VAULT_UPDATE pipeline.
-
-Agents optionally include KNOWLEDGE blocks in their output:
-
-```
-```KNOWLEDGE
-topic: <what this observation is about>
-content: <the observation, insight, or decision>
-```
-```
-
-The ledger grows as agents contribute during a cycle. At the end, scribe(s) consume the full ledger to produce structured notes that feed back into agent vaults.
-
-The ledger is per-cycle. Each cycle starts with a fresh ledger.
-
----
-
 ## Daemon
 
 A **deterministic C++20 process** that orchestrates agent invocations. It has three components:
@@ -163,12 +144,12 @@ Each agent sees the roster and can address HANDOFF blocks to any listed agent by
 
 ## Scribe & Librarian
 
-Two archetypes that consume the knowledge ledger at the end of a cycle. Same mechanism, different audiences:
+Two archetypes that consume the conversation transcript at the end of a cycle. Same mechanism, different audiences:
 
 - **Scribe** — produces structured notes for agent consumption. Output feeds back into agent vaults, building institutional memory over time.
 - **Librarian** — produces human-facing documentation. Output is formatted for the operator or developer to read.
 
-Both are analyst-class (no write access to code). Both read the full knowledge ledger accumulated during the cycle.
+Both are analyst-class (no write access to code). Both read the full conversation transcript via `claude -p` session resume.
 
 The leader typically triggers the scribe as the last step before ending a cycle.
 
@@ -192,6 +173,6 @@ Week 12: CONTEXT.md + 30-50 knowledge files
          Vault: ~50 files, rich institutional memory
 ```
 
-The growth loop: agents produce KNOWLEDGE blocks during cycles, the scribe distills them into vault notes, those notes load into future invocations, producing better output and more nuanced KNOWLEDGE blocks.
+The growth loop: agents work through conversation cycles, the scribe distills each cycle into vault notes, those notes load into future invocations, producing better output over time.
 
 The vault is the agent's institutional memory. An agent with a rich vault produces dramatically better output than a fresh agent, even with the same CONTEXT.md and the same model.

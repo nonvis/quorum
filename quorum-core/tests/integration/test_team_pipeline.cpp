@@ -71,20 +71,6 @@ static void init_schema(sui::quorum::Database& db) {
         ")"
     );
     db.execute(
-        "CREATE TABLE IF NOT EXISTS knowledge_ledger ("
-        "  id           INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  cycle_id     INTEGER NOT NULL REFERENCES conversations(id),"
-        "  agent_id     TEXT NOT NULL,"
-        "  turn_number  INTEGER NOT NULL,"
-        "  topic        TEXT,"
-        "  content      TEXT NOT NULL,"
-        "  created_at   TEXT NOT NULL DEFAULT (datetime('now'))"
-        ")"
-    );
-    db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_knowledge_cycle ON knowledge_ledger(cycle_id)"
-    );
-    db.execute(
         "CREATE TABLE IF NOT EXISTS agent_sessions ("
         "  id          INTEGER PRIMARY KEY AUTOINCREMENT,"
         "  cycle_id    INTEGER NOT NULL REFERENCES conversations(id),"
@@ -384,68 +370,6 @@ static void test_C_human_interaction_mid_flow() {
     check(t3.prompt == "implement in Rust", "C: doer prompt correct");
 }
 
-// ---- Test D: Knowledge ledger accumulation ----------------------------------
-
-static void test_D_knowledge_ledger_accumulation() {
-    std::cout << "\n=== D. Knowledge Ledger Accumulation ===\n\n";
-
-    TestHarness h;
-    auto engine = h.make_engine();
-
-    auto conv_id = engine.start("Build a REST API", 5.0, 20);
-
-    // Leader: KNOWLEDGE + HANDOFF to thinker
-    auto t1 = h.get_pending_task(conv_id);
-    std::string leader_output =
-        "```KNOWLEDGE\n"
-        "topic: goal\n"
-        "content: Building a REST API\n"
-        "```\n"
-        "\n"
-        "```HANDOFF\n"
-        "to: thinker\n"
-        "prompt: plan it\n"
-        "```\n";
-    auto r1 = simulate_turn(h, engine, t1.id, leader_output, 0.10);
-    check(r1.still_active, "D: active after leader");
-
-    // Thinker: KNOWLEDGE + HANDOFF to doer
-    auto t2 = h.get_pending_task(conv_id);
-    std::string thinker_output =
-        "```KNOWLEDGE\n"
-        "topic: architecture\n"
-        "content: Using Express.js with PostgreSQL\n"
-        "```\n"
-        "\n"
-        "```HANDOFF\n"
-        "to: doer\n"
-        "prompt: implement\n"
-        "```\n";
-    auto r2 = simulate_turn(h, engine, t2.id, thinker_output, 0.10);
-    check(r2.still_active, "D: active after thinker");
-
-    // Doer: KNOWLEDGE + HANDOFF to done
-    auto t3 = h.get_pending_task(conv_id);
-    std::string doer_output =
-        "```KNOWLEDGE\n"
-        "topic: implementation\n"
-        "content: Created 3 endpoints, all tests pass\n"
-        "```\n"
-        "\n"
-        "```HANDOFF\n"
-        "to: done\n"
-        "```\n";
-    auto r3 = simulate_turn(h, engine, t3.id, doer_output, 0.10);
-    check(!r3.still_active, "D: not active after done");
-
-    // Verify knowledge ledger
-    check(h.db.count_cycle_knowledge(conv_id) == 3, "D: knowledge count == 3");
-    auto text = h.db.get_cycle_knowledge(conv_id);
-    check(text.find("REST API") != std::string::npos,     "D: contains 'REST API'");
-    check(text.find("Express.js") != std::string::npos,   "D: contains 'Express.js'");
-    check(text.find("3 endpoints") != std::string::npos,  "D: contains '3 endpoints'");
-}
-
 // ---- Test E: Roster appears in task prompts ---------------------------------
 
 static void test_E_roster_in_prompts() {
@@ -586,10 +510,10 @@ static void test_H_max_turns_pause() {
           "H: paused_reason contains 'turns'");
 }
 
-// ---- Test I: Mixed SUMMARY + KNOWLEDGE + HANDOFF in one output --------------
+// ---- Test I: Mixed SUMMARY + HANDOFF in one output --------------------------
 
 static void test_I_mixed_blocks() {
-    std::cout << "\n=== I. Mixed SUMMARY + KNOWLEDGE + HANDOFF ===\n\n";
+    std::cout << "\n=== I. Mixed SUMMARY + HANDOFF ===\n\n";
 
     TestHarness h;
     auto engine = h.make_engine();
@@ -604,11 +528,6 @@ static void test_I_mixed_blocks() {
         "Analyzed the codebase, found 3 issues.\n"
         "```\n"
         "\n"
-        "```KNOWLEDGE\n"
-        "topic: code-quality\n"
-        "content: Found 3 potential memory leaks in the handler module.\n"
-        "```\n"
-        "\n"
         "```HANDOFF\n"
         "to: doer\n"
         "prompt: Fix the 3 memory leaks in handler.cpp\n"
@@ -619,13 +538,8 @@ static void test_I_mixed_blocks() {
     // Verify parsed output
     check(r.parsed.summary == "Analyzed the codebase, found 3 issues.",
           "I: summary correct");
-    check(static_cast<int>(r.parsed.knowledge.size()) == 1,
-          "I: knowledge.size() == 1");
     check(r.parsed.handoff.has_value(), "I: handoff present");
     check(r.parsed.handoff->to == "doer", "I: handoff.to == doer");
-
-    // Verify knowledge written to ledger
-    check(h.db.count_cycle_knowledge(conv_id) == 1, "I: ledger count == 1");
 
     // Verify doer task created with correct prompt
     auto t2 = h.get_pending_task(conv_id);
@@ -680,7 +594,6 @@ int main() {
     test_A_full_default_path_cycle();
     test_B_handoff_override_mid_path();
     test_C_human_interaction_mid_flow();
-    test_D_knowledge_ledger_accumulation();
     test_E_roster_in_prompts();
     test_F_session_ids_consistent();
     test_H_max_turns_pause();

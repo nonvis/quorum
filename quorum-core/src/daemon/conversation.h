@@ -98,12 +98,7 @@ public:
             if (!conv) return false;
         }
 
-        // 4. Append knowledge entries to ledger
-        for (const auto& k : parsed.knowledge) {
-            db_.append_knowledge(conv_id, agent_id, conv->round, k.topic, k.content);
-        }
-
-        // 5. Determine next agent
+        // 4. Determine next agent
         std::string next_agent;
         std::string next_prompt;
         bool is_done = false;
@@ -202,7 +197,7 @@ public:
         auto session_id = db_.get_or_create_session(conv_id, next_agent);
 
         if (next_prompt.empty()) {
-            next_prompt = "Continue the conversation. Review knowledge ledger and decide next steps.";
+            next_prompt = "Continue the conversation. Review prior turns and decide next steps.";
         }
 
         create_task(conv_id, next_agent, "turn", next_prompt, session_id);

@@ -10,7 +10,7 @@ Who interacts with Quorum, and what does the system look like from their perspec
 |-------------|-----|-------------------|
 | **Operator** | Runs the daemon, configures agents, responds to leader | CLI |
 | **Developer** | Defines agents via YAML + CONTEXT.md | Config files + `quorum agent create` |
-| **Agent** (system) | AI role invoked by daemon via `claude -p` | Vault + HANDOFF/KNOWLEDGE protocol |
+| **Agent** (system) | AI role invoked by daemon via `claude -p` | Vault + HANDOFF protocol |
 
 ---
 
@@ -56,7 +56,7 @@ Most of this is generated automatically by `quorum agent create --no-ai`.
 I write CONTEXT.md (who the agent is)
 I write YAML (what role it plays, where its vault lives)
 I optionally write SKILL.md (domain expertise)
-Quorum handles everything else: dispatching, ball-passing, knowledge ledger, budget
+Quorum handles everything else: dispatching, ball-passing, budget
 ```
 
 ### The Generator Shortcut
@@ -76,13 +76,13 @@ The AI role invoked by the daemon. Has no continuity — each invocation is a fr
 ### What It Experiences
 
 ```
-SPAWN → read vault (identity + knowledge) → read task prompt → think → write output (HANDOFF + KNOWLEDGE) → EXIT
+SPAWN → read vault (identity + knowledge) → read task prompt → think → write output (HANDOFF) → EXIT
 ```
 
 ### Its Persistence Mechanisms
 
 Two ways an agent's work survives beyond its invocation:
-1. **KNOWLEDGE blocks** — appended to the cycle's knowledge ledger (SQLite)
+1. **Scribe-distilled vault notes** — written at end of cycle, loaded into future invocations
 2. **Vault writes** (doer only) — direct file changes in the target repo
 
 ### Cross-Agent Coordination

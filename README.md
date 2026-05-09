@@ -11,7 +11,7 @@ A deterministic C++20 daemon that orchestrates AI agents across different projec
 1. **You define agents** — YAML configs + CONTEXT.md files that tell each agent its role and what to look at
 2. **You seed a goal** — `quorum_daemon converse "Analyze adverse selection and propose a fix"`
 3. **The daemon drives the team** — Leader receives the goal, agents pass the ball via HANDOFF blocks. One ball, always moving. Sequential dispatch, fully deterministic.
-4. **Agents accumulate knowledge** — Each turn appends to the knowledge ledger. Scribe(s) consume the ledger at the end and produce vault notes.
+4. **Agents accumulate knowledge** — At the end of each cycle, scribe(s) read the conversation transcript and produce vault notes that load into future invocations.
 
 The daemon is 100% deterministic. No LLM in the control loop. LLMs only run in agent invocations via `claude -p` subprocesses.
 
@@ -28,7 +28,7 @@ Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
     | Agents  |  <- claude -p subprocesses (all LLM here)
     +----+----+
          |
-    SQLite --- task queue, conversations, knowledge ledger
+    SQLite --- task queue, conversations, agent sessions
     Vaults --- CONTEXT.md + knowledge/ per agent (filesystem)
 ```
 
@@ -77,8 +77,8 @@ quorum close --conversation 1
 | **thinker** | Planner. Analyzes problems, proposes approaches, produces structured plans. | Read-only |
 | **doer** | Executor. Implements changes — code, config, files. Full tool access. | Full |
 | **reviewer** | Validator. Reviews doer output for correctness. Optional in team. | Read-only |
-| **scribe** | Knowledge to Obsidian. Consumes knowledge ledger, produces vault notes. | Write (vault only) |
-| **librarian** | Knowledge to human docs. Consumes knowledge ledger, produces documentation. | Write (docs only) |
+| **scribe** | Knowledge to Obsidian. Distills the conversation transcript into vault notes. | Write (vault only) |
+| **librarian** | Knowledge to human docs. Distills the conversation transcript into documentation. | Write (docs only) |
 
 ## Multi-Domain Customization
 

@@ -67,20 +67,6 @@ static void init_schema(sui::quorum::Database& db) {
         ")"
     );
     db.execute(
-        "CREATE TABLE IF NOT EXISTS knowledge_ledger ("
-        "  id           INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  cycle_id     INTEGER NOT NULL REFERENCES conversations(id),"
-        "  agent_id     TEXT NOT NULL,"
-        "  turn_number  INTEGER NOT NULL,"
-        "  topic        TEXT,"
-        "  content      TEXT NOT NULL,"
-        "  created_at   TEXT NOT NULL DEFAULT (datetime('now'))"
-        ")"
-    );
-    db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_knowledge_cycle ON knowledge_ledger(cycle_id)"
-    );
-    db.execute(
         "CREATE TABLE IF NOT EXISTS agent_sessions ("
         "  id          INTEGER PRIMARY KEY AUTOINCREMENT,"
         "  cycle_id    INTEGER NOT NULL REFERENCES conversations(id),"
@@ -472,39 +458,6 @@ static void test_session_resume_within_cycle() {
     check(session_count == 1, "L: exactly one session entry for leader");
 }
 
-// ─── Test M: Knowledge ledger writes ─────────────────────────────────────────
-
-static void test_knowledge_ledger_writes() {
-    std::cout << "\n=== M. Knowledge Ledger Writes ===\n\n";
-
-    TestHarness h;
-    auto engine = h.make_engine();
-
-    auto conv_id = engine.start("Build X", 5.0, 20);
-    auto task1 = h.get_pending_task(conv_id);
-    h.complete_task(task1.id);
-
-    sui::quorum::ParsedOutput parsed;
-    parsed.handoff = sui::quorum::HandoffBlock{.to = "doer", .prompt = "build"};
-    parsed.knowledge.push_back(sui::quorum::KnowledgeBlock{
-        .topic = "architecture", .content = "Decided on microservices"
-    });
-    parsed.knowledge.push_back(sui::quorum::KnowledgeBlock{
-        .topic = "tech-stack", .content = "Using Rust for backend"
-    });
-
-    engine.on_task_complete(task1.id, parsed, 0.10);
-
-    auto count = h.db.count_cycle_knowledge(conv_id);
-    check(count == 2, "M: knowledge_ledger count == 2");
-
-    auto text = h.db.get_cycle_knowledge(conv_id);
-    check(text.find("microservices") != std::string::npos,
-          "M: ledger contains 'microservices'");
-    check(text.find("Rust") != std::string::npos,
-          "M: ledger contains 'Rust'");
-}
-
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -521,7 +474,6 @@ int main() {
     test_unknown_agent_fallback();
     test_max_turns_exceeded();
     test_session_resume_within_cycle();
-    test_knowledge_ledger_writes();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)
               << " tests passed ---\n";

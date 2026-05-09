@@ -101,15 +101,6 @@ target_include_directories(test_session_resume PRIVATE src)
 target_link_libraries(test_session_resume PRIVATE SQLite::SQLite3)
 add_test(NAME test_session_resume COMMAND test_session_resume)
 
-add_executable(test_knowledge_parser tests/unit/test_knowledge_parser.cpp)
-target_include_directories(test_knowledge_parser PRIVATE src)
-add_test(NAME test_knowledge_parser COMMAND test_knowledge_parser)
-
-add_executable(test_knowledge_ledger tests/unit/test_knowledge_ledger.cpp)
-target_include_directories(test_knowledge_ledger PRIVATE src)
-target_link_libraries(test_knowledge_ledger PRIVATE SQLite::SQLite3)
-add_test(NAME test_knowledge_ledger COMMAND test_knowledge_ledger)
-
 add_executable(test_pipeline tests/integration/test_pipeline.cpp)
 target_include_directories(test_pipeline PRIVATE src)
 target_link_libraries(test_pipeline PRIVATE SQLite::SQLite3)

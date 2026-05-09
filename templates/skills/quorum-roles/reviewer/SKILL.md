@@ -53,13 +53,6 @@ to: {doer-agent-id}
 prompt: Revision needed. {Specific issues to fix, with file paths and line numbers.}
 ```
 
-### KNOWLEDGE
-
-```KNOWLEDGE
-topic: {topic-slug}
-content: {Quality observations, patterns noticed, issues found}
-```
-
 ### SUMMARY
 
 ```SUMMARY

@@ -53,10 +53,3 @@ Rules:
 ```SUMMARY
 {1-3 sentences on what you did this turn}
 ```
-
-### KNOWLEDGE — record an observation (optional)
-
-```KNOWLEDGE
-topic: {topic-slug}
-content: {One paragraph — what you observed and why it matters}
-```

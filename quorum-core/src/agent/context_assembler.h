@@ -62,12 +62,6 @@ public:
                       "the ball will return to **" + conv_cfg.leader + "**.\n\n";
         }
 
-        roster += "You may also record knowledge for the team:\n\n";
-        roster += "```KNOWLEDGE\n";
-        roster += "topic: <what this is about>\n";
-        roster += "content: <the observation or decision>\n";
-        roster += "```\n\n";
-
         return roster;
     }
 

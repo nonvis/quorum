@@ -176,26 +176,6 @@ static void test_assemble_without_roster() {
     cleanup_temp(vault_dir);
 }
 
-// --- Test F: Roster includes KNOWLEDGE block instructions -------------------
-
-static void test_roster_knowledge_instructions() {
-    std::cout << "\n=== F. Roster Includes KNOWLEDGE Block Instructions ===\n\n";
-
-    std::vector<sui::quorum::AgentMetadata> agents;
-    agents.push_back(sui::quorum::AgentMetadata{.id = "agent1"});
-
-    sui::quorum::ConversationConfig cfg;
-
-    auto roster = sui::quorum::ContextAssembler::build_roster(agents, "agent1", cfg);
-
-    check(roster.find("```KNOWLEDGE") != std::string::npos,
-          "F: roster contains '```KNOWLEDGE'");
-    check(roster.find("topic:") != std::string::npos,
-          "F: roster contains 'topic:'");
-    check(roster.find("content:") != std::string::npos,
-          "F: roster contains 'content:'");
-}
-
 // --- Test G: Description and role fields parsed from YAML -------------------
 
 static void test_yaml_description_role_parsing() {
@@ -233,7 +213,6 @@ int main() {
     test_build_roster_no_default_path();
     test_assemble_with_roster();
     test_assemble_without_roster();
-    test_roster_knowledge_instructions();
     test_yaml_description_role_parsing();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)

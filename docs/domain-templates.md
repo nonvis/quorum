@@ -14,8 +14,8 @@ Every domain needs at minimum a **leader** and one specialist. The six archetype
 | **thinker** | Plans, designs, strategizes | Read-only | 1+ recommended |
 | **doer** | Writes code, runs commands, produces artifacts | Full tools | 1+ recommended |
 | **reviewer** | Validates work, catches bugs, enforces standards | Read-only | Optional |
-| **scribe** | Consumes knowledge ledger, writes project notes (Obsidian) | Write to notes dir | Optional |
-| **librarian** | Consumes knowledge ledger, writes human-facing docs | Write to docs dir | Optional |
+| **scribe** | Consumes the conversation transcript, writes project notes (Obsidian) | Write to notes dir | Optional |
+| **librarian** | Consumes the conversation transcript, writes human-facing docs | Write to docs dir | Optional |
 
 **The key insight:** Role determines tool access. Specialization determines domain expertise. A `move-dev` doer and a `ts-dev` doer have the same tool permissions — full read/write/execute. What makes them different agents is their CONTEXT.md (role instructions) and SKILL.md (domain knowledge). Same archetype, different skill files, completely different agent.
 
@@ -174,7 +174,7 @@ move-dev (doer)                         ts-dev (doer)
   target_dir: ~/my-move-project           target_dir: ~/my-ts-project
 ```
 
-Both have full tool access (read, write, execute). Both emit KNOWLEDGE blocks. Both receive HANDOFF prompts the same way. The daemon treats them identically — it routes by agent ID, not by what they know.
+Both have full tool access (read, write, execute). Both receive HANDOFF prompts the same way. The daemon treats them identically — it routes by agent ID, not by what they know.
 
 This means adding a new specialization is always the same steps:
 

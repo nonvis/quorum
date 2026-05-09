@@ -66,20 +66,6 @@ static void init_schema(sui::quorum::Database& db) {
         ")"
     );
     db.execute(
-        "CREATE TABLE IF NOT EXISTS knowledge_ledger ("
-        "  id           INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  cycle_id     INTEGER NOT NULL REFERENCES conversations(id),"
-        "  agent_id     TEXT NOT NULL,"
-        "  turn_number  INTEGER NOT NULL,"
-        "  topic        TEXT,"
-        "  content      TEXT NOT NULL,"
-        "  created_at   TEXT NOT NULL DEFAULT (datetime('now'))"
-        ")"
-    );
-    db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_knowledge_cycle ON knowledge_ledger(cycle_id)"
-    );
-    db.execute(
         "CREATE TABLE IF NOT EXISTS agent_sessions ("
         "  id          INTEGER PRIMARY KEY AUTOINCREMENT,"
         "  cycle_id    INTEGER NOT NULL REFERENCES conversations(id),"

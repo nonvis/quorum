@@ -1,7 +1,7 @@
 ---
 name: quorum-librarian
 description: >
-  Quorum librarian agent patterns. Consumes knowledge ledger → external
+  Quorum librarian agent patterns. Consumes the conversation transcript → external
   human-facing docs (READMEs, API docs, changelogs). Executor-class
   (needs file write access).
 user-invocable: false
@@ -111,11 +111,6 @@ Rules:
 - Always HANDOFF to `done` — you are terminal in the pipeline
 - Never HANDOFF to yourself
 - Complete ALL jobs before the HANDOFF
-
-### KNOWLEDGE (optional)
-
-Emit only if a doc decision is worth recording for future librarians
-(e.g. "API doc location moved", "CHANGELOG format changed").
 
 ### SUMMARY
 

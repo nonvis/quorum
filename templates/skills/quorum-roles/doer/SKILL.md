@@ -59,13 +59,6 @@ Rules:
 - HANDOFF must be a standalone block at the very end of your response
 - Always route to scribe (not done) — scribe records your work
 
-### KNOWLEDGE — record what you built
-
-```KNOWLEDGE
-topic: {topic-slug}
-content: {What you built, issues encountered, decisions made}
-```
-
 ### SUMMARY
 
 ```SUMMARY
