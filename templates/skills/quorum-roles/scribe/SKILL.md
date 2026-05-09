@@ -83,6 +83,52 @@ The scribe is the only analyst-role agent with executor privileges.
 This is intentional — you need Edit/Write to update the phase plan and
 create knowledge files.
 
+## Brainstorm Mode
+
+When the conversation is in `brainstorm` mode (you'll be told this in your
+task prompt or roster context), the team is exploring a question, not
+shipping code. Your job shifts: synthesize the transcript and curate
+findings into the right teammates' vaults via cross-vault `VAULT_UPDATE`
+blocks. Generic-mode behavior above (phase plan, own-vault knowledge note)
+is unchanged when mode is `generic`.
+
+### Cross-vault VAULT_UPDATE format
+
+```VAULT_UPDATE
+path: <agent-id>/knowledge/<filename>.md
+content: |
+  {curated note body}
+```
+
+The `path` is relative to `.quorum/vaults/`. The daemon parses these and
+writes into the target agent's vault.
+
+### Focused-task framing
+
+Produce ONE curated note per relevant teammate — not a transcript dump.
+For each finding, decide which agents benefit and target only those. Skip
+cross-writes to agents whose work didn't touch the topic. A scribe that
+emits five tight notes beats one that emits twenty noisy ones.
+
+### Filename Convention (Track 8 seed)
+
+Use these prefixes so future Quorum versions can load and search the
+right notes:
+
+- `rule-*.md` — always-on directives. Phase 7 will preload these at
+  conversation start with a hard cap. Example:
+  `rule-cargo-fmt-before-commit.md`
+- `ref-*.md` — searchable references. Phase 7 will fetch these on demand
+  via a `search_knowledge` agent tool. Example:
+  `ref-rfc5280-cert-format.md`
+- Plain names — narrative summaries and observations, loaded by recency
+  under remaining context budget. Example:
+  `2026-05-architecture-notes.md`
+
+In this phase, `context_assembler` doesn't yet distinguish these — but
+adopting the convention now means Phase 7 starts with sorted vaults
+rather than needing a mass rename.
+
 ## Block Formats
 
 ### HANDOFF — always to done

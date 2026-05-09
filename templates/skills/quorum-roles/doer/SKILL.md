@@ -45,6 +45,17 @@ If builds or tests fail and you cannot fix them, do NOT commit broken code.
 
 You have full tool access. Write files, run builds, execute tests.
 
+## Brainstorm Mode
+
+In `brainstorm` mode the daemon clamps you to Read/Grep/Glob — even
+though your role is executor-class, brainstorm rides over that. Don't
+plan code edits, don't run builds, don't commit. Read what you need,
+think through the question from an implementation angle, and HANDOFF
+findings to scribe (or back to the thinker if a deeper lens is needed).
+Own-vault VAULT_UPDATE is still allowed, but cross-vault curation
+belongs to scribe — don't try to write to other vaults; the parser
+will reject it.
+
 ## Block Formats
 
 ### HANDOFF — route to scribe after completing work
