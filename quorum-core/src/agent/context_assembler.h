@@ -16,6 +16,29 @@ struct ContextBudget {
     size_t max_chars = 200000;  // rough proxy for tokens (~4 chars/token)
 };
 
+// Hard cap on rule files preloaded into the prompt. Total across all scopes —
+// Track 2 (project) and Track 3 (role) will introduce additional scopes that
+// share this single budget. When the rule union exceeds MAX_RULES, oldest are
+// evicted and a transparency note is appended to the prompt.
+constexpr size_t MAX_RULES = 10;
+
+// Filename-based classification of knowledge files. Used by assemble() to
+// decide whether a file is preloaded (rule), search-only (reference, Track 4),
+// or recency-budget-loaded (plain).
+enum class KnowledgeKind {
+    Rule,        // filename starts with "rule-"
+    Reference,   // filename starts with "ref-"
+    Plain,       // anything else
+};
+
+// Pure helper — classify a knowledge filename. Exposed for testability and
+// reused by Tracks 2-4. Does NOT touch the filesystem.
+[[nodiscard]] inline KnowledgeKind classify_knowledge_filename(const std::string& filename) {
+    if (filename.rfind("rule-", 0) == 0) return KnowledgeKind::Rule;
+    if (filename.rfind("ref-", 0) == 0) return KnowledgeKind::Reference;
+    return KnowledgeKind::Plain;
+}
+
 // Assembles context for agent invocation from vault contents + task description.
 // Reads CONTEXT.md (always), then recent knowledge files up to budget.
 class ContextAssembler {
@@ -117,11 +140,57 @@ public:
             }
         }
 
-        // Load knowledge files (most recent first)
+        // Load knowledge files. Phase 7 Track 1: filename-aware loading.
+        //   rule-*.md  → preloaded, sorted by recency, hard-capped at MAX_RULES
+        //   ref-*.md   → NOT preloaded (search-on-demand in Track 4)
+        //   anything else → plain narrative; recency-loaded under remaining budget
+        //
+        // Note: filesystem mtime stands in for createdAt. Once the daemon
+        // tracks createdAt explicitly (Track 5/cache work), swap to that.
         auto knowledge_dir = std::filesystem::path(vault_dir) / "knowledge";
         if (std::filesystem::exists(knowledge_dir) && std::filesystem::is_directory(knowledge_dir)) {
-            auto files = list_files_by_recency(knowledge_dir);
-            for (const auto& f : files) {
+            auto all_files = list_files_by_recency(knowledge_dir);
+
+            std::vector<std::filesystem::path> rules;
+            std::vector<std::filesystem::path> plains;
+            // refs intentionally collected but not loaded — Track 4 search tool.
+            for (auto& f : all_files) {
+                switch (classify_knowledge_filename(f.filename().string())) {
+                    case KnowledgeKind::Rule:      rules.push_back(f); break;
+                    case KnowledgeKind::Reference: /* skip preload */    break;
+                    case KnowledgeKind::Plain:     plains.push_back(f); break;
+                }
+            }
+
+            // Rules first, capped at MAX_RULES. Already sorted recency-DESC by
+            // list_files_by_recency, so truncating the tail evicts oldest.
+            size_t evicted = 0;
+            if (rules.size() > MAX_RULES) {
+                evicted = rules.size() - MAX_RULES;
+                rules.resize(MAX_RULES);
+            }
+            for (const auto& f : rules) {
+                if (files_loaded >= budget.max_files) break;
+                if (prompt.size() >= budget.max_chars) break;
+
+                auto content = read_file(f);
+                if (!content.empty()) {
+                    prompt += "# Knowledge: " + f.filename().string() + "\n\n";
+                    prompt += content;
+                    prompt += "\n\n";
+                    ++files_loaded;
+                }
+            }
+
+            // Transparency note: surface eviction so agents/operators see it.
+            if (evicted > 0) {
+                prompt += "[" + std::to_string(evicted) +
+                         " rules omitted — most-recent " + std::to_string(MAX_RULES) +
+                         " preserved; rename older rules or rotate as needed]\n\n";
+            }
+
+            // Plain narratives use whatever budget remains after rules.
+            for (const auto& f : plains) {
                 if (files_loaded >= budget.max_files) break;
                 if (prompt.size() >= budget.max_chars) break;
 
