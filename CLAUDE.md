@@ -128,10 +128,30 @@ Each agent owns a vault: `{data_dir}/vaults/{agent_name}/`
 - `CONTEXT.md` — agent identity + instructions (auto-generated, or editable via web UI)
 - `knowledge/` — accumulated findings via VAULT_UPDATE blocks
 
-### Knowledge System
+### Knowledge System (filename-typed, 3-scope hierarchy)
 
-- **VAULT_UPDATE blocks** — persistent per-agent, written to `knowledge/` directory
-- **Conversation transcripts** — read by scribe at end of cycle (via `claude -p` session resume), distilled into vault notes
+Knowledge files use filename prefixes to signal handling. The context_assembler treats them differently:
+
+- `rule-*.md` — **always-on directives**. Preloaded into every agent prompt. Hard cap `MAX_RULES = 10` across the scope union; oldest evicted with a `[N rules omitted]` note.
+- `ref-*.md` — **searchable references**. NOT preloaded. The daemon scores them against the agent's task prompt at assembly time (filename matches × 3 + content matches × 1) and surfaces top 5 in a `## Searched References` section. Agents read full content via the existing Read tool.
+- Plain names — narrative summaries. Loaded by recency under remaining budget.
+
+**Scope hierarchy (3 levels):** rules and refs resolve in order — `.quorum/knowledge/` (project) → `.quorum/knowledge/roles/<role>/` (role) → `<vault>/knowledge/` (agent). Most-specific scope wins on identical-content dedup. The MAX_RULES cap operates on the union, sorted by mtime DESC.
+
+**Write paths:**
+- VAULT_UPDATE blocks — agents write to their own vault (`path: knowledge/<file>.md`). Persistent.
+- Brainstorm scribe — gets the one cross-vault exception (Decision #26): in brainstorm mode, scribe can emit VAULT_UPDATE with `path: <other-agent-id>/knowledge/<file>.md` to curate knowledge for the team.
+- Conversation transcripts — read by scribe at end of cycle (via `claude -p` session resume), distilled into vault notes.
+
+### Prompt Cache (Phase 7 Track 5)
+
+`assemble_split()` returns `{system_prompt, user_message}`:
+- **system_prompt** (stable per agent) — CONTEXT.md, SKILL.md, output rules. Passed via `--append-system-prompt-file <tmpfile>` so Anthropic's prefix cache hits across conversations.
+- **user_message** (varies per task) — rules, refs, inbox, roster, task description. Passed via stdin.
+
+`tasks.cache_creation_input_tokens` and `tasks.cache_read_input_tokens` columns track cache metrics. `/api/budget/agents` exposes per-agent cache hit ratios.
+
+Legacy `assemble()` is now a shim that concatenates both halves with `\n---\n\n` for back-compat with non-split callers.
 
 ### Conversation Mode (Team Mode)
 
@@ -144,7 +164,7 @@ Each agent owns a vault: `{data_dir}/vaults/{agent_name}/`
 - `TeamPreset` — in `utils/config.h` (id, name, default_path)
 - `ConversationEngine` — header-only in `daemon/conversation.h`. Methods: `start()`, `on_task_complete()`, `respond()`, `resume()`, `close()`, `recover()`
 
-**Database tables:** `conversations` (with `mode` column — `generic` or `brainstorm`), `tasks` (with conversation_id, session_id), `budget_window` (singleton, tracks window spend with auto-reset)
+**Database tables:** `conversations` (with `mode` column — `generic` or `brainstorm`), `tasks` (with conversation_id, session_id, system_prompt, cache_creation_input_tokens, cache_read_input_tokens), `budget_window` (singleton, tracks window spend with auto-reset)
 
 **Cross-vault writes (brainstorm only):** `VaultManager::apply_all_updates_with_context` validates that cross-vault writes (paths like `<other-agent>/knowledge/rule-X.md`) only happen when (a) the writer is a scribe and (b) the conversation mode is `brainstorm`. Other agents' VAULT_UPDATE blocks remain scoped to their own vault in both modes.
 
