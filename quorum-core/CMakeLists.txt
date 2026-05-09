@@ -208,3 +208,9 @@ add_executable(test_evaluator_pipeline tests/integration/test_evaluator_pipeline
 target_include_directories(test_evaluator_pipeline PRIVATE src)
 target_link_libraries(test_evaluator_pipeline PRIVATE SQLite::SQLite3)
 add_test(NAME test_evaluator_pipeline COMMAND test_evaluator_pipeline)
+
+# Phase 8 Track 5 / Track 6 #28 — rubric override integration test
+add_executable(test_benchmark_runner tests/integration/test_benchmark_runner.cpp)
+target_include_directories(test_benchmark_runner PRIVATE src)
+target_link_libraries(test_benchmark_runner PRIVATE SQLite::SQLite3)
+add_test(NAME test_benchmark_runner COMMAND test_benchmark_runner)

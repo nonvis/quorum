@@ -26,6 +26,7 @@
 #include "vault/vault_manager.h"
 #include "cli/agent_create.h"
 #include "cli/agent_history.h"
+#include "cli/benchmark.h"
 #include "cli/init.h"
 #include "cli/skills.h"
 #include "utils/discover.h"
@@ -133,6 +134,9 @@ static void print_usage(const char* prog) {
               << "  " << prog << " converse --team quick-build \"fix bug\"     Use specific team\n"
               << "  " << prog << " teams                                      List available teams\n"
               << "  " << prog << " skills                                     List available Claude Code skills\n"
+              << "  " << prog << " benchmark --role <r> --task <name>          Run one synthetic benchmark for a role-specialty\n"
+              << "  " << prog << " benchmark --role <r>                        Run all benchmarks for a role-specialty (aggregate)\n"
+              << "  " << prog << " benchmark --role <r> --dry-run              Smoke-test setup; skip the daemon spawn\n"
               << "  " << prog << " status                                    List conversations\n"
               << "  " << prog << " --config <path>                            Start daemon\n"
               << "  " << prog << " --config <path> converse --budget 3.0 \"g\"  Custom budget\n"
@@ -438,6 +442,9 @@ int main(int argc, char* argv[]) {
     sui::quorum::cli::AgentCreateParams agent_params;
     std::string team_name;
     std::string mode_name;
+    std::string bench_role;
+    std::string bench_task;
+    bool bench_dry_run = false;
 
     if (subcommand == "converse") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
@@ -497,6 +504,16 @@ int main(int argc, char* argv[]) {
         // No additional flags needed
     } else if (subcommand == "skills") {
         // No additional flags needed
+    } else if (subcommand == "benchmark") {
+        for (size_t i = 0; i < sub_args.size(); ++i) {
+            if (sub_args[i] == "--role" && i + 1 < sub_args.size()) {
+                bench_role = sub_args[++i];
+            } else if (sub_args[i] == "--task" && i + 1 < sub_args.size()) {
+                bench_task = sub_args[++i];
+            } else if (sub_args[i] == "--dry-run") {
+                bench_dry_run = true;
+            }
+        }
     } else if (!subcommand.empty() && subcommand != "status") {
         std::cerr << "Unknown subcommand: " << subcommand << "\n";
         print_usage(argv[0]);
@@ -506,6 +523,23 @@ int main(int argc, char* argv[]) {
     // Init doesn't need --config -- it creates the config
     if (subcommand == "init") {
         return sui::quorum::cli::init_project();
+    }
+
+    // Benchmark doesn't need --config -- it spawns a child daemon against a
+    // fresh temp project. Set QUORUM_DAEMON_PATH so the spawned child
+    // resolves to *this* binary (otherwise PATH lookup would miss
+    // build/quorum_daemon).
+    if (subcommand == "benchmark") {
+        if (!std::getenv("QUORUM_DAEMON_PATH")) {
+            try {
+                auto self = fs::canonical(fs::path(argv[0]));
+                setenv("QUORUM_DAEMON_PATH", self.string().c_str(), 1);
+            } catch (...) {
+                // best-effort; benchmark.h falls back to PATH lookup
+            }
+        }
+        return sui::quorum::cli::run_benchmark(
+            bench_role, bench_task, bench_dry_run, verbose);
     }
 
     // Teams doesn't need --config -- reads .quorum/teams/ directly

@@ -1,0 +1,10 @@
+[package]
+name = "treasury"
+# Pre-2024 edition; the refactor task is to modernize this.
+edition = "legacy"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+
+[addresses]
+treasury = "0x0"
