@@ -73,6 +73,7 @@ struct ConversationConfig {
     double default_budget_usd = 5.0;
     std::string leader;                // leader agent id (required for team mode)
     std::vector<std::string> default_path;  // optional default routing sequence
+    std::string target_dir = ".";      // project root (for .quorum/current_phase.md lookup)
 };
 
 struct AgentMetadata {
@@ -385,6 +386,11 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
             if (agent.target_dir.empty()) {
                 agent.target_dir = cfg.daemon.target_dir;
             }
+        }
+        // Conversations engine uses target_dir for the phase-plan checkoff
+        // backstop (looks up <target_dir>/.quorum/current_phase.md).
+        if (cfg.conversations.target_dir == ".") {
+            cfg.conversations.target_dir = cfg.daemon.target_dir;
         }
     }
 

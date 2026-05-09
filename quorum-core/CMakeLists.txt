@@ -111,6 +111,11 @@ target_include_directories(test_generic_loop PRIVATE src)
 target_link_libraries(test_generic_loop PRIVATE SQLite::SQLite3)
 add_test(NAME test_generic_loop COMMAND test_generic_loop)
 
+add_executable(test_phase_plan_checkoff tests/unit/test_phase_plan_checkoff.cpp)
+target_include_directories(test_phase_plan_checkoff PRIVATE src)
+target_link_libraries(test_phase_plan_checkoff PRIVATE SQLite::SQLite3)
+add_test(NAME test_phase_plan_checkoff COMMAND test_phase_plan_checkoff)
+
 add_executable(test_team_pipeline tests/integration/test_team_pipeline.cpp)
 target_include_directories(test_team_pipeline PRIVATE src)
 target_link_libraries(test_team_pipeline PRIVATE SQLite::SQLite3)

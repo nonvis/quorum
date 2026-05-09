@@ -41,6 +41,7 @@ inline std::string universal_rules_for_role(const std::string& role) {
     rules += "5. **Always include a SUMMARY block** before your HANDOFF.\n";
     if (role == "scribe") {
         rules += "6. **When done, HANDOFF to done** — always. This signals conversation completion.\n";
+        rules += "7. **Preserve and use the task number.** Your incoming HANDOFF prompt starts with \"Task N:\" — use that N when checking off the phase plan.\n";
     } else if (role == "leader") {
         rules += "6. **When routing, HANDOFF to architect** (or thinker, depending on team config).\n";
         rules += "7. **Include the task number** in your HANDOFF prompt: \"Task N: <description>\".\n";

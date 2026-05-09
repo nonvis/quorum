@@ -1,6 +1,8 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -10,8 +12,26 @@
 #include "storage/database.h"
 #include "agent/output_parser.h"
 #include "agent/context_assembler.h"
+#include "daemon/phase_plan_checkoff.h"
 
 namespace sui::quorum {
+
+// UTC date in YYYY-MM-DD form. Used as the suffix appended when the
+// daemon-side checkoff backstop flips a phase-plan checkbox.
+inline std::string current_date_iso() {
+    auto t = std::chrono::system_clock::to_time_t(
+        std::chrono::system_clock::now());
+    std::tm tm{};
+#ifdef _WIN32
+    gmtime_s(&tm, &t);
+#else
+    gmtime_r(&t, &tm);
+#endif
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
+                  tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+    return std::string(buf);
+}
 
 enum class ConvState { active, waiting_for_human, done, closed, paused };
 
@@ -156,6 +176,16 @@ public:
         // 7. Route: done -> complete; human -> waiting_for_human; budget/turns -> pause
         if (is_done) {
             db_.complete_conversation(conv_id);
+            // Deterministic phase-plan checkoff backstop — silent no-op on
+            // any error so the completion path is never blocked.
+            auto today = current_date_iso();
+            int flipped = checkoff_completed_tasks(
+                db_, conv_id, cfg_.target_dir, today);
+            if (flipped > 0) {
+                std::cout << "[conversation " << conv_id
+                          << "] checkoff: " << flipped
+                          << " plan line(s) updated\n";
+            }
             std::cout << "[conversation " << conv_id << "] done\n";
             return false;
         }

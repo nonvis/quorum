@@ -6,10 +6,14 @@
 // Run:  cd build && cmake .. && make test_team_pipeline && ./test_team_pipeline
 
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
+#include <unistd.h>
 #include <sqlite3.h>
 
 #include "storage/database.h"
@@ -237,27 +241,76 @@ static SimResult simulate_turn(TestHarness& h,
 static void test_A_full_default_path_cycle() {
     std::cout << "\n=== A. Full Default Path Cycle ===\n\n";
 
+    namespace fs = std::filesystem;
+
     TestHarness h;
     h.cfg.default_path = {"leader", "thinker", "doer", "scribe"};
+
+    // Set up tmp project root with a phase plan so the daemon's deterministic
+    // checkoff backstop can flip a checkbox when the cycle completes.
+    auto tdir = fs::temp_directory_path() /
+        ("quorum_test_A_" + std::to_string(::getpid()));
+    fs::remove_all(tdir);
+    fs::create_directories(tdir / ".quorum");
+    auto plan_path = tdir / "phase-1-plan.md";
+    {
+        std::ofstream f(plan_path, std::ios::trunc);
+        f << "# Phase 1\n"
+          << "\n"
+          << "- [ ] Task 1: build it\n";
+    }
+    {
+        std::ofstream f(tdir / ".quorum" / "current_phase.md", std::ios::trunc);
+        f << plan_path.string() << "\n";
+    }
+    h.cfg.target_dir = tdir.string();
+
     auto engine = h.make_engine();
 
     auto conv_id = engine.start("Build a REST API", 5.0, 20);
 
-    // Turn 1: leader (no HANDOFF -> follows default path)
+    // Turn 1: leader HANDOFFs to thinker carrying the "Task 1:" prefix
     auto t1 = h.get_pending_task(conv_id);
-    simulate_turn(h, engine, t1.id, "I analyzed the problem. Looks good.", 0.10);
+    std::string leader_out =
+        "Plan ready.\n"
+        "\n"
+        "```HANDOFF\n"
+        "to: thinker\n"
+        "prompt: Task 1: build it\n"
+        "```\n";
+    simulate_turn(h, engine, t1.id, leader_out, 0.10);
 
-    // Turn 2: thinker
+    // Turn 2: thinker preserves Task 1 prefix
     auto t2 = h.get_pending_task(conv_id);
-    simulate_turn(h, engine, t2.id, "Planning complete. All looks fine.", 0.10);
+    std::string thinker_out =
+        "Plan complete.\n"
+        "\n"
+        "```HANDOFF\n"
+        "to: doer\n"
+        "prompt: Task 1: build it\n"
+        "```\n";
+    simulate_turn(h, engine, t2.id, thinker_out, 0.10);
 
-    // Turn 3: doer
+    // Turn 3: doer preserves Task 1 prefix
     auto t3 = h.get_pending_task(conv_id);
-    simulate_turn(h, engine, t3.id, "Implementation done. Tests pass.", 0.10);
+    std::string doer_out =
+        "Implementation done.\n"
+        "\n"
+        "```HANDOFF\n"
+        "to: scribe\n"
+        "prompt: Task 1: build it\n"
+        "```\n";
+    simulate_turn(h, engine, t3.id, doer_out, 0.10);
 
-    // Turn 4: scribe -> end of path -> done
+    // Turn 4: scribe -> done
     auto t4 = h.get_pending_task(conv_id);
-    simulate_turn(h, engine, t4.id, "Documentation complete.", 0.10);
+    std::string scribe_out =
+        "Documentation complete.\n"
+        "\n"
+        "```HANDOFF\n"
+        "to: done\n"
+        "```\n";
+    simulate_turn(h, engine, t4.id, scribe_out, 0.10);
 
     // Verify task count and order
     check(h.count_all_tasks(conv_id) == 4, "A: 4 tasks total");
@@ -270,8 +323,22 @@ static void test_A_full_default_path_cycle() {
     // Verify final state
     auto conv = h.db.get_conversation(conv_id);
     check(conv->state == "done", "A: final state == done");
-    // start increments to 1, then 3 completions each increment (4th hits done)
     check(conv->round == 4, "A: round == 4");
+
+    // Verify the deterministic checkoff flipped the plan line
+    std::string plan_contents;
+    {
+        std::ifstream f(plan_path);
+        std::ostringstream oss;
+        oss << f.rdbuf();
+        plan_contents = oss.str();
+    }
+    check(plan_contents.find("[x]") != std::string::npos,
+          "A: phase plan now contains [x] (checkoff backstop fired)");
+    check(plan_contents.find("- [x] Task 1: build it") != std::string::npos,
+          "A: Task 1 line is checked");
+
+    fs::remove_all(tdir);
 }
 
 // ---- Test B: HANDOFF override mid-path --------------------------------------
