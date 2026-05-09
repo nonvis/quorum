@@ -102,6 +102,10 @@ daemon -> assembles prompt (vault + task) -> spawns `claude -p` with class-appro
 
 **Per-agent model selection:** Optional `model` field in agent YAML (e.g., `model: sonnet`). When set, adds `--model <value>` to the `claude -p` command. Empty = use claude default.
 
+**Agent archetypes (roles):** `leader`, `thinker`, `doer`, `reviewer`, `evaluator`, `scribe`, `librarian`. All non-doer roles run as `analyst` (read-only); doer runs as `executor`. Reviewer and evaluator are distinct judging roles:
+- **`reviewer`** — judges correctness ("does this work?"). Free-form critique against the task spec.
+- **`evaluator`** — judges specialty quality ("is this *good*?"). Scores doer output against a structured rubric and emits an EVALUATION block (see Quality Framework below).
+
 **Session management** (conversation mode only):
 - First use: `--session-id <uuid>` — Subsequent: `-r <uuid>` (resume)
 - Resume fallback: if `-r` fails, retries with `--session-id` (fresh session)
@@ -143,6 +147,44 @@ Knowledge files use filename prefixes to signal handling. The context_assembler 
 - Brainstorm scribe — gets the one cross-vault exception (Decision #26): in brainstorm mode, scribe can emit VAULT_UPDATE with `path: <other-agent-id>/knowledge/<file>.md` to curate knowledge for the team.
 - Conversation transcripts — read by scribe at end of cycle (via `claude -p` session resume), distilled into vault notes.
 
+### Quality Framework (Phase 8)
+
+Evaluators score doer output against a per-specialty rubric. The framework adds no new top-level daemon component — scoring lives in the standard `output_parser` -> `ConversationEngine` flow, persisted via `Database`.
+
+**Specialty model:** an agent has a `role` (what it does) and a `specialty` (what domain it does it in). The combined `role-specialty` key (e.g., `move-dev`) selects the rubric. Doers carry a specialty in their YAML; evaluators are bound to one specialty and grade only matching doer output.
+
+**Rubric format and storage:**
+- Canonical: `templates/rubrics/<role-specialty>/rubric.md` (committed to repo, single source of truth)
+- Per-project override: `.quorum/rubrics/<role-specialty>/rubric.md` (project-local, takes precedence)
+- Versioned via `rubric_version` field in the rubric front-matter; the version is recorded with every evaluation row.
+
+**EVALUATION block format:** Evaluators emit an EVALUATION block alongside the usual SUMMARY/HANDOFF blocks. `items_json` is a JSON-string field (Track 3 convention — embedded JSON encoded as a string, not a structural block field) so the block parser stays a flat key:value reader.
+
+```
+[EVALUATION]
+rubric: move-dev
+rubric_version: 1
+score_total: 78
+items_json: "[{\"id\":\"safety\",\"score\":4,\"max\":5,\"note\":\"...\"}, ...]"
+notes: free-form evaluator commentary
+[/EVALUATION]
+```
+
+**`evaluations` table columns:** `conversation_id`, `scored_agent_id`, `evaluator_agent_id`, `role_specialty`, `rubric_version`, `score_total`, `score_json`, `notes`, `created_at`. Indexed on `(role_specialty, created_at)` for benchmark trend queries.
+
+**Active specialty — `move-dev`:**
+- Rubric v1: `templates/rubrics/move-dev/rubric.md`
+- Supporting skill: `templates/skills/sui-dev-skills/sui-move/SKILL.md` (rubric and skill share criteria so doers and evaluators agree on the bar)
+
+**Benchmark suite:** `templates/benchmarks/<role-specialty>/<task>/` holds a fixed input + expected-shape spec per task. Run via:
+
+```
+quorum benchmark --role move-dev              # runs all move-dev tasks
+quorum benchmark --role move-dev --task <name>  # single task
+```
+
+Each benchmark run is a synthetic conversation: doer produces output, evaluator scores against the rubric, results land in `evaluations` for trend tracking across rubric/skill iterations.
+
 ### Prompt Cache (Phase 7 Track 5)
 
 `assemble_split()` returns `{system_prompt, user_message}`:
@@ -163,8 +205,10 @@ Legacy `assemble()` is now a shim that concatenates both halves with `\n---\n\n`
 - `ConversationRecord` — in `storage/database.h` (id, goal, state, round, max_rounds, budget_usd, spent_usd, current_agent, path_index, team, **mode**)
 - `TeamPreset` — in `utils/config.h` (id, name, default_path)
 - `ConversationEngine` — header-only in `daemon/conversation.h`. Methods: `start()`, `on_task_complete()`, `respond()`, `resume()`, `close()`, `recover()`
+- `Rubric` / `RubricItem` — in `agent/rubric.h`. Loaded from `templates/rubrics/<role-specialty>/rubric.md` (with `.quorum/rubrics/` override). Used by evaluators and the benchmark runner.
+- `EvaluationBlock` — in `agent/output_parser.h` as a `ParsedOutput` field. Populated when the parser encounters an `[EVALUATION] ... [/EVALUATION]` block; `ConversationEngine` persists it to the `evaluations` table.
 
-**Database tables:** `conversations` (with `mode` column — `generic` or `brainstorm`), `tasks` (with conversation_id, session_id, system_prompt, cache_creation_input_tokens, cache_read_input_tokens), `budget_window` (singleton, tracks window spend with auto-reset)
+**Database tables:** `conversations` (with `mode` column — `generic` or `brainstorm`), `tasks` (with conversation_id, session_id, system_prompt, cache_creation_input_tokens, cache_read_input_tokens), `agent_sessions` (per-agent session_id tracking for `claude -p` resume), `budget_window` (singleton, tracks window spend with auto-reset), `evaluations` (Phase 8: rubric-scored doer output — see Quality Framework)
 
 **Cross-vault writes (brainstorm only):** `VaultManager::apply_all_updates_with_context` validates that cross-vault writes (paths like `<other-agent>/knowledge/rule-X.md`) only happen when (a) the writer is a scribe and (b) the conversation mode is `brainstorm`. Other agents' VAULT_UPDATE blocks remain scoped to their own vault in both modes.
 
@@ -206,7 +250,7 @@ conversations:
 # Analyst (read-only tools)
 id: market_analyst
 name: "Market Analyst"
-role: thinker                    # leader, thinker, doer, reviewer, scribe, librarian
+role: thinker                    # leader, thinker, doer, reviewer, evaluator, scribe, librarian
 agent_class: analyst             # auto-derived from role (doer=executor, all others=analyst)
 description: "Analyzes market structure"
 vault_path: .quorum/vaults/market_analyst/
