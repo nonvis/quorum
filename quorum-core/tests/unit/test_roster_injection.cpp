@@ -82,10 +82,16 @@ static void test_build_roster_3_agents() {
           "A: contains 'records decisions' description");
 }
 
-// --- Test B: Build roster with default_path ---------------------------------
+// --- Test B: Build roster with default_path -- path NOT advertised ----------
+//
+// Phase 8 Track 7 (#31): the roster MUST NOT advertise the daemon's
+// internal `default_path`. Agents misread path entries as HANDOFF targets
+// (Phase 7 manual gate observed an architect routing to "thinker" because
+// "thinker" was in the printed path). The path is internal routing logic
+// only. This test is the inverted form of the original Phase-7-era check.
 
 static void test_build_roster_default_path() {
-    std::cout << "\n=== B. Build Roster with Default Path ===\n\n";
+    std::cout << "\n=== B. Build Roster with Default Path (path NOT advertised) ===\n\n";
 
     std::vector<sui::quorum::AgentMetadata> agents;
     agents.push_back(sui::quorum::AgentMetadata{.id = "leader"});
@@ -94,16 +100,27 @@ static void test_build_roster_default_path() {
 
     sui::quorum::ConversationConfig cfg;
     cfg.default_path = {"leader", "thinker", "doer"};
+    cfg.leader = "leader";
 
     auto roster = sui::quorum::ContextAssembler::build_roster(agents, "leader", cfg);
 
-    check(roster.find("leader -> thinker -> doer -> done") != std::string::npos,
-          "B: contains 'leader -> thinker -> doer -> done'");
-    check(roster.find("default path is configured") != std::string::npos,
-          "B: contains 'default path is configured'");
+    check(roster.find("leader -> thinker -> doer -> done") == std::string::npos,
+          "B: does NOT contain 'leader -> thinker -> doer -> done' (path is internal)");
+    check(roster.find("default path is configured") == std::string::npos,
+          "B: does NOT contain 'default path is configured' (path is internal)");
+    // Useful guidance is still present:
+    check(roster.find("HANDOFF") != std::string::npos,
+          "B: still contains HANDOFF override mechanism");
+    check(roster.find("the ball will return to **leader**") != std::string::npos,
+          "B: still contains leader-fallback guidance");
 }
 
 // --- Test C: Build roster without default_path ------------------------------
+//
+// Phase 8 Track 7 (#31): the no-default-path branch was unified with the
+// general routing message — the agent only needs the HANDOFF block syntax
+// and the leader-fallback guidance, regardless of whether a default path
+// is configured (the path itself is internal and not advertised either way).
 
 static void test_build_roster_no_default_path() {
     std::cout << "\n=== C. Build Roster without Default Path ===\n\n";
@@ -112,12 +129,15 @@ static void test_build_roster_no_default_path() {
     agents.push_back(sui::quorum::AgentMetadata{.id = "leader"});
 
     sui::quorum::ConversationConfig cfg;
+    cfg.leader = "leader";
     // no default_path
 
     auto roster = sui::quorum::ContextAssembler::build_roster(agents, "leader", cfg);
 
-    check(roster.find("You must include a HANDOFF block") != std::string::npos,
-          "C: contains 'You must include a HANDOFF block'");
+    check(roster.find("HANDOFF") != std::string::npos,
+          "C: contains HANDOFF override mechanism");
+    check(roster.find("the ball will return to **leader**") != std::string::npos,
+          "C: contains leader-fallback guidance");
 }
 
 // --- Test D: Assemble with roster (team mode) -------------------------------

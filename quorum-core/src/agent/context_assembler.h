@@ -312,21 +312,14 @@ public:
         }
 
         roster += "\n## Routing\n\n";
-        if (!conv_cfg.default_path.empty()) {
-            roster += "A default path is configured: ";
-            for (size_t i = 0; i < conv_cfg.default_path.size(); ++i) {
-                if (i > 0) roster += " -> ";
-                roster += conv_cfg.default_path[i];
-            }
-            roster += " -> done\n";
-            roster += "You do not need to include a HANDOFF block unless you want "
-                      "to override the default routing.\n\n";
-        } else {
-            roster += "No default path is configured. You must include a HANDOFF "
-                      "block to specify who should go next.\n\n";
-        }
-
-        roster += "To override routing or specify the next agent, output a HANDOFF block:\n\n";
+        // Phase 8 Track 7 (#31): the daemon's `default_path` is internal
+        // routing logic and MUST NOT be advertised to agents. When it was
+        // surfaced (Phase 7), agents misread path entries as legitimate
+        // HANDOFF targets — e.g. an architect routed to "thinker" because
+        // "thinker" appeared in the printed path. Routing is enforced
+        // implicitly by the daemon; the agent only needs to know the
+        // override mechanism (HANDOFF block) and the no-handoff fallback.
+        roster += "If you want to specify the next agent, output a HANDOFF block:\n\n";
         roster += "```HANDOFF\n";
         roster += "to: <agent_id | human | done>\n";
         roster += "prompt: <instructions for the next agent>\n";

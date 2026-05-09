@@ -273,12 +273,26 @@ public:
     // For own-vault writes target_agent == emitting_agent_id (existing
     // behavior). For the scribe-in-brainstorm exception, target_agent is
     // another team member's id.
+    //
+    // Phase 8 Track 7 (#30) — ref auto-promotion to project scope.
+    // When the accepted update is a brainstorm-mode scribe cross-write of
+    // a `ref-*.md` (basename prefix) AND `project_root` is non-empty, the
+    // daemon ALSO copies the same content into
+    // `<project_root>/.quorum/knowledge/<basename>` so the entire team can
+    // search-retrieve it via the project-wide knowledge scope. Behavior
+    // notes:
+    //   - rules (`rule-*.md`) are NOT auto-promoted (deliberately scoped).
+    //   - if a project-scope copy already exists with DIFFERENT content,
+    //     a stderr warning is emitted and the auto-copy is SKIPPED (no
+    //     overwrite). Identical content is a no-op (silently re-written).
+    //   - the auto-copy failure does NOT fail the parent cross-write.
     [[nodiscard]] bool apply_vault_update_with_context(
         std::string_view emitting_agent_id,
         std::string_view emitting_agent_role,
         std::string_view conversation_mode,
         const std::vector<AgentMetadata>& team_agents,
-        const VaultUpdate& update) const
+        const VaultUpdate& update,
+        std::string_view project_root = {}) const
     {
         auto c = classify_vault_path(update.path, emitting_agent_id,
                                      emitting_agent_role, conversation_mode,
@@ -295,24 +309,96 @@ public:
 
         VaultUpdate routed = update;
         routed.path = c.relative_path;
-        return apply_vault_update(c.target_agent, routed);
+        bool ok = apply_vault_update(c.target_agent, routed);
+        if (!ok) return false;
+
+        // Phase 8 Track 7 (#30): auto-promote brainstorm scribe ref cross-writes
+        // to project scope so the team can search them via the project tier.
+        // Conditions: brainstorm mode, scribe role, cross-vault path, and the
+        // basename starts with "ref-". Rules and plain-named notes are NOT
+        // promoted (they're either deliberately scoped or narrative-only).
+        const bool brainstorm_scribe_cross =
+            c.is_cross_vault &&
+            (conversation_mode == "brainstorm") &&
+            (emitting_agent_role == "scribe") &&
+            !project_root.empty();
+        if (brainstorm_scribe_cross) {
+            auto basename = std::filesystem::path(c.relative_path)
+                .filename().string();
+            const bool is_ref =
+                basename.size() > 4 && basename.substr(0, 4) == "ref-";
+            if (is_ref) {
+                auto project_dir = std::filesystem::path(std::string(project_root))
+                    / ".quorum" / "knowledge";
+                auto project_target = project_dir / basename;
+
+                std::error_code ec;
+                std::filesystem::create_directories(project_dir, ec);
+                if (ec) {
+                    std::cerr << "vault_manager: ref auto-promote skipped — "
+                              << "could not create " << project_dir.string()
+                              << ": " << ec.message() << "\n";
+                } else if (std::filesystem::exists(project_target, ec)) {
+                    // If existing content differs, warn and skip (no overwrite).
+                    std::ifstream in(project_target);
+                    std::string existing(
+                        (std::istreambuf_iterator<char>(in)),
+                        std::istreambuf_iterator<char>());
+                    if (existing != update.content) {
+                        std::cerr << "vault_manager: ref auto-promote skipped — "
+                                  << project_target.string()
+                                  << " exists with different content "
+                                  << "(emitting agent: " << emitting_agent_id
+                                  << ", source path: " << update.path << ")\n";
+                    }
+                    // identical content: no-op
+                } else {
+                    std::ofstream out(project_target, std::ios::trunc);
+                    if (!out.is_open()) {
+                        std::cerr << "vault_manager: ref auto-promote failed — "
+                                  << "could not open " << project_target.string()
+                                  << " for write\n";
+                    } else {
+                        out << update.content;
+                        if (!out.good()) {
+                            std::cerr << "vault_manager: ref auto-promote write "
+                                      << "error for " << project_target.string()
+                                      << "\n";
+                        } else {
+                            std::cerr << "vault_manager: ref auto-promoted to "
+                                      << "project scope: " << project_target.string()
+                                      << " (from " << emitting_agent_id
+                                      << "'s cross-write to " << update.path << ")\n";
+                        }
+                    }
+                }
+            }
+        }
+
+        return ok;
     }
 
     // Apply multiple VaultUpdates with conversation context. Returns count of
     // successful writes (rejected updates are skipped, NOT counted).
+    //
+    // `project_root` is optional and only used by the brainstorm-scribe ref
+    // auto-promotion path (#30). Passing an empty string disables promotion
+    // (existing test call sites continue to work unchanged).
     [[nodiscard]] size_t apply_all_updates_with_context(
         std::string_view emitting_agent_id,
         std::string_view emitting_agent_role,
         std::string_view conversation_mode,
         const std::vector<AgentMetadata>& team_agents,
-        const std::vector<VaultUpdate>& updates) const
+        const std::vector<VaultUpdate>& updates,
+        std::string_view project_root = {}) const
     {
         size_t success_count = 0;
         for (const auto& update : updates) {
             if (apply_vault_update_with_context(emitting_agent_id,
                                                 emitting_agent_role,
                                                 conversation_mode,
-                                                team_agents, update)) {
+                                                team_agents, update,
+                                                project_root)) {
                 ++success_count;
             }
         }

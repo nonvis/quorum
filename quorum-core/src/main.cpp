@@ -1018,9 +1018,13 @@ int main(int argc, char* argv[]) {
                 //      path: <agent-id>/inbox/<file>.md)
                 //   - all other (mode × role) combinations: own-vault only
                 if (!parsed.vault_updates.empty()) {
+                    // Phase 8 Track 7 (#30): pass project_root so brainstorm
+                    // scribe ref cross-writes get auto-promoted to project
+                    // scope (.quorum/knowledge/) for team-wide searchability.
                     auto applied = vault_manager.apply_all_updates_with_context(
                         agent_id, emitting_role, task_mode, cfg.agents,
-                        parsed.vault_updates);
+                        parsed.vault_updates,
+                        project_root_str.value_or(""));
                     if (verbose) {
                         std::cout << "[dispatch] task " << task_id
                                   << " — " << applied << "/" << parsed.vault_updates.size()

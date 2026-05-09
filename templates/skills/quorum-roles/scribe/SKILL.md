@@ -92,6 +92,12 @@ findings into the right teammates' vaults via cross-vault `VAULT_UPDATE`
 blocks. Generic-mode behavior above (phase plan, own-vault knowledge note)
 is unchanged when mode is `generic`.
 
+**Only emit cross-vault paths when the conversation mode is `brainstorm`.**
+In generic mode, write only to your own vault (`path: knowledge/<file>.md`).
+The daemon parser rejects cross-vault paths in generic mode; emitting one
+wastes a turn and produces a stderr warning. If you don't see "brainstorm"
+explicitly in your task prompt or roster, assume generic mode.
+
 ### Cross-vault VAULT_UPDATE format
 
 ```VAULT_UPDATE
@@ -102,6 +108,22 @@ content: |
 
 The `path` is relative to `.quorum/vaults/`. The daemon parses these and
 writes into the target agent's vault.
+
+### Ref auto-promotion to project scope
+
+When you cross-write a `ref-*.md` to another agent's vault in brainstorm
+mode, the daemon **also** auto-copies it to project scope
+(`.quorum/knowledge/<filename>`) so the entire team can search-retrieve
+it via the project-wide knowledge scope. You don't need to write to
+project scope explicitly — emit the cross-vault block as usual and the
+daemon handles the promotion.
+
+Rules (`rule-*.md`) are **not** auto-promoted — rules are deliberately
+agent-scoped. If you want a rule to apply team-wide, write it directly
+to project scope yourself in a follow-up note.
+
+If a project-scope copy already exists with different content, the daemon
+logs a stderr warning and skips the auto-copy (no overwrite).
 
 ### Focused-task framing
 
