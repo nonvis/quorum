@@ -144,7 +144,7 @@ cd quorum-web/client && bun install && bun run dev   # http://localhost:3101
 
 ## Status
 
-Phase 5 — Agent Quality + Templates. See [Development Guide](DEVELOPMENT.md) for details.
+Active development. Phase status and roadmap live in the maintainer's private design vault. For build/dev: see [Development Guide](DEVELOPMENT.md). For ops: see [Operator Manual](OPERATOR.md).
 
 ## License
 

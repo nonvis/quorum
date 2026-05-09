@@ -1,18 +1,6 @@
 # Quorum — Development Guide
 
-## Current Status
-
-| Phase | Name | Status |
-|-------|------|--------|
-| 0 | Local Orchestration MVP | Complete (2026-03-06) |
-| 0.5 | mm-bot Observation Mode | Complete (2026-03-07) |
-| 0.7 | Conversation Mode | Complete (2026-03-08) |
-| 1 | Executor Pipeline | Complete (2026-03-11) |
-| 1b | Web Dashboard | Complete (2026-03-11) |
-| 2 | Team Mode | Complete (2026-03-13) |
-| 3 | Project-Local Layout | Complete (2026-03-15) |
-| 4 | Web UI Management | Complete (2026-03-17) |
-| 5 | Agent Quality + Templates | In Progress |
+> **Phase status / roadmap / decisions** live in the maintainer's design vault. This file is the dev-loop reference: build, test, file layout, debugging.
 
 ## Architecture
 

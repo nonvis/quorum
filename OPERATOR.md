@@ -1,8 +1,10 @@
 # Operator Manual — Quorum
 
-Multi-agent orchestration daemon. C++20 daemon spawns `claude -p` subprocesses, manages conversations via team mode (ball-passing), coordinates agents through filesystem vaults and a knowledge ledger.
+Multi-agent orchestration daemon. C++20 daemon spawns `claude -p` subprocesses, manages conversations via ball-passing HANDOFF protocol, coordinates agents through filesystem vaults.
 
-Phase 5: Agent Quality + Templates. Local-first, single machine. No blockchain.
+Local-first, single machine. No blockchain.
+
+> **Phase status, roadmap, and design context** live in the maintainer's design vault. This file is a CLI cheatsheet for running Quorum day to day. For "what is it / how does it work" — see `README.md`.
 
 ## Build
 
@@ -93,7 +95,7 @@ cd quorum-web/client && bun install && bun run dev   # http://localhost:3101
 
 | Location | What |
 |----------|------|
-| `.quorum/quorum.db` | SQLite: task queue, conversations, knowledge ledger |
+| `.quorum/quorum.db` | SQLite: task queue, conversations, agent sessions |
 | `.quorum/vaults/{agent}/` | Agent vaults: CONTEXT.md + knowledge/ |
 | `.quorum/agents/*.yaml` | Agent definitions (role, class, vault paths) |
 | `.quorum/config.yaml` | Project config (daemon settings, budget, conversations) |

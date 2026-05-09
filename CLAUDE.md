@@ -10,7 +10,9 @@ Every conversation runs in one of two **modes**:
 
 Sequential dispatch, HANDOFF protocol, and the agent roster are identical in both modes. Only the write surface differs.
 
-**Current phase: Phase 5 — Agent Quality + Templates.** Pure local orchestration on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) are deferred indefinitely.
+Pure local orchestration on a single MacBook. The daemon spawns `claude -p` (Claude Code CLI in non-interactive mode) as the agent runtime. Web3 layers (Sui, Walrus, Seal) are deferred indefinitely.
+
+> Phase status, roadmap, design decisions, and architectural rationale live in the project's design vault (private to the maintainer). This file documents repo-specific conventions an AI agent needs to write code in this codebase. For "what is Quorum" / "how does it work" / "what's the current phase," ask the maintainer or check the vault.
 
 ## Repo Layout
 
