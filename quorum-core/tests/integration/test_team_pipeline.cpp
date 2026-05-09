@@ -21,6 +21,7 @@
 #include "agent/output_parser.h"
 #include "agent/context_assembler.h"
 #include "utils/config.h"
+#include "vault/vault_manager.h"
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -654,6 +655,409 @@ static void test_J_empty_output() {
     }
 }
 
+// ---- Phase 6 Track 6 — brainstorm e2e helpers ------------------------------
+//
+// Replicates the daemon's main.cpp wiring: after parsing a turn's output,
+// call vault_manager.apply_all_updates_with_context() with the emitting
+// agent's role, the conversation mode, and the team roster. This is the
+// exact path that would run in production, exercised here through the same
+// VaultManager / OutputParser plumbing.
+
+// RAII guard that wipes a temp directory at scope exit so test runs leave
+// no debris in /tmp/ even on early-exit (check() calls std::exit(1) on fail).
+struct TempDirGuard {
+    std::filesystem::path dir;
+    explicit TempDirGuard(std::filesystem::path d) : dir(std::move(d)) {
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+        std::filesystem::create_directories(dir, ec);
+    }
+    ~TempDirGuard() {
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+    }
+    TempDirGuard(const TempDirGuard&) = delete;
+    TempDirGuard& operator=(const TempDirGuard&) = delete;
+};
+
+// Apply vault updates from a parsed turn through VaultManager, mirroring
+// the wiring in src/main.cpp's task-completion handler. The emitting role
+// is resolved from the harness's agent roster.
+static size_t apply_vault_updates_for_turn(
+        TestHarness& h,
+        sui::quorum::VaultManager& vm,
+        const std::string& emitting_agent_id,
+        const std::string& mode,
+        const sui::quorum::ParsedOutput& parsed)
+{
+    if (parsed.vault_updates.empty()) return 0;
+
+    std::string emitting_role;
+    for (const auto& a : h.agents) {
+        if (a.id == emitting_agent_id) {
+            emitting_role = a.role;
+            break;
+        }
+    }
+    return vm.apply_all_updates_with_context(
+        emitting_agent_id, emitting_role, mode, h.agents, parsed.vault_updates);
+}
+
+// ---- Test #19 — End-to-end brainstorm without doer --------------------------
+//
+// Drives leader → thinker → reviewer → scribe → done in brainstorm mode.
+// The scribe emits two cross-vault VAULT_UPDATE blocks (one to thinker's
+// vault, one to reviewer's vault) — the brainstorm-mode scribe exception
+// from Phase 6 Track 3. Asserts files land in the right places, target_dir
+// is unchanged, and no stray files appear outside vaults.
+static void test_brainstorm_e2e() {
+    std::cout << "\n=== #19. Brainstorm E2E (no doer) ===\n\n";
+
+    namespace fs = std::filesystem;
+
+    auto tdir_path = fs::temp_directory_path() /
+        ("quorum_test_brainstorm_e2e_" + std::to_string(::getpid()));
+    TempDirGuard tdir_guard(tdir_path);
+    auto tdir = tdir_guard.dir;
+
+    // Use a roster without doer (#19 is the no-doer case).
+    TestHarness h;
+    h.agents.clear();
+    h.agents.push_back(sui::quorum::AgentMetadata{
+        .id = "leader", .name = "Leader",
+        .description = "Coordinates the team", .role = "leader"
+    });
+    h.agents.push_back(sui::quorum::AgentMetadata{
+        .id = "thinker", .name = "Thinker",
+        .description = "Plans and designs", .role = "thinker"
+    });
+    h.agents.push_back(sui::quorum::AgentMetadata{
+        .id = "reviewer", .name = "Reviewer",
+        .description = "Critiques designs", .role = "reviewer"
+    });
+    h.agents.push_back(sui::quorum::AgentMetadata{
+        .id = "scribe", .name = "Scribe",
+        .description = "Documents findings", .role = "scribe"
+    });
+    h.cfg.target_dir = tdir.string();
+
+    // Initialize vault directories for all four roles. VaultManager creates
+    // vaults under <base>/vaults/<agent_id>/ — anchor the base at the
+    // .quorum/ subdirectory of target_dir so vaults live INSIDE the project
+    // tree (matches the daemon's actual layout).
+    auto vault_base = tdir / ".quorum";
+    fs::create_directories(vault_base);
+    sui::quorum::VaultManager vm(vault_base.string());
+    check(vm.init_vault("leader"),   "#19: init_vault leader");
+    check(vm.init_vault("thinker"),  "#19: init_vault thinker");
+    check(vm.init_vault("reviewer"), "#19: init_vault reviewer");
+    check(vm.init_vault("scribe"),   "#19: init_vault scribe");
+
+    // Drop a fake project file at the root and remember its bytes — the
+    // post-cycle assertion uses byte equality as a "git diff is empty" proxy
+    // (no need for an actual git repo).
+    auto sample_path = tdir / "sample.txt";
+    const std::string sample_original = "fake project source — do not touch\n";
+    {
+        std::ofstream f(sample_path, std::ios::trunc);
+        f << sample_original;
+    }
+
+    auto engine = h.make_engine();
+    auto conv_id = engine.start("Explore caching options",
+                                /*budget=*/5.0, /*max_rounds=*/20,
+                                /*team=*/"default", /*mode=*/"brainstorm");
+
+    // Turn 1: leader → thinker
+    auto t1 = h.get_pending_task(conv_id);
+    check(t1.agent == "leader", "#19: turn 1 == leader");
+    auto r1 = simulate_turn(h, engine, t1.id,
+        "Kicking off brainstorm.\n"
+        "\n"
+        "```HANDOFF\n"
+        "to: thinker\n"
+        "prompt: brainstorm caching tradeoffs\n"
+        "```\n", 0.05);
+    apply_vault_updates_for_turn(h, vm, "leader", "brainstorm", r1.parsed);
+
+    // Turn 2: thinker → reviewer (analytical lens)
+    auto t2 = h.get_pending_task(conv_id);
+    check(t2.agent == "thinker", "#19: turn 2 == thinker");
+    auto r2 = simulate_turn(h, engine, t2.id,
+        "TTL vs LRU; cache stampede risk noted.\n"
+        "\n"
+        "```HANDOFF\n"
+        "to: reviewer\n"
+        "prompt: critique the caching options\n"
+        "```\n", 0.05);
+    apply_vault_updates_for_turn(h, vm, "thinker", "brainstorm", r2.parsed);
+
+    // Turn 3: reviewer → scribe
+    auto t3 = h.get_pending_task(conv_id);
+    check(t3.agent == "reviewer", "#19: turn 3 == reviewer");
+    auto r3 = simulate_turn(h, engine, t3.id,
+        "LRU wins for read-heavy workloads; TTL for write-heavy.\n"
+        "\n"
+        "```HANDOFF\n"
+        "to: scribe\n"
+        "prompt: synthesize and curate the team's findings\n"
+        "```\n", 0.05);
+    apply_vault_updates_for_turn(h, vm, "reviewer", "brainstorm", r3.parsed);
+
+    // Turn 4: scribe emits TWO cross-vault VAULT_UPDATE blocks (one each to
+    // thinker and reviewer) plus HANDOFF to done.
+    auto t4 = h.get_pending_task(conv_id);
+    check(t4.agent == "scribe", "#19: turn 4 == scribe");
+    std::string scribe_out =
+        "Curating team findings.\n"
+        "\n"
+        "```VAULT_UPDATE\n"
+        "path: thinker/knowledge/rule-cache-strategy.md\n"
+        "content: |\n"
+        "  Always cache reads, never cache writes\n"
+        "```\n"
+        "\n"
+        "```VAULT_UPDATE\n"
+        "path: reviewer/knowledge/ref-cache-tradeoffs.md\n"
+        "content: |\n"
+        "  TTL vs LRU comparison: ...\n"
+        "```\n"
+        "\n"
+        "```HANDOFF\n"
+        "to: done\n"
+        "```\n";
+    auto r4 = simulate_turn(h, engine, t4.id, scribe_out, 0.05);
+    auto applied = apply_vault_updates_for_turn(
+        h, vm, "scribe", "brainstorm", r4.parsed);
+    check(applied == 2, "#19: scribe applied 2 cross-vault updates");
+
+    // ── Assertions ───────────────────────────────────────────────────────────
+
+    // A19a: conversation reached state="done"
+    auto conv = h.db.get_conversation(conv_id);
+    check(conv->state == "done", "#19 A19a: conversation state == done");
+
+    // A19b: thinker file exists with expected content
+    auto thinker_file = vault_base / "vaults" / "thinker" /
+                        "knowledge" / "rule-cache-strategy.md";
+    check(fs::exists(thinker_file),
+          "#19 A19b: thinker/knowledge/rule-cache-strategy.md exists");
+    {
+        std::ifstream in(thinker_file);
+        std::string body{std::istreambuf_iterator<char>(in),
+                         std::istreambuf_iterator<char>()};
+        check(body.find("Always cache reads, never cache writes") != std::string::npos,
+              "#19 A19b: thinker file contains expected content");
+    }
+
+    // A19c: reviewer file exists with expected content
+    auto reviewer_file = vault_base / "vaults" / "reviewer" /
+                         "knowledge" / "ref-cache-tradeoffs.md";
+    check(fs::exists(reviewer_file),
+          "#19 A19c: reviewer/knowledge/ref-cache-tradeoffs.md exists");
+    {
+        std::ifstream in(reviewer_file);
+        std::string body{std::istreambuf_iterator<char>(in),
+                         std::istreambuf_iterator<char>()};
+        check(body.find("TTL vs LRU comparison") != std::string::npos,
+              "#19 A19c: reviewer file contains expected content");
+    }
+
+    // A19d: target_dir/sample.txt is byte-identical to original
+    {
+        std::ifstream in(sample_path);
+        std::string body{std::istreambuf_iterator<char>(in),
+                         std::istreambuf_iterator<char>()};
+        check(body == sample_original,
+              "#19 A19d: target_dir/sample.txt unchanged (git-diff-empty proxy)");
+    }
+
+    // A19e: only sample.txt and .quorum/ exist directly under target_dir
+    {
+        std::vector<std::string> entries;
+        for (const auto& e : fs::directory_iterator(tdir)) {
+            entries.push_back(e.path().filename().string());
+        }
+        std::sort(entries.begin(), entries.end());
+        check(entries.size() == 2,
+              "#19 A19e: target_dir has exactly 2 top-level entries");
+        check(entries.size() == 2 &&
+              entries[0] == ".quorum" && entries[1] == "sample.txt",
+              "#19 A19e: target_dir contents are { .quorum, sample.txt }");
+    }
+
+    // A19f: scribe's own vault knowledge dir may be empty or not — don't
+    // assert. (Scribe didn't emit own-vault writes in this test; skip check.)
+}
+
+// ---- Test #20 — Brainstorm with doer in team (sandboxing verification) ------
+//
+// The doer's simulated output attempts a cross-vault VAULT_UPDATE — this
+// must be rejected by the classifier (cross-write is scribe-only, even in
+// brainstorm). The scribe's later cross-write must still land normally.
+//
+// Tool-flag verification (doer-in-brainstorm gets --allowedTools Read,Grep,
+// Glob) is covered by test_invoker_mode.cpp Cycle 2. This test guards the
+// integration-level guarantee: even if a doer attempts a cross-write, the
+// parser/writer rejects it.
+static void test_brainstorm_with_doer() {
+    std::cout << "\n=== #20. Brainstorm E2E with doer ===\n\n";
+
+    namespace fs = std::filesystem;
+
+    auto tdir_path = fs::temp_directory_path() /
+        ("quorum_test_brainstorm_doer_" + std::to_string(::getpid()));
+    TempDirGuard tdir_guard(tdir_path);
+    auto tdir = tdir_guard.dir;
+
+    TestHarness h;
+    h.agents.clear();
+    h.agents.push_back(sui::quorum::AgentMetadata{
+        .id = "leader", .name = "Leader",
+        .description = "Coordinates the team", .role = "leader"
+    });
+    h.agents.push_back(sui::quorum::AgentMetadata{
+        .id = "thinker", .name = "Thinker",
+        .description = "Plans and designs", .role = "thinker"
+    });
+    sui::quorum::AgentMetadata doer;
+    doer.id = "doer";
+    doer.name = "Doer";
+    doer.description = "Implements solutions";
+    doer.role = "doer";
+    doer.agent_class = "executor";  // explicit — matches partner production roster
+    h.agents.push_back(std::move(doer));
+    h.agents.push_back(sui::quorum::AgentMetadata{
+        .id = "scribe", .name = "Scribe",
+        .description = "Documents findings", .role = "scribe"
+    });
+    h.cfg.target_dir = tdir.string();
+
+    auto vault_base = tdir / ".quorum";
+    fs::create_directories(vault_base);
+    sui::quorum::VaultManager vm(vault_base.string());
+    check(vm.init_vault("leader"),  "#20: init_vault leader");
+    check(vm.init_vault("thinker"), "#20: init_vault thinker");
+    check(vm.init_vault("doer"),    "#20: init_vault doer");
+    check(vm.init_vault("scribe"),  "#20: init_vault scribe");
+
+    auto sample_path = tdir / "sample.txt";
+    const std::string sample_original = "fake project source — do not touch\n";
+    {
+        std::ofstream f(sample_path, std::ios::trunc);
+        f << sample_original;
+    }
+
+    auto engine = h.make_engine();
+    auto conv_id = engine.start("Explore options for X",
+                                /*budget=*/5.0, /*max_rounds=*/20,
+                                /*team=*/"default", /*mode=*/"brainstorm");
+
+    // Turn 1: leader → thinker
+    auto t1 = h.get_pending_task(conv_id);
+    check(t1.agent == "leader", "#20: turn 1 == leader");
+    auto r1 = simulate_turn(h, engine, t1.id,
+        "```HANDOFF\n"
+        "to: thinker\n"
+        "prompt: explore from a thinking angle\n"
+        "```\n", 0.05);
+    apply_vault_updates_for_turn(h, vm, "leader", "brainstorm", r1.parsed);
+
+    // Turn 2: thinker → doer (mimicking "doer, weigh in from impl angle")
+    auto t2 = h.get_pending_task(conv_id);
+    check(t2.agent == "thinker", "#20: turn 2 == thinker");
+    auto r2 = simulate_turn(h, engine, t2.id,
+        "```HANDOFF\n"
+        "to: doer\n"
+        "prompt: weigh in from an implementation angle\n"
+        "```\n", 0.05);
+    apply_vault_updates_for_turn(h, vm, "thinker", "brainstorm", r2.parsed);
+
+    // Turn 3: doer attempts a cross-vault VAULT_UPDATE — must be REJECTED.
+    auto t3 = h.get_pending_task(conv_id);
+    check(t3.agent == "doer", "#20: turn 3 == doer");
+    std::string doer_out =
+        "Implementation perspective.\n"
+        "\n"
+        "```VAULT_UPDATE\n"
+        "path: thinker/knowledge/cross-write-attempt.md\n"
+        "content: |\n"
+        "  doer should not be able to write here\n"
+        "```\n"
+        "\n"
+        "```HANDOFF\n"
+        "to: scribe\n"
+        "prompt: synthesize the team's findings\n"
+        "```\n";
+    auto r3 = simulate_turn(h, engine, t3.id, doer_out, 0.05);
+    auto doer_applied = apply_vault_updates_for_turn(
+        h, vm, "doer", "brainstorm", r3.parsed);
+    check(doer_applied == 0,
+          "#20: doer cross-write rejected at apply time (0/1 applied)");
+
+    // Turn 4: scribe → done with allowed cross-write
+    auto t4 = h.get_pending_task(conv_id);
+    check(t4.agent == "scribe", "#20: turn 4 == scribe");
+    std::string scribe_out =
+        "Curating findings.\n"
+        "\n"
+        "```VAULT_UPDATE\n"
+        "path: thinker/knowledge/synthesis.md\n"
+        "content: |\n"
+        "  Synthesized findings from the brainstorm\n"
+        "```\n"
+        "\n"
+        "```HANDOFF\n"
+        "to: done\n"
+        "```\n";
+    auto r4 = simulate_turn(h, engine, t4.id, scribe_out, 0.05);
+    auto scribe_applied = apply_vault_updates_for_turn(
+        h, vm, "scribe", "brainstorm", r4.parsed);
+    check(scribe_applied == 1,
+          "#20: scribe cross-write accepted (1/1 applied)");
+
+    // ── Assertions ───────────────────────────────────────────────────────────
+
+    // A20a: conversation reached state="done"
+    auto conv = h.db.get_conversation(conv_id);
+    check(conv->state == "done", "#20 A20a: conversation state == done");
+
+    // A20b: doer's cross-write attempt did NOT land
+    auto blocked = vault_base / "vaults" / "thinker" /
+                   "knowledge" / "cross-write-attempt.md";
+    check(!fs::exists(blocked),
+          "#20 A20b: doer's cross-write rejected — no file in thinker vault");
+
+    // A20c: scribe's cross-write DID land
+    auto scribe_landed = vault_base / "vaults" / "thinker" /
+                         "knowledge" / "synthesis.md";
+    check(fs::exists(scribe_landed),
+          "#20 A20c: scribe's cross-write landed in thinker vault");
+
+    // A20d: target_dir/sample.txt unchanged
+    {
+        std::ifstream in(sample_path);
+        std::string body{std::istreambuf_iterator<char>(in),
+                         std::istreambuf_iterator<char>()};
+        check(body == sample_original,
+              "#20 A20d: target_dir/sample.txt unchanged");
+    }
+
+    // A20e: only sample.txt and .quorum/ exist directly under target_dir
+    {
+        std::vector<std::string> entries;
+        for (const auto& e : fs::directory_iterator(tdir)) {
+            entries.push_back(e.path().filename().string());
+        }
+        std::sort(entries.begin(), entries.end());
+        check(entries.size() == 2,
+              "#20 A20e: target_dir has exactly 2 top-level entries");
+        check(entries.size() == 2 &&
+              entries[0] == ".quorum" && entries[1] == "sample.txt",
+              "#20 A20e: target_dir contents are { .quorum, sample.txt }");
+    }
+}
+
 // ---- main -------------------------------------------------------------------
 
 int main() {
@@ -667,6 +1071,8 @@ int main() {
     test_H_max_turns_pause();
     test_I_mixed_blocks();
     test_J_empty_output();
+    test_brainstorm_e2e();
+    test_brainstorm_with_doer();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)
               << " tests passed ---\n";
