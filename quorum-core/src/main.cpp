@@ -863,7 +863,23 @@ int main(int argc, char* argv[]) {
                 break;
             }
         }
-        auto result = invoker.invoke(task_id, task_agent_meta);
+
+        // Resolve conversation mode for this task (Phase 6 Track 2). If the
+        // task belongs to a conversation, pull its mode from the DB so the
+        // invoker can sandbox tools when mode == "brainstorm". Tasks not
+        // attached to a conversation default to "generic".
+        std::string task_mode = "generic";
+        {
+            auto conv_id_opt = db.get_conversation_for_task(task_id);
+            if (conv_id_opt) {
+                auto conv = db.get_conversation(*conv_id_opt);
+                if (conv && !conv->mode.empty()) {
+                    task_mode = conv->mode;
+                }
+            }
+        }
+
+        auto result = invoker.invoke(task_id, task_agent_meta, task_mode);
 
         if (verbose) {
             if (result.success) {

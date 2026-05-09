@@ -42,8 +42,43 @@ public:
         return std::nullopt;  // valid
     }
 
+    // Pure helper: build the tool-related claude -p flags based on the agent's
+    // class AND the conversation mode.
+    //
+    // Mode override semantics (Phase 6 Track 2):
+    //   - mode == "brainstorm" forces a read-only tool surface
+    //     (--allowedTools "Read,Grep,Glob" + --disallowedTools "Edit,Write,Bash,NotebookEdit")
+    //     for EVERY agent in the conversation, regardless of agent_class.
+    //     This is intentional: a doer with agent_class: executor should NOT be
+    //     able to mutate the project while the conversation is in brainstorm.
+    //   - mode == "generic" (or anything unrecognized) preserves the original
+    //     behavior: executor agents get full tools, all other classes get
+    //     --disallowedTools "Write,Edit,NotebookEdit".
+    //
+    // Returns the leading-space-prefixed flag segment that gets concatenated
+    // into the shell command. Extracted as a static pure function so it can
+    // be unit-tested without spawning a subprocess.
+    [[nodiscard]] static std::string build_tool_flags(
+        const std::string& agent_class, const std::string& mode) {
+        if (mode == "brainstorm") {
+            // Hard read-only surface; overrides agent_class.
+            return std::string(" --allowedTools \"Read,Grep,Glob\"")
+                + " --disallowedTools \"Edit,Write,Bash,NotebookEdit\"";
+        }
+        // Generic / unrecognized mode → original behavior.
+        if (agent_class != "executor") {
+            return " --disallowedTools \"Write,Edit,NotebookEdit\"";
+        }
+        return "";  // executor in generic mode: no tool restrictions
+    }
+
     // Invoke a task by id. Reads prompt from DB, spawns claude -p, writes result back.
-    [[nodiscard]] InvocationResult invoke(int64_t task_id, const AgentMetadata& agent_meta) {
+    //
+    // `mode` is the conversation execution mode ("generic" or "brainstorm").
+    // For non-conversation tasks (operator-seeded queue tasks) callers can leave
+    // it at the default; behavior matches pre-Phase-6 invoker.
+    [[nodiscard]] InvocationResult invoke(int64_t task_id, const AgentMetadata& agent_meta,
+                                          const std::string& mode = "generic") {
         // Read prompt from tasks table
         std::string prompt;
         std::string agent;
@@ -117,11 +152,11 @@ public:
 
         // Build command: read prompt from file, pipe to claude -p
         // env -u CLAUDECODE prevents nesting detection when daemon runs inside a Claude Code session
-        // Executor agents get full tool access; all others are read-only
-        std::string disallowed_tools_flag;
-        if (agent_meta.agent_class != "executor") {
-            disallowed_tools_flag = " --disallowedTools \"Write,Edit,NotebookEdit\"";
-        }
+        //
+        // Tool surface is determined by build_tool_flags(agent_class, mode):
+        //   - generic mode: executor → full tools; others → read-only
+        //   - brainstorm mode: ALL agents → read-only (overrides agent_class)
+        std::string tool_flags = build_tool_flags(agent_meta.agent_class, mode);
 
         std::string model_flag;
         if (!agent_meta.model.empty()) {
@@ -141,7 +176,7 @@ public:
 
         auto cmd = cwd_prefix + "env -u CLAUDECODE cat " + temp_path
             + " | claude -p --dangerously-skip-permissions"
-            + disallowed_tools_flag
+            + tool_flags
             + model_flag
             + session_flag
             + " --output-format json 2>&1";
@@ -176,7 +211,7 @@ public:
                 // Retry without -r, with --session-id for fresh session
                 auto retry_cmd = cwd_prefix + "env -u CLAUDECODE cat " + temp_path
                     + " | claude -p --dangerously-skip-permissions"
-                    + disallowed_tools_flag
+                    + tool_flags
                     + model_flag
                     + " --session-id " + task_session_id
                     + " --output-format json 2>&1";

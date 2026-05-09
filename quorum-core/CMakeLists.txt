@@ -87,6 +87,10 @@ add_executable(test_invoker tests/unit/test_invoker.cpp)
 target_include_directories(test_invoker PRIVATE src)
 add_test(NAME test_invoker COMMAND test_invoker)
 
+add_executable(test_invoker_mode tests/unit/test_invoker_mode.cpp)
+target_include_directories(test_invoker_mode PRIVATE src)
+add_test(NAME test_invoker_mode COMMAND test_invoker_mode)
+
 add_executable(test_inbox_writer tests/unit/test_inbox_writer.cpp)
 target_include_directories(test_inbox_writer PRIVATE src)
 add_test(NAME test_inbox_writer COMMAND test_inbox_writer)
