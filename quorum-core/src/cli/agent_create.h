@@ -51,6 +51,10 @@ inline std::string universal_rules_for_role(const std::string& role) {
         rules += "6. **When done, HANDOFF to the doer** specified in your routing instructions.\n";
         rules += "7. **Do NOT start the next task** — only do the one you were given.\n";
         rules += "8. **Preserve the task number.** Your HANDOFF prompt must start with the same \"Task N:\" prefix you received.\n";
+    } else if (role == "evaluator") {
+        rules += "6. **When done, HANDOFF to scribe** — or to done if no scribe in team.\n";
+        rules += "7. **Do NOT modify the work being evaluated.** You are read-only by design.\n";
+        rules += "8. **Preserve and use the task number.** Your incoming HANDOFF prompt starts with \"Task N:\" — use that N when referencing what you scored.\n";
     } else {
         rules += "6. **When done, HANDOFF to scribe** — always. Do NOT hand off to leader or architect.\n";
         rules += "7. **Do NOT start the next task** — only do the one you were given.\n";
@@ -219,13 +223,13 @@ inline std::string generate_context_md(
 inline int create_agent(const AgentCreateParams& p) {
     // 1. Validate role
     static const std::vector<std::string> valid_roles = {
-        "leader", "thinker", "doer", "reviewer", "scribe", "librarian"
+        "leader", "thinker", "doer", "reviewer", "scribe", "librarian", "evaluator"
     };
     bool role_valid = false;
     for (const auto& r : valid_roles) if (r == p.role) { role_valid = true; break; }
     if (!role_valid) {
         std::cerr << "ERROR: invalid role '" << p.role << "'. "
-                  << "Valid: leader, thinker, doer, reviewer, scribe, librarian\n";
+                  << "Valid: leader, thinker, doer, reviewer, scribe, librarian, evaluator\n";
         return 1;
     }
 
@@ -364,13 +368,13 @@ inline int modify_agent(const AgentCreateParams& overrides) {
     if (!overrides.role.empty() && overrides.role != existing->role) {
         // Validate role
         static const std::vector<std::string> valid_roles = {
-            "leader", "thinker", "doer", "reviewer", "scribe", "librarian"
+            "leader", "thinker", "doer", "reviewer", "scribe", "librarian", "evaluator"
         };
         bool role_valid = false;
         for (const auto& r : valid_roles) if (r == overrides.role) { role_valid = true; break; }
         if (!role_valid) {
             std::cerr << "ERROR: invalid role '" << overrides.role << "'. "
-                      << "Valid: leader, thinker, doer, reviewer, scribe, librarian\n";
+                      << "Valid: leader, thinker, doer, reviewer, scribe, librarian, evaluator\n";
             return 1;
         }
         existing->role = overrides.role;

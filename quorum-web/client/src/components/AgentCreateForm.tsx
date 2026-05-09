@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createAgent } from "../api";
 
-const ROLES = ["leader", "thinker", "doer", "reviewer", "scribe", "librarian"] as const;
+const ROLES = ["leader", "thinker", "doer", "reviewer", "scribe", "librarian", "evaluator"] as const;
 
 const ROLE_COLORS: Record<string, { active: string; inactive: string }> = {
   leader:    { active: "bg-purple-600 text-white", inactive: "bg-zinc-800 text-purple-400 hover:bg-zinc-700" },
@@ -10,6 +10,7 @@ const ROLE_COLORS: Record<string, { active: string; inactive: string }> = {
   reviewer:  { active: "bg-yellow-600 text-white", inactive: "bg-zinc-800 text-yellow-400 hover:bg-zinc-700" },
   scribe:    { active: "bg-cyan-600 text-white",   inactive: "bg-zinc-800 text-cyan-400 hover:bg-zinc-700" },
   librarian: { active: "bg-pink-600 text-white",   inactive: "bg-zinc-800 text-pink-400 hover:bg-zinc-700" },
+  evaluator: { active: "bg-indigo-600 text-white", inactive: "bg-zinc-800 text-indigo-400 hover:bg-zinc-700" },
 };
 
 export function AgentCreateForm({ onCreated }: { onCreated: () => void }) {

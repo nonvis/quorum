@@ -231,6 +231,105 @@ static void test_skill_file_in_yaml() {
     cleanup_temp(tmp);
 }
 
+// --- Test G: Evaluator role end-to-end (Phase 8 Track 6 #25) ----------------
+
+static void test_evaluator_role_create() {
+    std::cout << "\n=== G. Evaluator role end-to-end ===\n\n";
+
+    auto tmp = make_temp_dir();
+    auto data_dir = tmp + "/data";
+
+    auto original_cwd = fs::current_path();
+    fs::current_path(tmp);
+
+    sui::quorum::cli::AgentCreateParams p;
+    p.role = "evaluator";
+    p.name = "eval";
+    p.project = "test-proj";
+    p.data_dir = data_dir;
+    p.no_ai = true;
+
+    int rc = sui::quorum::cli::create_agent(p);
+
+    check(rc == 0, "G: create_agent returns 0 for evaluator role");
+    check(fs::exists("configs/agents/test-proj/eval.yaml"),
+          "G: eval.yaml is created");
+    check(fs::exists(data_dir + "/vaults/eval"),
+          "G: vault directory is created");
+    check(fs::exists(data_dir + "/vaults/eval/CONTEXT.md"),
+          "G: CONTEXT.md is generated");
+
+    auto yaml = read_file("configs/agents/test-proj/eval.yaml");
+    check(yaml.find("role: evaluator") != std::string::npos,
+          "G: YAML contains 'role: evaluator'");
+    check(yaml.find("executor:") == std::string::npos,
+          "G: YAML does NOT contain 'executor:' (evaluator is analyst-class)");
+
+    fs::current_path(original_cwd);
+    cleanup_temp(tmp);
+}
+
+// --- Test H: universal_rules_for_role("evaluator") returns correct rules ----
+
+static void test_evaluator_universal_rules() {
+    std::cout << "\n=== H. universal_rules_for_role(evaluator) ===\n\n";
+
+    auto rules = sui::quorum::cli::universal_rules_for_role("evaluator");
+
+    check(rules.find("HANDOFF to scribe") != std::string::npos,
+          "H: rules contain 'HANDOFF to scribe'");
+    check(rules.find("Do NOT modify") != std::string::npos,
+          "H: rules contain 'Do NOT modify'");
+    check(rules.find("Preserve and use the task number") != std::string::npos,
+          "H: rules contain 'Preserve and use the task number'");
+    // Universal rule #9 about self-contained HANDOFF prompts is present
+    check(rules.find("self-contained") != std::string::npos,
+          "H: rules contain 'self-contained' (universal rule #9)");
+}
+
+// --- Test I: evaluator SKILL.md exists at the expected source path ----------
+
+static void test_evaluator_skill_source_exists() {
+    std::cout << "\n=== I. evaluator/SKILL.md exists in templates ===\n\n";
+
+    // We resolve relative to the repo root via the test binary's known
+    // location. CTest runs from build/, so templates/ is at ../templates.
+    // We probe a few candidate locations to be tolerant of test invocation.
+    std::vector<std::string> candidates = {
+        "templates/skills/quorum-roles/evaluator/SKILL.md",
+        "../templates/skills/quorum-roles/evaluator/SKILL.md",
+        "../../templates/skills/quorum-roles/evaluator/SKILL.md",
+    };
+
+    bool found = false;
+    std::string found_at;
+    for (const auto& c : candidates) {
+        if (fs::exists(c)) {
+            found = true;
+            found_at = c;
+            break;
+        }
+    }
+
+    check(found, "I: evaluator/SKILL.md found in templates tree");
+    if (found) {
+        // Sanity-check key content: lint-required headers + EVALUATION block
+        std::ifstream f(found_at);
+        std::string content{
+            std::istreambuf_iterator<char>(f),
+            std::istreambuf_iterator<char>()
+        };
+        check(content.find("Block Formats") != std::string::npos,
+              "I: SKILL.md contains 'Block Formats' (lint-required)");
+        check(content.find("HANDOFF") != std::string::npos,
+              "I: SKILL.md contains 'HANDOFF' (lint-required)");
+        check(content.find("SUMMARY") != std::string::npos,
+              "I: SKILL.md contains 'SUMMARY' (lint-required)");
+        check(content.find("EVALUATION") != std::string::npos,
+              "I: SKILL.md defines an EVALUATION block");
+    }
+}
+
 // --- main -------------------------------------------------------------------
 
 int main() {
@@ -242,6 +341,9 @@ int main() {
     test_doer_executor_section();
     test_non_doer_no_executor();
     test_skill_file_in_yaml();
+    test_evaluator_role_create();
+    test_evaluator_universal_rules();
+    test_evaluator_skill_source_exists();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)
               << " tests passed ---\n";
