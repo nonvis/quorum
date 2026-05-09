@@ -25,6 +25,7 @@
 #include "agent/output_parser.h"
 #include "vault/vault_manager.h"
 #include "cli/agent_create.h"
+#include "cli/agent_history.h"
 #include "cli/init.h"
 #include "cli/skills.h"
 #include "utils/discover.h"
@@ -141,6 +142,7 @@ static void print_usage(const char* prog) {
               << "  " << prog << " --config <path> agent create --role <r> --name <n> --project <p>\n"
               << "  " << prog << " agent modify --name <id> --description \"new desc\"   Modify agent\n"
               << "  " << prog << " agent list                                            List all agents\n"
+              << "  " << prog << " agent history --name <id>                             Show CONTEXT.md audit trail\n"
               << "\nOptions:\n"
               << "  --config <path>      Path to config YAML (optional if .quorum/ exists in project)\n"
               << "  --verbose            Enable verbose logging\n"
@@ -410,7 +412,7 @@ int main(int argc, char* argv[]) {
         }
     } else if (subcommand == "agent") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
-            if (agent_subcmd.empty() && (sub_args[i] == "create" || sub_args[i] == "modify" || sub_args[i] == "list")) {
+            if (agent_subcmd.empty() && (sub_args[i] == "create" || sub_args[i] == "modify" || sub_args[i] == "list" || sub_args[i] == "history")) {
                 agent_subcmd = sub_args[i];
             } else if (sub_args[i] == "--role" && i + 1 < sub_args.size()) {
                 agent_params.role = sub_args[++i];
@@ -486,7 +488,7 @@ int main(int argc, char* argv[]) {
         return sui::quorum::cli::list_skills(*root);
     }
 
-    // Agent list/modify don't need --config -- they work with .quorum/ directly
+    // Agent list/modify/history don't need --config -- they work with .quorum/ directly
     if (subcommand == "agent" && agent_subcmd == "list") {
         return sui::quorum::cli::list_agents();
     }
@@ -496,6 +498,9 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         return sui::quorum::cli::modify_agent(agent_params);
+    }
+    if (subcommand == "agent" && agent_subcmd == "history") {
+        return sui::quorum::cli::show_history(agent_params.name);
     }
 
     if (config_path.empty()) {
@@ -572,7 +577,7 @@ int main(int argc, char* argv[]) {
     // ── Agent subcommand early exit (no DB, no daemon) ──────────────────
     if (subcommand == "agent") {
         if (agent_subcmd != "create") {
-            std::cerr << "ERROR: unknown agent subcommand. Usage: agent create|modify|list\n";
+            std::cerr << "ERROR: unknown agent subcommand. Usage: agent create|modify|list|history\n";
             return 1;
         }
         if (agent_params.role.empty() || agent_params.name.empty()) {

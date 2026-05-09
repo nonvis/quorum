@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,7 @@
 #include "utils/config.h"
 #include "utils/discover.h"
 #include "cli/skills.h"
+#include "vault/context_history.h"
 
 namespace fs = std::filesystem;
 namespace sui::quorum::cli {
@@ -105,30 +107,36 @@ inline std::string generate_context_md(
                 sname = (slash != std::string::npos) ? skill_file.substr(slash + 1) : skill_file;
             }
             replace_all(content, "{skill_name}", sname);
-            std::ofstream ctx(context_path, std::ios::trunc);
-            ctx << content;
+            sui::quorum::vault::write_context_with_history(context_path, content);
             return "from role template";
         } else if (template_exists) {
+            // Capture prior CONTEXT.md to .history before overwriting via copy_file.
+            if (fs::exists(context_path)) {
+                auto prior = sui::quorum::vault::read_file_to_string(context_path);
+                sui::quorum::vault::append_history_record(
+                    context_path, prior,
+                    sui::quorum::vault::history_timestamp_iso());
+            }
             fs::copy_file(template_path, context_path, fs::copy_options::overwrite_existing);
             return "template copy -- fill placeholders";
         } else {
-            std::ofstream ctx(context_path, std::ios::trunc);
-            ctx << "# " << agent_name << " -- Agent Context\n\n"
+            std::ostringstream oss;
+            oss << "# " << agent_name << " -- Agent Context\n\n"
                 << "## Role\n\nYou are the **" << agent_name << "** ("
                 << role << "). " << description << "\n"
                 << universal_rules_for_role(role);
-            ctx.close();
+            sui::quorum::vault::write_context_with_history(context_path, oss.str());
             return "minimal -- template not found";
         }
     }
 
     if (!template_exists) {
-        std::ofstream ctx(context_path, std::ios::trunc);
-        ctx << "# " << agent_name << " -- Agent Context\n\n"
+        std::ostringstream oss;
+        oss << "# " << agent_name << " -- Agent Context\n\n"
             << "## Role\n\nYou are the **" << agent_name << "** ("
             << role << "). " << description << "\n"
             << universal_rules_for_role(role);
-        ctx.close();
+        sui::quorum::vault::write_context_with_history(context_path, oss.str());
         return "minimal -- template not found";
     }
 
@@ -191,13 +199,19 @@ inline std::string generate_context_md(
                     content = content.substr(0, content.size() - 3);
             }
 
-            std::ofstream ctx(context_path, std::ios::trunc);
-            ctx << content;
+            sui::quorum::vault::write_context_with_history(context_path, content);
             return "AI-generated";
         }
     }
 
     std::cerr << "  WARNING: claude -p failed, copying template as fallback\n";
+    // Capture prior CONTEXT.md to .history before overwriting via copy_file.
+    if (fs::exists(context_path)) {
+        auto prior = sui::quorum::vault::read_file_to_string(context_path);
+        sui::quorum::vault::append_history_record(
+            context_path, prior,
+            sui::quorum::vault::history_timestamp_iso());
+    }
     fs::copy_file(template_path, context_path, fs::copy_options::overwrite_existing);
     return "template copy -- fill placeholders";
 }

@@ -116,6 +116,10 @@ target_include_directories(test_phase_plan_checkoff PRIVATE src)
 target_link_libraries(test_phase_plan_checkoff PRIVATE SQLite::SQLite3)
 add_test(NAME test_phase_plan_checkoff COMMAND test_phase_plan_checkoff)
 
+add_executable(test_context_history tests/unit/test_context_history.cpp)
+target_include_directories(test_context_history PRIVATE src)
+add_test(NAME test_context_history COMMAND test_context_history)
+
 add_executable(test_team_pipeline tests/integration/test_team_pipeline.cpp)
 target_include_directories(test_team_pipeline PRIVATE src)
 target_link_libraries(test_team_pipeline PRIVATE SQLite::SQLite3)

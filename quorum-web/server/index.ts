@@ -200,6 +200,62 @@ app.get("/api/agents/:id/context", (c) => {
   return c.json({ id, content });
 });
 
+// Audit-trail helper for CONTEXT.md rewrites. Mirrors the C++
+// vault/context_history.h logic: same `---QUORUM-HISTORY---` sentinel,
+// same ISO8601 UTC format, same 20-entry cap. See that header for
+// rationale on the sentinel choice (markdown horizontal rules / YAML
+// frontmatter delimiters can't collide with this sentinel).
+const HISTORY_SENTINEL = "---QUORUM-HISTORY---";
+const HISTORY_MAX_ENTRIES = 20;
+
+function historyTimestampIso(): string {
+  return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+function splitHistoryRecords(content: string): string[] {
+  if (!content) return [];
+  const lines = content.split("\n");
+  const records: string[] = [];
+  let inRecord = false;
+  let current = "";
+  let firstLine = true;
+  for (const line of lines) {
+    if (line === HISTORY_SENTINEL) {
+      if (inRecord) records.push(current);
+      current = "";
+      inRecord = true;
+      firstLine = false;
+    } else if (inRecord) {
+      current += (firstLine ? "" : "") + line + "\n";
+      firstLine = false;
+    }
+  }
+  if (inRecord) records.push(current);
+  return records;
+}
+
+function writeContextWithHistory(contextPath: string, newContent: string): void {
+  if (existsSync(contextPath)) {
+    const prior = readFileSync(contextPath, "utf-8");
+    const historyPath = contextPath + ".history";
+    const ts = historyTimestampIso();
+    let record = `## ${ts}\n\n${prior}`;
+    if (!record.endsWith("\n")) record += "\n";
+
+    const existing = existsSync(historyPath) ? readFileSync(historyPath, "utf-8") : "";
+    const records = splitHistoryRecords(existing);
+    records.push(record);
+
+    const trimmed = records.length > HISTORY_MAX_ENTRIES
+      ? records.slice(records.length - HISTORY_MAX_ENTRIES)
+      : records;
+
+    const reassembled = trimmed.map((r) => `${HISTORY_SENTINEL}\n${r}`).join("");
+    writeFileSync(historyPath, reassembled);
+  }
+  writeFileSync(contextPath, newContent);
+}
+
 app.put("/api/agents/:id/context", async (c) => {
   const id = c.req.param("id");
   const body = await c.req.json<{ content: string }>();
@@ -210,7 +266,7 @@ app.put("/api/agents/:id/context", async (c) => {
     mkdirSync(vaultDir, { recursive: true });
   }
   const contextPath = join(vaultDir, "CONTEXT.md");
-  writeFileSync(contextPath, body.content);
+  writeContextWithHistory(contextPath, body.content);
   return c.json({ success: true });
 });
 
