@@ -83,6 +83,10 @@ add_executable(test_vault_manager tests/unit/test_vault_manager.cpp)
 target_include_directories(test_vault_manager PRIVATE src)
 add_test(NAME test_vault_manager COMMAND test_vault_manager)
 
+add_executable(test_vault_update_brainstorm tests/unit/test_vault_update_brainstorm.cpp)
+target_include_directories(test_vault_update_brainstorm PRIVATE src)
+add_test(NAME test_vault_update_brainstorm COMMAND test_vault_update_brainstorm)
+
 add_executable(test_invoker tests/unit/test_invoker.cpp)
 target_include_directories(test_invoker PRIVATE src)
 add_test(NAME test_invoker COMMAND test_invoker)

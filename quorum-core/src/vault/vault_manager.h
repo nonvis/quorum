@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "agent/output_parser.h"
+#include "utils/config.h"
 
 namespace sui::quorum {
 
@@ -26,6 +27,24 @@ namespace sui::quorum {
 //
 // The context_assembler READS from vaults. This class handles WRITES —
 // applying VaultUpdate blocks parsed from agent output.
+
+// Result of classifying a VAULT_UPDATE path against the own-vault rule
+// plus the brainstorm-mode scribe cross-write exception.
+//
+// In every accepted case, `target_agent` is the agent whose vault should
+// receive the write and `relative_path` is the path inside that vault
+// (always starting with "knowledge/" or "inbox/").
+//
+// When `accepted == false`, `reason` carries a human-readable explanation
+// suitable for stderr logging; the caller should silently skip the write
+// (do NOT crash the conversation) per the Phase 6 Track 3 contract.
+struct VaultPathClassification {
+    bool         accepted{false};
+    std::string  target_agent;    // own agent_id, or another team member's id (cross-write)
+    std::string  relative_path;   // path under target_agent's vault root
+    bool         is_cross_vault{false};
+    std::string  reason;          // populated when accepted == false
+};
 
 class VaultManager {
 public:
@@ -123,6 +142,177 @@ public:
         size_t success_count = 0;
         for (const auto& update : updates) {
             if (apply_vault_update(agent_id, update)) {
+                ++success_count;
+            }
+        }
+        return success_count;
+    }
+
+    // ── Phase 6 Track 3 — own-vault rule + scribe brainstorm exception ─────────
+
+    // Pure classifier for VAULT_UPDATE paths.
+    //
+    // The own-vault rule (from the analyst CONTEXT.md prompt block):
+    //   `path:` MUST start with `knowledge/` or `inbox/` and writes go to
+    //   the EMITTING agent's vault. This is the only rule for `mode == "generic"`
+    //   regardless of role.
+    //
+    // The single exception (Phase 6 Track 3): when `mode == "brainstorm"` AND
+    // `emitting_agent_role == "scribe"`, the scribe MAY emit
+    //
+    //     path: <agent-id>/knowledge/<file>.md
+    //
+    // to cross-write into ANOTHER team member's vault. The agent-id prefix
+    // must match an entry in `team_agents`. Unknown agent IDs are rejected
+    // (caller logs to stderr, does NOT crash the conversation).
+    //
+    // All other roles (leader/thinker/doer/reviewer) remain own-vault-bound
+    // even in brainstorm mode. This is deliberate — the scribe is the ONE
+    // curator role for cross-vault writes.
+    //
+    // Pure function: no filesystem access, no I/O. Tested in
+    // test_vault_update_brainstorm.cpp.
+    [[nodiscard]] static VaultPathClassification classify_vault_path(
+        std::string_view path,
+        std::string_view emitting_agent_id,
+        std::string_view emitting_agent_role,
+        std::string_view conversation_mode,
+        const std::vector<AgentMetadata>& team_agents)
+    {
+        VaultPathClassification c;
+
+        if (path.empty()) {
+            c.reason = "empty path";
+            return c;
+        }
+
+        // Reject any path that fails directory-traversal safety up front.
+        // Mirrors the safety net inside apply_vault_update; doing it here
+        // gives a uniform reject-with-reason path for the caller's logs.
+        if (!validate_relative_path(path)) {
+            c.reason = "unsafe path (traversal or absolute)";
+            return c;
+        }
+
+        // Own-vault shape: starts directly with knowledge/ or inbox/.
+        const bool own_shape =
+            (path.size() > 10 && path.substr(0, 10) == "knowledge/") ||
+            (path.size() >  6 && path.substr(0,  6) == "inbox/");
+
+        if (own_shape) {
+            c.accepted       = true;
+            c.target_agent   = std::string(emitting_agent_id);
+            c.relative_path  = std::string(path);
+            c.is_cross_vault = false;
+            return c;
+        }
+
+        // Not own-shape — only the scribe-in-brainstorm exception can rescue it.
+        const bool is_brainstorm = (conversation_mode == "brainstorm");
+        const bool is_scribe     = (emitting_agent_role == "scribe");
+
+        if (!is_brainstorm) {
+            c.reason = "cross-vault path not allowed in generic mode";
+            return c;
+        }
+        if (!is_scribe) {
+            c.reason = "cross-vault path is scribe-only (role=" +
+                       std::string(emitting_agent_role) + ")";
+            return c;
+        }
+
+        // Parse the agent-id prefix: <agent-id>/<remainder>
+        auto slash = path.find('/');
+        if (slash == std::string_view::npos || slash == 0) {
+            c.reason = "cross-vault path missing <agent-id>/ prefix";
+            return c;
+        }
+        auto target_id  = path.substr(0, slash);
+        auto remainder  = path.substr(slash + 1);
+
+        // Remainder MUST itself be an own-vault-shape path inside the target
+        // agent's vault. Cross-write is for collaborative knowledge curation,
+        // not for slipping out of the knowledge/ + inbox/ envelope entirely.
+        const bool remainder_ok =
+            (remainder.size() > 10 && remainder.substr(0, 10) == "knowledge/") ||
+            (remainder.size() >  6 && remainder.substr(0,  6) == "inbox/");
+        if (!remainder_ok) {
+            c.reason = "cross-vault remainder must start with knowledge/ or inbox/";
+            return c;
+        }
+
+        // Verify <agent-id> is a known team member.
+        bool known = false;
+        for (const auto& a : team_agents) {
+            if (a.id == target_id) { known = true; break; }
+        }
+        if (!known) {
+            c.reason = "unknown agent id in cross-vault path: " +
+                       std::string(target_id);
+            return c;
+        }
+
+        // The scribe writing into its OWN vault via the cross-vault shape is
+        // accepted (degenerate cross-vault); we still flag it as cross_vault
+        // so the caller log makes the path-shape visible.
+        c.accepted       = true;
+        c.target_agent   = std::string(target_id);
+        c.relative_path  = std::string(remainder);
+        c.is_cross_vault = true;
+        return c;
+    }
+
+    // Apply a VaultUpdate with conversation context.
+    //
+    // Combines `classify_vault_path()` with the existing per-agent write
+    // primitive (`apply_vault_update`). On classifier rejection, a one-line
+    // warning is emitted to stderr and the function returns false WITHOUT
+    // throwing — this preserves the "don't crash the conversation" contract.
+    //
+    // The destination is `<vault-root>/<target_agent>/<relative_path>`.
+    // For own-vault writes target_agent == emitting_agent_id (existing
+    // behavior). For the scribe-in-brainstorm exception, target_agent is
+    // another team member's id.
+    [[nodiscard]] bool apply_vault_update_with_context(
+        std::string_view emitting_agent_id,
+        std::string_view emitting_agent_role,
+        std::string_view conversation_mode,
+        const std::vector<AgentMetadata>& team_agents,
+        const VaultUpdate& update) const
+    {
+        auto c = classify_vault_path(update.path, emitting_agent_id,
+                                     emitting_agent_role, conversation_mode,
+                                     team_agents);
+        if (!c.accepted) {
+            std::cerr << "vault_manager: skipped VAULT_UPDATE from "
+                      << emitting_agent_id
+                      << " (path='" << update.path
+                      << "', mode=" << conversation_mode
+                      << ", role=" << emitting_agent_role
+                      << "): " << c.reason << "\n";
+            return false;
+        }
+
+        VaultUpdate routed = update;
+        routed.path = c.relative_path;
+        return apply_vault_update(c.target_agent, routed);
+    }
+
+    // Apply multiple VaultUpdates with conversation context. Returns count of
+    // successful writes (rejected updates are skipped, NOT counted).
+    [[nodiscard]] size_t apply_all_updates_with_context(
+        std::string_view emitting_agent_id,
+        std::string_view emitting_agent_role,
+        std::string_view conversation_mode,
+        const std::vector<AgentMetadata>& team_agents,
+        const std::vector<VaultUpdate>& updates) const
+    {
+        size_t success_count = 0;
+        for (const auto& update : updates) {
+            if (apply_vault_update_with_context(emitting_agent_id,
+                                                emitting_agent_role,
+                                                conversation_mode,
+                                                team_agents, update)) {
                 ++success_count;
             }
         }

@@ -911,14 +911,34 @@ int main(int argc, char* argv[]) {
             if (!agent_id.empty()) {
                 auto parsed = output_parser.parse(result.output);
 
-                // Apply vault updates
+                // Resolve emitting agent's role for vault path classification
+                // (Phase 6 Track 3 — scribe-in-brainstorm cross-vault exception).
+                std::string emitting_role;
+                for (const auto& a : cfg.agents) {
+                    if (a.id == agent_id) {
+                        emitting_role = a.role;
+                        break;
+                    }
+                }
+
+                // Apply vault updates with conversation context. The
+                // classifier inside vault_manager enforces:
+                //   - generic mode: own-vault only (path starts with
+                //     knowledge/ or inbox/)
+                //   - brainstorm + scribe: own-vault OR cross-vault
+                //     (path: <agent-id>/knowledge/<file>.md or
+                //      path: <agent-id>/inbox/<file>.md)
+                //   - all other (mode × role) combinations: own-vault only
                 if (!parsed.vault_updates.empty()) {
-                    auto applied = vault_manager.apply_all_updates(agent_id,
+                    auto applied = vault_manager.apply_all_updates_with_context(
+                        agent_id, emitting_role, task_mode, cfg.agents,
                         parsed.vault_updates);
                     if (verbose) {
                         std::cout << "[dispatch] task " << task_id
                                   << " — " << applied << "/" << parsed.vault_updates.size()
-                                  << " vault updates applied for " << agent_id << "\n";
+                                  << " vault updates applied for " << agent_id
+                                  << " (mode=" << task_mode
+                                  << ", role=" << emitting_role << ")\n";
                     }
                 }
 
