@@ -547,6 +547,34 @@ assert!(amount > 0);
 
 This is fine for internal invariants where the line number alone is enough context.
 
+### Fail-closed semantics
+
+Every `public` / `entry` function must validate inputs **before** any state mutation. If validation aborts after a partial write, the transaction reverts cleanly because Sui Move is transactional — but the bug is in *which* aborts your tests are observing. Order checks first, mutations second:
+
+```move
+// ✅ Fail closed — aborts before any state changes
+public fun sweep_to_trusted<T>(
+    vault: &mut DepositVault,
+    registry: &Registry,
+    recipient: address,
+    receiving: Receiving<Coin<T>>,
+) {
+    assert!(registry.is_trusted(recipient), ERecipientNotTrusted); // check first
+    let coin = transfer::public_receive(&mut vault.id, receiving); // then mutate
+    // ...
+}
+```
+
+For `Option`, prefer `do!` and `destroy_or!` — never silently `destroy_some` user-supplied data:
+
+```move
+// ✅ explicit failure mode
+let amount = supplied_amount.destroy_or!(abort EAmountRequired);
+
+// ❌ panics opaquely if None
+let amount = supplied_amount.destroy_some();
+```
+
 ---
 
 ## 13. One-Time Witness (OTW) Pattern
@@ -584,6 +612,37 @@ public fun set_fee(pool: &mut Pool, ctx: &TxContext) {
 ```
 
 Note the parameter order: the object (`pool`) comes before the primitive (`new_fee`), and `_: &AdminCap` follows the objects-then-capabilities ordering from section 6.
+
+### Validating untrusted destinations inside the helper
+
+When a privileged function accepts an arbitrary `address` from the caller (e.g. a sweep function routing funds to an operator-supplied `recipient`), the trust check **must live inside the helper that touches state**, not in each wrapper that calls it:
+
+```move
+// ✅ Trust check sits next to the state mutation it gates
+public fun sweep_to_trusted<T>(
+    vault: &mut DepositVault,
+    registry: &Registry,
+    _cap: &SweepCap,
+    recipient: address,
+    /* ... */
+) {
+    assert!(registry.is_trusted(recipient), ERecipientNotTrusted);
+    // ... state mutation
+}
+
+// ❌ Wrapper does the check, helper trusts the address
+public fun sweep_to_trusted<T>(/* ... */ recipient: address) {
+    assert!(registry.is_trusted(recipient), ERecipientNotTrusted);
+    sweep_internal(vault, recipient); // helper has no knowledge of the check
+}
+
+fun sweep_internal<T>(vault: &mut DepositVault, recipient: address) {
+    // Adding a new caller of sweep_internal that forgets the assert!
+    // silently bypasses the allowlist.
+}
+```
+
+A wrapper-only check fails when a future refactor adds another caller to the helper without re-applying the assert.
 
 ---
 
@@ -656,6 +715,28 @@ Use regular `//` comments to explain non-obvious logic, potential edge cases, an
 // TODO: add assert! guard before production use.
 let lp_supply = math::sqrt(reserve_x * reserve_y);
 ```
+
+### Module / function / event docs
+
+A reviewer should be able to read the doc comments alone and reconstruct the trust model:
+
+```move
+// Module-level — purpose, capabilities, cross-module invariants.
+module sweeping_sui::sweep;
+
+/// Materialize a `DepositVault` for `(registry, key)`. SweepCap-gated.
+/// Emits `VaultClaimed`. Aborts with `EInvalidKeyLength` if `key.length() != 32`.
+public fun claim_vault(...) { ... }
+
+/// Emitted by every `sweep_*` function. `from` is the vault address,
+/// `to` is the destination, `amount` is the swept value.
+public struct FundsSwept<phantom T> has copy, drop { ... }
+```
+
+Required content per item:
+- **Module header**: one-paragraph purpose, who can call what, any cross-module assumptions (e.g. "off-chain caller must filter empty vaults").
+- **Public / entry functions**: intent, abort conditions (which `E*` constants and when), capability requirement, side effects (events emitted).
+- **Events**: which function emits it, what each field means, why an indexer cares.
 
 ---
 
@@ -764,6 +845,31 @@ destroy(pool);
 pool.destroy_for_testing();
 ```
 
+### Coverage expectations for capability-gated code
+
+Every capability-gated function needs at least two tests:
+
+1. **Happy path** — caller holds the right cap, function succeeds, state changes as expected.
+2. **Authorization failure** — `#[expected_failure]` test that exercises the unauthorized path. For pure cap-gating (the cap is a parameter), the failure is at the type level and is enforced by the compiler. For `is_trusted` / allowlist checks, write an explicit abort-expected test:
+
+```move
+#[test, expected_failure(abort_code = sweep::ERecipientNotTrusted)]
+fun sweep_to_untrusted_address_aborts() {
+    let mut scenario = test_scenario::begin(@admin);
+    // ... setup ...
+    sweep_coin_to_trusted(&mut vault, &registry, &sweep_cap, key, receiving, @0xBAD);
+    // no scenario.end() — let the abort carry the test
+}
+```
+
+### Boundary inputs
+
+For every public function that takes user input, exercise the edges:
+- Numeric: `0`, `u64::MAX`, off-by-one around any internal threshold
+- Vector: empty vector, single-element vector, vector at any length-validation boundary (e.g. exactly 32 bytes for `KEY_LEN`)
+- Address: `@0x0` (the burn address) when the function takes a destination
+- Generic type: at least one test instantiation with a non-`SUI` `Coin<T>` type to catch hard-coded type assumptions
+
 ---
 
 ## 19. What Sui Move is NOT
@@ -778,3 +884,74 @@ pool.destroy_for_testing();
 | `let x = ...` for mutable vars | Legacy Sui Move | Use `let mut x = ...` |
 | `use` inside function bodies for module-level imports | Style issue | Put `use` at the top of the module |
 | `&signer` | Rust / Aptos | Does not exist in Sui Move |
+
+---
+
+## 20. Common Pitfalls
+
+Real failure modes drawn from Quorum review history (`sample/move/sweeping-sui`).
+Each pitfall maps to a specific rubric item in `templates/rubrics/move-dev/rubric.md`.
+
+### Forgetting `is_trusted` on cross-vault destinations
+
+**Symptom:** A new `sweep_*_to_address(recipient: address, ...)` entry function added without the `assert!(registry.is_trusted(recipient), ERecipientNotTrusted)` check. Funds can be exfiltrated to an attacker-controlled address.
+
+**Real example:** sweeping-sui's four sweep functions (`sweep_coin_to_omnibus`, `sweep_coin_to_trusted`, `sweep_balance_to_omnibus`, `sweep_balance_to_trusted`) are near-symmetric copies. A DRY refactor that extracts a shared helper must put the trust check inside the helper, not in each wrapper — otherwise adding a fifth caller to the helper silently bypasses the allowlist.
+
+**Maps to rubric:** `capabilities.cross-vault-destinations-re-validate-against-the-registry-allowlist-inside-the-helper-not-at-the-wrapper-boundary`
+
+### Reusing `assert_key_length` only at the public boundary
+
+**Symptom:** Internal `public(package)` paths skip the 32-byte key check on the assumption that public callers already validated. A future caller that bypasses the public path gets undefined `derived_object` behavior.
+
+**Real example:** `registry::assert_key_length` is exposed `public(package)` and called by `sweep::claim_vault` precisely so the invariant lives next to derivation. Don't drop the check in a "fast path" wrapper.
+
+**Maps to rubric:** `aborts-and-errors.public-entry-points-fail-closed-invalid-input-aborts-before-any-state-mutation`
+
+### Capability struct without `Cap` suffix
+
+**Symptom:** `public struct SweepAuth has key, store { id: UID }` — readers can't tell at a glance whether this is a capability, a config object, or a user-facing token. Trust-model audits become harder.
+
+**Real example:** sweeping-sui uses `AdminCap` (cold) and `SweepCap` (hot) — the suffix tells reviewers immediately which functions require which holder.
+
+**Maps to rubric:** `capabilities.capability-structs-suffixed-with-cap-and-held-by-key-store`
+
+### `transfer::transfer` called from outside the defining module
+
+**Symptom:** External module imports `DepositVault` and calls `transfer::transfer(vault, recipient)`. Compiles only because someone made `DepositVault` lack `store`, but now no other module can compose with vaults either.
+
+**Fix:** Inside the defining module use `transfer::transfer` / `transfer::share_object`. Outside the defining module, the type must have `store` and the caller must use `transfer::public_transfer` / `transfer::public_share_object`.
+
+**Maps to rubric:** `transfer-semantics.transfer-transfer-share-object-freeze-object-only-called-inside-the-module-that-defines-the-type`
+
+### Event emitted *before* state mutation completes
+
+**Symptom:** `event::emit(FundsSwept { ... })` runs before the `balance::send_funds` call. If `send_funds` aborts, the transaction reverts cleanly — but during code review the order suggests an "emit-then-mutate" pattern that masks bugs in subsequent refactors (someone moves the emit to after a non-aborting branch and the indexer sees phantom events).
+
+**Real example:** sweeping-sui's `sweep_coin_to_omnibus` pattern is `let amount = coin.value(); ... balance::send_funds(bal, to); event::emit(FundsSwept { ... })` — emit last, after every state mutation has succeeded. Match this ordering.
+
+**Maps to rubric:** `comments-and-docs.events-documented-at-the-struct-level-emitter-payload-meaning-indexer-relevance` and `aborts-and-errors.public-entry-points-fail-closed-invalid-input-aborts-before-any-state-mutation`
+
+### Hot capability stored inside a shared object
+
+**Symptom:** `SweepCap` placed inside the shared `Registry` so anyone can borrow it with `&mut Registry`. The cap is now globally accessible — no off-chain key custody, no revocation path.
+
+**Fix:** Keep `SweepCap` as an owned `key, store` object held by the operator's signing key. Mint via `mint_sweep_cap(&AdminCap, ctx) -> SweepCap` and transfer to the operator. Revocation is off-chain (destroy or relocate the cap object via the holder's keys).
+
+**Maps to rubric:** `capabilities.capability-objects-never-embedded-inside-shared-objects-without-explicit-revocation-design`
+
+### Missing `#[expected_failure]` for the auth-failure path
+
+**Symptom:** Tests cover the happy path of `sweep_coin_to_trusted` but not the "recipient is not on the allowlist" branch. The `assert!(registry.is_trusted(recipient), ERecipientNotTrusted)` line goes uncovered, and a future refactor that flips the boolean direction ships with green tests.
+
+**Fix:** For every capability-gated or allowlist-gated public function, write a `#[test, expected_failure(abort_code = ...)]` test that exercises the unauthorized path.
+
+**Maps to rubric:** `test-coverage.authorization-failure-test-exists-for-every-capability-gated-function-uses-expected-failure`
+
+### Off-chain assumption buried in code, not comments
+
+**Symptom:** sweeping-sui's wallet service must filter empty vaults from the batch PTB or the whole transaction aborts. If that assumption isn't called out in the module header, the next operator team rediscovers it via a production failure.
+
+**Real example:** `sweep.move` opens with a paragraph explaining "Empty vaults must be filtered off-chain before composing a batch sweep PTB." This is the right pattern — surface caller obligations at the module level, not inside individual functions.
+
+**Maps to rubric:** `comments-and-docs.module-level-doc-comment-states-purpose-and-any-cross-module-invariants`
