@@ -161,6 +161,23 @@ inline int init_project() {
     }
     std::cout << "  Created: .quorum/teams/default.yaml\n";
 
+    // 6c. Write full-roster example team (Phase 7 Track 7).
+    // Operators can swap to this team without writing yaml from scratch.
+    // It's an EXAMPLE -- referenced agents (thinker/doer/reviewer/scribe)
+    // may not exist yet on a fresh init; create them via `quorum agent
+    // create` or edit this file to match your roster.
+    {
+        std::ofstream out(".quorum/teams/full-roster.yaml", std::ios::trunc);
+        if (!out.is_open()) {
+            std::cerr << "ERROR: cannot write .quorum/teams/full-roster.yaml\n";
+            return 1;
+        }
+        out << "name: Full-Roster\n"
+            << "default_path: [leader, thinker, doer, reviewer, scribe]\n";
+    }
+    std::cout << "  Created: .quorum/teams/full-roster.yaml  "
+              << "(example; add agents matching the path or edit to your own roster)\n";
+
     // 7. Print next steps
     std::cout << "  Created: .quorum/vaults/leader/knowledge/\n";
     std::cout << "  Created: .quorum/teams/\n";

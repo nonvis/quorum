@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { startConversation, type ConversationMode } from "../api";
+import type { Team } from "../types";
 
 const MODES: { id: ConversationMode; label: string; hint: string }[] = [
   {
@@ -23,20 +24,38 @@ export function PromptInput({
   onSubmit,
   busy,
   team,
+  teams,
 }: {
   onSubmit: () => void;
   busy: boolean;
   team?: string | null;
+  teams: Team[];
 }) {
   const [goal, setGoal] = useState("");
   const [mode, setMode] = useState<ConversationMode>("generic");
   const [loading, setLoading] = useState(false);
+  const [teamError, setTeamError] = useState<string | null>(null);
 
   const disabled = loading || busy;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!goal.trim() || disabled) return;
+
+    // Phase 7 Track 7 (#26) -- defensive validation. Belt-and-suspenders
+    // check that the selected team exists in the loaded list before we
+    // POST. Root cause was a stale id leaking across project switches
+    // (fixed in App.tsx). This guards against future regressions of the
+    // same shape.
+    if (team != null && team !== "" && !teams.some((t) => t.id === team)) {
+      setTeamError(
+        `team "${team}" not found -- please select from the dropdown` +
+        (teams.length > 0 ? ` (available: ${teams.map((t) => t.id).join(", ")})` : "")
+      );
+      return;
+    }
+    setTeamError(null);
+
     setLoading(true);
     try {
       await startConversation(goal.trim(), team ?? undefined, mode);
@@ -51,8 +70,13 @@ export function PromptInput({
 
   return (
     <form onSubmit={handleSubmit} className="px-6 py-4">
+      {teamError && (
+        <div className="mb-2 px-3 py-1 bg-red-900/30 border border-red-800 rounded text-red-400 text-xs">
+          {teamError}
+        </div>
+      )}
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-xs text-zinc-500 uppercase tracking-wide">Mode</span>
+        <span className="text-xs text-zinc-400 uppercase tracking-wide font-semibold w-12">Mode:</span>
         <div className="flex items-center gap-1">
           {MODES.map((m) => {
             const colors = MODE_COLORS[m.id];

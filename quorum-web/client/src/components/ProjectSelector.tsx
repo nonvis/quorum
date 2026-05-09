@@ -63,7 +63,8 @@ export function ProjectSelector({
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="~/path/to/project"
+            placeholder="~/path/to/project (~ expanded to $HOME)"
+            title="Absolute or ~/-prefixed path. ~ is expanded to your home directory."
             className="w-64 px-3 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
           />
           <button

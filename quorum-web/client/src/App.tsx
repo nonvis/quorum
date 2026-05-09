@@ -46,12 +46,19 @@ export default function App() {
     });
   }, [refresh]);
 
-  // Reload teams, agents, conversations, config when project changes
+  // Reload teams, agents, conversations, config when project changes.
+  // Phase 7 Track 7 (#26): when switching projects, the previously selected
+  // team id may not exist in the new project — drop it and pick the first
+  // available team. Otherwise the stale id leaks into POST /api/converse and
+  // the C++ daemon errors with "team 'X' not found".
   useEffect(() => {
     if (project.current) {
       fetchTeams().then((t) => {
         setTeams(t);
-        if (t.length > 0 && !selectedTeam) setSelectedTeam(t[0].id);
+        const stillValid = selectedTeam != null && t.some((team) => team.id === selectedTeam);
+        if (!stillValid) {
+          setSelectedTeam(t.length > 0 ? t[0].id : null);
+        }
       });
       fetchAgents().then(setAgents);
       refresh();
@@ -107,7 +114,10 @@ export default function App() {
                 agents={agents}
                 onCreated={() => fetchTeams().then((t) => {
                   setTeams(t);
-                  if (t.length > 0 && !selectedTeam) setSelectedTeam(t[0].id);
+                  const stillValid = selectedTeam != null && t.some((team) => team.id === selectedTeam);
+                  if (!stillValid) {
+                    setSelectedTeam(t.length > 0 ? t[0].id : null);
+                  }
                 })}
               />
             </div>
@@ -125,7 +135,7 @@ export default function App() {
             </div>
           )}
           <BudgetPanel />
-          <PromptInput onSubmit={refresh} busy={busy} team={selectedTeam} />
+          <PromptInput onSubmit={refresh} busy={busy} team={selectedTeam} teams={teams} />
 
           <div className="px-6 pb-6">
             <h2 className="text-sm font-medium text-zinc-500 uppercase tracking-wide mb-3">

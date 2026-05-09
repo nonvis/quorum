@@ -12,8 +12,8 @@ export function TeamSelector({
   if (teams.length === 0) return null;
 
   return (
-    <div className="px-6 py-2 flex items-center gap-2">
-      <span className="text-xs text-zinc-500 uppercase tracking-wide">Team:</span>
+    <div className="px-6 py-2 flex items-center gap-2 border-b border-zinc-800/50">
+      <span className="text-xs text-zinc-400 uppercase tracking-wide font-semibold w-12">Team:</span>
       {teams.map((team) => (
         <button
           key={team.id}

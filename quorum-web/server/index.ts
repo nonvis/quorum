@@ -1,8 +1,24 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { config, repoRoot, getState, setCurrentProject, getProjectConfig } from "../config";
-import { join } from "path";
+import { join, resolve } from "path";
+import { homedir } from "os";
 import { readFileSync, writeFileSync, readdirSync, existsSync, unlinkSync, mkdirSync } from "fs";
+
+// Expand a leading `~` to the user's home directory and resolve to an
+// absolute path. Plain `existsSync(join(p, ".quorum"))` does NOT do shell
+// tilde expansion — when the UI passes "~/nonvis/quorum/sample" the
+// lookup would otherwise hit "./~/nonvis/quorum/sample/.quorum" and fail.
+function expandPath(p: string): string {
+  if (!p) return p;
+  let expanded = p;
+  if (expanded === "~") {
+    expanded = homedir();
+  } else if (expanded.startsWith("~/")) {
+    expanded = homedir() + expanded.slice(1);
+  }
+  return resolve(expanded);
+}
 import {
   getConversations,
   getConversation,
@@ -29,12 +45,13 @@ app.get("/api/projects", (c) => {
 
 app.post("/api/projects/select", async (c) => {
   const body = await c.req.json<{ path: string }>();
-  const quorumDir = join(body.path, ".quorum");
+  const projectPath = expandPath(body.path);
+  const quorumDir = join(projectPath, ".quorum");
   if (!existsSync(quorumDir)) {
-    return c.json({ error: `No .quorum/ directory found in ${body.path}` }, 400);
+    return c.json({ error: `No .quorum/ directory found in ${projectPath}` }, 400);
   }
-  setCurrentProject(body.path);
-  return c.json({ success: true, path: body.path });
+  setCurrentProject(projectPath);
+  return c.json({ success: true, path: projectPath });
 });
 
 app.post("/api/init", async (c) => {
@@ -42,13 +59,14 @@ app.post("/api/init", async (c) => {
   if (!body.path?.trim()) {
     return c.json({ error: "path is required" }, 400);
   }
-  const quorumDir = join(body.path, ".quorum");
+  const projectPath = expandPath(body.path);
+  const quorumDir = join(projectPath, ".quorum");
   if (existsSync(quorumDir)) {
     return c.json({ error: `Project already initialized: ${quorumDir} exists` }, 400);
   }
-  const result = await execDaemonAt(body.path, "init");
+  const result = await execDaemonAt(projectPath, "init");
   if (result.success) {
-    setCurrentProject(body.path);
+    setCurrentProject(projectPath);
     return c.json({ success: true, output: result.stdout });
   }
   return c.json({ success: false, error: result.stderr || result.stdout }, 500);
