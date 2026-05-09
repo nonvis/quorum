@@ -404,20 +404,26 @@ private:
             // Build roster
             auto roster = ContextAssembler::build_roster(agents_, agent, cfg_);
 
-            // Find agent metadata for vault path + skill file
+            // Find agent metadata for vault path + skill file + role.
+            // role drives Phase 7 Track 3 role-scope knowledge resolution
+            // (.quorum/knowledge/roles/<role>/).
             std::string vault_dir;
             std::string skill_file;
+            std::string agent_role;
             for (const auto& a : agents_) {
                 if (a.id == agent) {
                     vault_dir = a.vault_path;
                     skill_file = a.skill_file;
+                    agent_role = a.role;
                     break;
                 }
             }
 
             // Assemble full prompt with vault context + roster + task
             if (!vault_dir.empty()) {
-                final_prompt = assembler_->assemble(agent, vault_dir, task_type, prompt, roster, skill_file, project_root_);
+                final_prompt = assembler_->assemble(
+                    agent, vault_dir, task_type, prompt,
+                    roster, skill_file, project_root_, agent_role);
             } else {
                 // No vault -- just roster + task
                 final_prompt = roster + "\n---\n\n# Current Task\n\n" + prompt + "\n";

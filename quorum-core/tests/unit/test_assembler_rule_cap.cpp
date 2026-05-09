@@ -1,6 +1,6 @@
 // tests/unit/test_assembler_rule_cap.cpp
-// Phase 7 Track 1+2 / Track 6 #19+#20 — filename-aware vault loader with
-// project + agent scope hierarchy.
+// Phase 7 Track 1+2+3 / Track 6 #19+#20 — filename-aware vault loader with
+// project + role + agent scope hierarchy.
 //
 // Verifies that context_assembler:
 //   - preloads rule-*.md sorted by recency, capped at MAX_RULES (10)
@@ -9,8 +9,10 @@
 //   - keeps plain knowledge files on the recency-budget path, after rules
 //   - tolerates an empty knowledge directory
 //   - resolves rules across project (.quorum/knowledge/) and agent-vault scopes
-//   - applies the cap on the UNION of both scopes
-//   - dedups identical-content collisions toward the agent (most-specific) scope
+//   - resolves rules from role scope (.quorum/knowledge/roles/<role>/),
+//     filtered by the calling agent's role
+//   - applies the cap on the UNION across all three scopes
+//   - dedups identical-content collisions with priority agent > role > project
 //   - keeps same-filename / different-content rules in BOTH scopes
 //
 // Run:  cd build && cmake .. && make test_assembler_rule_cap && ./test_assembler_rule_cap
@@ -467,12 +469,255 @@ static void test_same_filename_different_content() {
     cleanup(l.root);
 }
 
+// --- Track 3: role-scope helpers --------------------------------------------
+
+// Track-3 layout adds role-scope subdirs under .quorum/knowledge/roles/.
+// Reuses the project + vault dirs from ScopedLayout so the cross-scope
+// tests don't have to rebuild the world.
+static std::string role_kdir(const ScopedLayout& l, const std::string& role) {
+    auto p = fs::path(l.root) / ".quorum" / "knowledge" / "roles" / role;
+    fs::create_directories(p);
+    return p.string();
+}
+
+// --- Test K: role scope alone ----------------------------------------------
+
+static void test_role_scope_alone() {
+    std::cout << "\n=== K. role scope alone (project + vault empty) ===\n\n";
+
+    auto l = make_scoped_layout("test-agent");
+    auto doer = role_kdir(l, "doer");
+
+    write_kfile(doer, "rule-r0.md", "ROLE_DOER_BODY_0\n");
+    write_kfile(doer, "rule-r1.md", "ROLE_DOER_BODY_1\n");
+
+    sui::quorum::ContextAssembler assembler;
+    auto prompt = assembler.assemble(
+        "test-agent", l.vault_dir, "turn", "do something",
+        /*team_roster=*/{}, /*skill_file=*/{}, /*project_root=*/l.root,
+        /*agent_role=*/"doer");
+
+    check(prompt.find("ROLE_DOER_BODY_0\n") != std::string::npos,
+          "K: role rule r0 body present");
+    check(prompt.find("ROLE_DOER_BODY_1\n") != std::string::npos,
+          "K: role rule r1 body present");
+    check(prompt.find("# Knowledge: rule-r0.md (role: doer)") != std::string::npos,
+          "K: role rule r0 annotated '(role: doer)'");
+    check(prompt.find("# Knowledge: rule-r1.md (role: doer)") != std::string::npos,
+          "K: role rule r1 annotated '(role: doer)'");
+    check(prompt.find("rules omitted") == std::string::npos,
+          "K: no eviction note");
+
+    cleanup(l.root);
+}
+
+// --- Test L: role scope filtered by calling agent's role -------------------
+
+static void test_role_scope_filtered() {
+    std::cout << "\n=== L. role scope filtered by calling agent's role ===\n\n";
+
+    auto l = make_scoped_layout("test-agent");
+    auto doer = role_kdir(l, "doer");
+    auto thinker = role_kdir(l, "thinker");
+
+    write_kfile(doer, "rule-doer-only.md", "DOER_ROLE_BODY\n");
+    write_kfile(thinker, "rule-thinker-only.md", "THINKER_ROLE_BODY\n");
+
+    sui::quorum::ContextAssembler assembler;
+    auto prompt = assembler.assemble(
+        "test-agent", l.vault_dir, "turn", "do something",
+        {}, {}, l.root, /*agent_role=*/"doer");
+
+    check(prompt.find("DOER_ROLE_BODY\n") != std::string::npos,
+          "L: doer-role rule present for doer agent");
+    check(prompt.find("THINKER_ROLE_BODY\n") == std::string::npos,
+          "L: thinker-role rule NOT present for doer agent");
+    check(prompt.find("(role: doer)") != std::string::npos,
+          "L: '(role: doer)' annotation present");
+    check(prompt.find("(role: thinker)") == std::string::npos,
+          "L: '(role: thinker)' annotation absent");
+
+    cleanup(l.root);
+}
+
+// --- Test M: 3-scope merge with no overlap ---------------------------------
+
+static void test_three_scope_merge() {
+    std::cout << "\n=== M. 3-scope merge: 2 project + 2 role:doer + 2 agent ===\n\n";
+
+    auto l = make_scoped_layout("test-agent");
+    auto doer = role_kdir(l, "doer");
+
+    // Write project (oldest), then role, then agent (newest) — exercises
+    // all three scopes coexisting cleanly.
+    for (int i = 0; i < 2; ++i) {
+        write_kfile(l.project_kdir, "rule-p" + std::to_string(i) + ".md",
+                    "PROJECT_BODY_" + std::to_string(i) + "\n");
+    }
+    for (int i = 0; i < 2; ++i) {
+        write_kfile(doer, "rule-r" + std::to_string(i) + ".md",
+                    "ROLE_BODY_" + std::to_string(i) + "\n");
+    }
+    for (int i = 0; i < 2; ++i) {
+        write_kfile(l.vault_kdir, "rule-a" + std::to_string(i) + ".md",
+                    "AGENT_BODY_" + std::to_string(i) + "\n");
+    }
+
+    sui::quorum::ContextAssembler assembler;
+    auto prompt = assembler.assemble(
+        "test-agent", l.vault_dir, "turn", "do something",
+        {}, {}, l.root, /*agent_role=*/"doer");
+
+    // All 6 must be present, each with the correct annotation.
+    for (int i = 0; i < 2; ++i) {
+        auto pbody = "PROJECT_BODY_" + std::to_string(i) + "\n";
+        auto rbody = "ROLE_BODY_" + std::to_string(i) + "\n";
+        auto abody = "AGENT_BODY_" + std::to_string(i) + "\n";
+        check(prompt.find(pbody) != std::string::npos,
+              ("M: project p" + std::to_string(i) + " loaded").c_str());
+        check(prompt.find(rbody) != std::string::npos,
+              ("M: role r" + std::to_string(i) + " loaded").c_str());
+        check(prompt.find(abody) != std::string::npos,
+              ("M: agent a" + std::to_string(i) + " loaded").c_str());
+
+        auto phdr = "# Knowledge: rule-p" + std::to_string(i) + ".md (project)";
+        auto rhdr = "# Knowledge: rule-r" + std::to_string(i) + ".md (role: doer)";
+        auto ahdr = "# Knowledge: rule-a" + std::to_string(i) + ".md (vault: test-agent)";
+        check(prompt.find(phdr) != std::string::npos,
+              ("M: project p" + std::to_string(i) + " annotated '(project)'").c_str());
+        check(prompt.find(rhdr) != std::string::npos,
+              ("M: role r" + std::to_string(i) + " annotated '(role: doer)'").c_str());
+        check(prompt.find(ahdr) != std::string::npos,
+              ("M: agent a" + std::to_string(i) + " annotated '(vault: test-agent)'").c_str());
+    }
+
+    check(prompt.find("rules omitted") == std::string::npos,
+          "M: no eviction note (6 < MAX_RULES)");
+
+    cleanup(l.root);
+}
+
+// --- Test N: 3-scope dedup chain (agent > role > project) ------------------
+
+static void test_three_scope_dedup_chain() {
+    std::cout << "\n=== N. 3-scope dedup: agent > role > project ===\n\n";
+
+    // Variant 1: same content lives in ALL THREE scopes — only the agent
+    // copy must emerge.
+    {
+        auto l = make_scoped_layout("test-agent");
+        auto doer = role_kdir(l, "doer");
+
+        write_kfile(l.project_kdir, "rule-foo.md", "do X\n");
+        write_kfile(doer,           "rule-foo.md", "do X\n");
+        write_kfile(l.vault_kdir,   "rule-foo.md", "do X\n");
+
+        sui::quorum::ContextAssembler assembler;
+        auto prompt = assembler.assemble(
+            "test-agent", l.vault_dir, "turn", "do something",
+            {}, {}, l.root, "doer");
+
+        // Body must appear exactly once.
+        size_t first = prompt.find("do X\n");
+        check(first != std::string::npos, "N1: rule body present");
+        check(prompt.find("do X\n", first + 1) == std::string::npos,
+              "N1: rule body appears exactly once across 3 scopes");
+        // Only the agent annotation survives.
+        check(prompt.find("# Knowledge: rule-foo.md (vault: test-agent)") != std::string::npos,
+              "N1: agent-scope header retained");
+        check(prompt.find("# Knowledge: rule-foo.md (role: doer)") == std::string::npos,
+              "N1: role-scope header suppressed by agent dup");
+        check(prompt.find("# Knowledge: rule-foo.md (project)") == std::string::npos,
+              "N1: project-scope header suppressed by agent dup");
+        check(prompt.find("rules omitted") == std::string::npos,
+              "N1: dedup is silent (no eviction note)");
+
+        cleanup(l.root);
+    }
+
+    // Variant 2: same content lives in project + role only (no agent copy).
+    // The role copy must win; project copy suppressed.
+    {
+        auto l = make_scoped_layout("test-agent");
+        auto doer = role_kdir(l, "doer");
+
+        write_kfile(l.project_kdir, "rule-bar.md", "do Y\n");
+        write_kfile(doer,           "rule-bar.md", "do Y\n");
+
+        sui::quorum::ContextAssembler assembler;
+        auto prompt = assembler.assemble(
+            "test-agent", l.vault_dir, "turn", "do something",
+            {}, {}, l.root, "doer");
+
+        size_t first = prompt.find("do Y\n");
+        check(first != std::string::npos, "N2: rule body present");
+        check(prompt.find("do Y\n", first + 1) == std::string::npos,
+              "N2: rule body appears exactly once across project+role");
+        check(prompt.find("# Knowledge: rule-bar.md (role: doer)") != std::string::npos,
+              "N2: role-scope header retained (more specific than project)");
+        check(prompt.find("# Knowledge: rule-bar.md (project)") == std::string::npos,
+              "N2: project-scope header suppressed by role dup");
+        check(prompt.find("rules omitted") == std::string::npos,
+              "N2: dedup is silent (no eviction note)");
+
+        cleanup(l.root);
+    }
+}
+
+// --- Test O: 3-scope cap on union ------------------------------------------
+
+static void test_three_scope_cap() {
+    std::cout << "\n=== O. 3-scope cap: 5 project + 5 role + 5 agent → 10 kept ===\n\n";
+
+    auto l = make_scoped_layout("test-agent");
+    auto doer = role_kdir(l, "doer");
+
+    // Interleave write order across the three scopes so recency isn't
+    // dominated by any single scope. The 10 most-recent will draw from all
+    // three and exercise mixed-annotation output.
+    for (int i = 0; i < 5; ++i) {
+        write_kfile(l.project_kdir, "rule-p" + std::to_string(i) + ".md",
+                    "PROJECT_BODY_" + std::to_string(i) + "\n");
+        write_kfile(doer,           "rule-r" + std::to_string(i) + ".md",
+                    "ROLE_BODY_" + std::to_string(i) + "\n");
+        write_kfile(l.vault_kdir,   "rule-a" + std::to_string(i) + ".md",
+                    "AGENT_BODY_" + std::to_string(i) + "\n");
+    }
+
+    sui::quorum::ContextAssembler assembler;
+    auto prompt = assembler.assemble(
+        "test-agent", l.vault_dir, "turn", "do something",
+        {}, {}, l.root, "doer");
+
+    check(prompt.find("[5 rules omitted") != std::string::npos,
+          "O: '[5 rules omitted' transparency note present");
+
+    // Exactly 10 rule headers in the prompt.
+    size_t loaded = 0;
+    size_t pos = 0;
+    while ((pos = prompt.find("# Knowledge: rule-", pos)) != std::string::npos) {
+        ++loaded;
+        ++pos;
+    }
+    check(loaded == 10, "O: exactly 10 rules loaded (MAX_RULES)");
+
+    // All three scope annotations represented in the kept set.
+    check(prompt.find("(project)") != std::string::npos,
+          "O: at least one project rule survives the cap");
+    check(prompt.find("(role: doer)") != std::string::npos,
+          "O: at least one role rule survives the cap");
+    check(prompt.find("(vault: test-agent)") != std::string::npos,
+          "O: at least one agent rule survives the cap");
+
+    cleanup(l.root);
+}
+
 // --- main -------------------------------------------------------------------
 
 int main() {
-    std::cout << "===================================================\n";
-    std::cout << "  Phase 7 Track 1+2 — assembler scope/cap unit tests\n";
-    std::cout << "===================================================\n";
+    std::cout << "=====================================================\n";
+    std::cout << "  Phase 7 Track 1+2+3 — assembler scope/cap unit tests\n";
+    std::cout << "=====================================================\n";
 
     test_rule_cap_eviction();
     test_no_eviction_mixed();
@@ -484,6 +729,11 @@ int main() {
     test_cap_on_union();
     test_dedup_identical_content();
     test_same_filename_different_content();
+    test_role_scope_alone();
+    test_role_scope_filtered();
+    test_three_scope_merge();
+    test_three_scope_dedup_chain();
+    test_three_scope_cap();
 
     std::cout << "\n---------------------------------------------------\n";
     std::cout << "  passed: " << g_passed << "  failed: " << g_failed << "\n";

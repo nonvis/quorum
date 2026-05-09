@@ -5,7 +5,7 @@
 #include <fstream>
 #include <functional>
 #include <string>
-#include <unordered_set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -19,9 +19,10 @@ struct ContextBudget {
 };
 
 // Hard cap on rule files preloaded into the prompt. Total across all scopes —
-// Track 2 (project) and Track 3 (role) will introduce additional scopes that
-// share this single budget. When the rule union exceeds MAX_RULES, oldest are
-// evicted and a transparency note is appended to the prompt.
+// project (.quorum/knowledge/), role (.quorum/knowledge/roles/<role>/), and
+// agent vault (<vault>/knowledge/) share this single budget. When the rule
+// union exceeds MAX_RULES, oldest are evicted and a transparency note is
+// appended to the prompt.
 constexpr size_t MAX_RULES = 10;
 
 // Filename-based classification of knowledge files. Used by assemble() to
@@ -91,6 +92,10 @@ public:
     }
 
     // Build a prompt string from agent vault + task description.
+    //
+    // `agent_role` selects the role-scope subdirectory used for role-scoped
+    // rules: <project_root>/.quorum/knowledge/roles/<agent_role>/. When empty
+    // (or when project_root is empty), role-scope resolution is skipped.
     [[nodiscard]] std::string assemble(const std::string& agent_name,
                                         const std::string& vault_dir,
                                         const std::string& task_type,
@@ -98,6 +103,7 @@ public:
                                         const std::string& team_roster = {},
                                         const std::string& skill_file = {},
                                         const std::string& project_root = {},
+                                        const std::string& agent_role = {},
                                         ContextBudget budget = {}) const {
         std::string prompt;
         size_t files_loaded = 0;
@@ -142,38 +148,50 @@ public:
             }
         }
 
-        // Load knowledge files. Phase 7 Track 1+2: filename-aware loading,
-        // resolved across two scopes:
-        //   - project: <project_root>/.quorum/knowledge/  (applies to all agents)
-        //   - vault:   <vault_dir>/knowledge/             (agent-specific)
+        // Load knowledge files. Phase 7 Track 1+2+3: filename-aware loading,
+        // resolved across THREE scopes (project → role → agent vault):
+        //   - project: <project_root>/.quorum/knowledge/                    (all agents)
+        //   - role:    <project_root>/.quorum/knowledge/roles/<agent_role>/ (every agent of this role)
+        //   - vault:   <vault_dir>/knowledge/                               (this agent only)
         //
         //   rule-*.md  → preloaded, sorted by recency, hard-capped at MAX_RULES
-        //                (cap operates on the UNION of both scopes)
+        //                (cap operates on the UNION across all 3 scopes)
         //   ref-*.md   → NOT preloaded (search-on-demand in Track 4)
         //   anything else → plain narrative; recency-loaded under remaining budget
         //
-        // Dedup: if the SAME content appears in both scopes (std::hash match),
-        // the agent-vault copy wins (most-specific) and the project copy is
-        // suppressed silently — NOT counted as a cap eviction. Agent intent
-        // is identical regardless of which file the daemon loads.
+        // Dedup priority (most-specific wins): agent > role > project. If the
+        // SAME content (std::hash match) appears in multiple scopes, only the
+        // most-specific copy is emitted; the rest are suppressed silently —
+        // NOT counted as cap evictions. The agent's intent is identical
+        // regardless of which file the daemon ultimately loads.
+        //
+        // Scope annotations in the emitted '# Knowledge:' header:
+        //   (project)         | (role: <role>)         | (vault: <agent>)
         //
         // Note: filesystem mtime stands in for createdAt. Once the daemon
         // tracks createdAt explicitly (Track 5/cache work), swap to that.
 
-        // A loaded knowledge entry tagged with its origin scope.
+        // A loaded knowledge entry tagged with its origin scope. `scope_rank`
+        // encodes specificity (lower = more specific) for dedup tie-breaking:
+        //   0 = agent vault, 1 = role, 2 = project.
         struct ScopedFile {
             std::filesystem::path path;
             std::filesystem::file_time_type mtime;
-            std::string scope_label;  // "project" or "vault: <agent>"
+            std::string scope_label;  // "project" | "role: <role>" | "vault: <agent>"
             std::string content;      // read once, reused for hash + emit
+            int scope_rank = 2;       // 0 agent, 1 role, 2 project
         };
 
         auto scope_for_vault = std::string("vault: ") + agent_name;
+        auto scope_for_role = agent_role.empty()
+            ? std::string{}
+            : std::string("role: ") + agent_role;
 
         // Walk one scope and partition by filename kind. Reads file content
         // eagerly so dedup can hash without re-reading.
         auto walk_scope = [&](const std::filesystem::path& dir,
                               const std::string& scope_label,
+                              int scope_rank,
                               std::vector<ScopedFile>& rules_out,
                               std::vector<ScopedFile>& plains_out) {
             if (!std::filesystem::exists(dir) || !std::filesystem::is_directory(dir)) return;
@@ -186,6 +204,7 @@ public:
                 sf.path = entry.path();
                 sf.mtime = entry.last_write_time();
                 sf.scope_label = scope_label;
+                sf.scope_rank = scope_rank;
                 sf.content = read_file(sf.path);
                 if (sf.content.empty()) continue;
 
@@ -204,42 +223,53 @@ public:
         // Skipped silently when project_root unset (e.g. unit tests in /tmp).
         if (!project_root.empty()) {
             auto project_knowledge = std::filesystem::path(project_root) / ".quorum" / "knowledge";
-            walk_scope(project_knowledge, "project", all_rules, all_plains);
-        }
+            walk_scope(project_knowledge, "project", /*scope_rank=*/2, all_rules, all_plains);
 
-        // Track which entries are agent-vault sourced — dedup uses this to
-        // resolve identical-content collisions toward agent (most specific).
-        size_t project_rule_count = all_rules.size();
-        size_t project_plain_count = all_plains.size();
+            // Role scope (resolves to <project_root>/.quorum/knowledge/roles/<agent_role>/).
+            // Skipped silently when agent_role is empty.
+            if (!agent_role.empty()) {
+                auto role_knowledge = std::filesystem::path(project_root) /
+                    ".quorum" / "knowledge" / "roles" / agent_role;
+                walk_scope(role_knowledge, scope_for_role, /*scope_rank=*/1,
+                           all_rules, all_plains);
+            }
+        }
 
         // Agent vault scope.
         auto vault_knowledge = std::filesystem::path(vault_dir) / "knowledge";
-        walk_scope(vault_knowledge, scope_for_vault, all_rules, all_plains);
+        walk_scope(vault_knowledge, scope_for_vault, /*scope_rank=*/0,
+                   all_rules, all_plains);
 
-        // Dedup: drop project entries whose content hash matches any agent
-        // entry. Suppression is silent and does NOT consume the eviction
-        // budget — duplicate content is the same rule, just colocated.
-        auto dedup_against_agent = [](std::vector<ScopedFile>& entries,
-                                       size_t project_count) {
-            if (project_count == 0 || entries.size() == project_count) return;
-            std::unordered_set<size_t> agent_hashes;
-            agent_hashes.reserve(entries.size() - project_count);
-            for (size_t i = project_count; i < entries.size(); ++i) {
-                agent_hashes.insert(std::hash<std::string>{}(entries[i].content));
+        // Dedup priority (agent > role > project): for any group of entries
+        // with identical content, keep only the most-specific (lowest
+        // scope_rank). Suppression is silent and does NOT consume the
+        // eviction budget — duplicate content is the same rule, just
+        // colocated across scopes.
+        auto dedup_by_specificity = [](std::vector<ScopedFile>& entries) {
+            if (entries.size() < 2) return;
+            // Per-content best rank seen so far.
+            std::unordered_map<size_t, int> best_rank;
+            best_rank.reserve(entries.size());
+            for (const auto& sf : entries) {
+                auto h = std::hash<std::string>{}(sf.content);
+                auto it = best_rank.find(h);
+                if (it == best_rank.end() || sf.scope_rank < it->second) {
+                    best_rank[h] = sf.scope_rank;
+                }
             }
             std::vector<ScopedFile> kept;
             kept.reserve(entries.size());
-            for (size_t i = 0; i < entries.size(); ++i) {
-                if (i < project_count) {
-                    auto h = std::hash<std::string>{}(entries[i].content);
-                    if (agent_hashes.count(h)) continue;  // suppressed by agent dup
+            for (auto& sf : entries) {
+                auto h = std::hash<std::string>{}(sf.content);
+                if (sf.scope_rank == best_rank[h]) {
+                    kept.push_back(std::move(sf));
                 }
-                kept.push_back(std::move(entries[i]));
+                // else: a more-specific scope has the same content → drop.
             }
             entries = std::move(kept);
         };
-        dedup_against_agent(all_rules, project_rule_count);
-        dedup_against_agent(all_plains, project_plain_count);
+        dedup_by_specificity(all_rules);
+        dedup_by_specificity(all_plains);
 
         // Sort by mtime DESC so most-recent wins regardless of scope.
         auto by_recency_desc = [](const ScopedFile& a, const ScopedFile& b) {

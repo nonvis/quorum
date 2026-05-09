@@ -25,12 +25,25 @@ inline int init_project() {
     fs::create_directories(".quorum/vaults/leader/knowledge");
     fs::create_directories(".quorum/teams");
     // Project-scope knowledge: rules/refs that apply to ALL agents.
-    // Phase 7 Track 2 — context_assembler resolves rules across project
-    // and per-agent vault scopes, with the cap operating on the union.
+    // Phase 7 Track 2 — context_assembler resolves rules across project,
+    // role, and per-agent vault scopes, with the cap operating on the union.
     fs::create_directories(".quorum/knowledge");
     {
         std::ofstream gk(".quorum/knowledge/.gitkeep", std::ios::trunc);
         // Empty file — keeps the directory under version control.
+    }
+
+    // Role-scope knowledge (Phase 7 Track 3): rules under
+    // .quorum/knowledge/roles/<role>/ apply to every agent of that role.
+    // Pre-create one subdir per built-in role so the convention is
+    // discoverable from a fresh init.
+    static constexpr const char* kRoles[] = {
+        "leader", "thinker", "doer", "reviewer", "scribe", "librarian",
+    };
+    for (const auto* role : kRoles) {
+        auto dir = std::string(".quorum/knowledge/roles/") + role;
+        fs::create_directories(dir);
+        std::ofstream gk(dir + "/.gitkeep", std::ios::trunc);
     }
 
     // 3. Write .quorum/config.yaml
@@ -153,6 +166,8 @@ inline int init_project() {
     std::cout << "  Created: .quorum/teams/\n";
     std::cout << "  Created: .quorum/knowledge/  "
               << "(project-wide rules and references that apply to all agents)\n";
+    std::cout << "  Created: .quorum/knowledge/roles/{leader,thinker,doer,reviewer,scribe,librarian}/  "
+              << "(role-specific rules apply to every agent of that role)\n";
     std::cout << "\nQuorum initialized. Next steps:\n";
     std::cout << "  1. Add agents (auto-discovered from .quorum/agents/):\n";
     std::cout << "     quorum agent create --role doer --name my-dev\n";
