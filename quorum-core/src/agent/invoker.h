@@ -21,6 +21,9 @@ struct InvocationResult {
     int64_t tokens_out{0};
     double cost{0.0};
     std::string session_id;  // session ID used/returned for this invocation
+    // Phase 7 Track 5 — Anthropic prompt-cache token accounting.
+    int64_t cache_creation_tokens{0};
+    int64_t cache_read_tokens{0};
 };
 
 // Spawns `claude -p` subprocess, reads prompt from tasks table, writes result back.
@@ -72,6 +75,19 @@ public:
         return "";  // executor in generic mode: no tool restrictions
     }
 
+    // Phase 7 Track 5 — pure helper that builds the
+    // `--append-system-prompt-file` flag segment. Returns the leading-space
+    // form so it can be concatenated directly into the shell command, mirror
+    // of build_tool_flags(). The path is NOT shell-escaped — the caller owns
+    // a daemon-controlled temp path under /tmp (matches existing temp_path
+    // handling for the prompt body), and shell escaping is intentionally not
+    // applied to keep behavior identical to tool_flags() conventions.
+    [[nodiscard]] static std::string build_system_prompt_flag(
+        const std::string& sysprompt_path) {
+        if (sysprompt_path.empty()) return "";
+        return " --append-system-prompt-file " + sysprompt_path;
+    }
+
     // Invoke a task by id. Reads prompt from DB, spawns claude -p, writes result back.
     //
     // `mode` is the conversation execution mode ("generic" or "brainstorm").
@@ -79,12 +95,18 @@ public:
     // it at the default; behavior matches pre-Phase-6 invoker.
     [[nodiscard]] InvocationResult invoke(int64_t task_id, const AgentMetadata& agent_meta,
                                           const std::string& mode = "generic") {
-        // Read prompt from tasks table
+        // Read prompt + system_prompt from tasks table.
+        // Phase 7 Track 5: system_prompt is the stable identity prefix
+        // (CONTEXT.md + SKILL.md + output rules), populated by the
+        // ConversationEngine via assemble_split(). prompt is the per-task
+        // user_message body.
         std::string prompt;
+        std::string system_prompt_body;
         std::string agent;
         std::string task_session_id;
         db_.query(
-            "SELECT prompt, agent, session_id FROM tasks WHERE id = ? AND status = 'active'",
+            "SELECT prompt, agent, session_id, system_prompt FROM tasks "
+            "WHERE id = ? AND status = 'active'",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_int64(stmt, 1, task_id);
             },
@@ -93,6 +115,8 @@ public:
                 agent = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
                 auto sid = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
                 if (sid) task_session_id = sid;
+                auto sp = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+                if (sp) system_prompt_body = sp;
             }
         );
 
@@ -102,17 +126,11 @@ public:
             return {.success = false, .error = err};
         }
 
-        // Prepend CONTEXT.md if the agent has one and it's not already in the prompt
-        if (!agent_meta.context_file.empty()) {
-            std::ifstream ctx(agent_meta.context_file);
-            if (ctx.is_open()) {
-                std::string context{std::istreambuf_iterator<char>(ctx),
-                                    std::istreambuf_iterator<char>()};
-                if (!context.empty()) {
-                    prompt = "# Agent Context\n\n" + context + "\n\n---\n\n" + prompt;
-                }
-            }
-        }
+        // Phase 7 Track 5: legacy CONTEXT.md prepend deleted. The assembler
+        // (assemble_split) is now the sole source of CONTEXT.md emission and
+        // routes it into system_prompt, not into the prompt body. Leaving the
+        // legacy prepend in place would double-emit CONTEXT.md whenever a
+        // conversation task ran (because system_prompt already contains it).
 
         // Write prompt to temp file to avoid shell escaping issues
         auto temp_path = "/tmp/quorum_prompt_" + std::to_string(task_id) + ".txt";
@@ -124,6 +142,21 @@ public:
                 return {.success = false, .error = err};
             }
             f << prompt;
+        }
+
+        // Write system_prompt to its own temp file when present. Daemon-
+        // controlled path; not shell-escaped (matches temp_path convention).
+        std::string sysprompt_path;
+        if (!system_prompt_body.empty()) {
+            sysprompt_path = "/tmp/quorum_sysprompt_" + std::to_string(task_id) + ".txt";
+            std::ofstream f(sysprompt_path, std::ios::trunc);
+            if (f.is_open()) {
+                f << system_prompt_body;
+            } else {
+                // Couldn't write the sysprompt — fall back to plain invocation
+                // (loses cache reuse but keeps the run going).
+                sysprompt_path.clear();
+            }
         }
 
         // Determine session flag
@@ -158,6 +191,12 @@ public:
         //   - brainstorm mode: ALL agents → read-only (overrides agent_class)
         std::string tool_flags = build_tool_flags(agent_meta.agent_class, mode);
 
+        // Phase 7 Track 5: --append-system-prompt-file lets the stable
+        // CONTEXT.md + SKILL.md + output-rules prefix benefit from
+        // Anthropic's prefix-cache across consecutive turns for the same
+        // agent. Empty string when sysprompt_path is empty.
+        std::string sysprompt_flag = build_system_prompt_flag(sysprompt_path);
+
         std::string model_flag;
         if (!agent_meta.model.empty()) {
             model_flag = " --model " + agent_meta.model;
@@ -177,14 +216,16 @@ public:
         auto cmd = cwd_prefix + "env -u CLAUDECODE cat " + temp_path
             + " | claude -p --dangerously-skip-permissions"
             + tool_flags
+            + sysprompt_flag
             + model_flag
             + session_flag
             + " --output-format json 2>&1";
 
         auto cmd_result = run_command(cmd);
 
-        // Clean up temp file
+        // Clean up temp files (prompt + sysprompt)
         std::remove(temp_path.c_str());
+        if (!sysprompt_path.empty()) std::remove(sysprompt_path.c_str());
 
         if (!cmd_result) {
             auto err = "claude -p process failed to launch for task " + std::to_string(task_id);
@@ -202,22 +243,36 @@ public:
                 std::cerr << "WARNING: session resume failed for task " << task_id
                           << " (session " << task_session_id << "), retrying fresh\n";
 
-                // Rewrite prompt to temp file (it was already cleaned up)
+                // Rewrite prompt + sysprompt temp files (they were cleaned up
+                // on the first exit path). Track 5: same sysprompt flag so
+                // the retry shares the cache prefix with the original try.
                 {
                     std::ofstream f(temp_path, std::ios::trunc);
                     if (f.is_open()) f << prompt;
+                }
+                if (!sysprompt_path.empty()) {
+                    std::ofstream f(sysprompt_path, std::ios::trunc);
+                    if (f.is_open()) {
+                        f << system_prompt_body;
+                    } else {
+                        // Match initial-write behavior on failure.
+                        sysprompt_path.clear();
+                        sysprompt_flag.clear();
+                    }
                 }
 
                 // Retry without -r, with --session-id for fresh session
                 auto retry_cmd = cwd_prefix + "env -u CLAUDECODE cat " + temp_path
                     + " | claude -p --dangerously-skip-permissions"
                     + tool_flags
+                    + sysprompt_flag
                     + model_flag
                     + " --session-id " + task_session_id
                     + " --output-format json 2>&1";
 
                 cmd_result = run_command(retry_cmd);
                 std::remove(temp_path.c_str());
+                if (!sysprompt_path.empty()) std::remove(sysprompt_path.c_str());
 
                 if (cmd_result && cmd_result->exit_code == 0) {
                     // Retry succeeded — continue with the retry result
@@ -252,6 +307,11 @@ public:
         // Parse token usage from validated JSON output
         int64_t tokens_in = json::extract_int(raw_output, "input_tokens");
         int64_t tokens_out = json::extract_int(raw_output, "output_tokens");
+        // Phase 7 Track 5: Anthropic prompt-cache token accounting. Both
+        // fields appear inside the standard "usage" object; the existing
+        // by-key extractor finds them regardless of nesting depth.
+        int64_t cache_creation = json::extract_int(raw_output, "cache_creation_input_tokens");
+        int64_t cache_read = json::extract_int(raw_output, "cache_read_input_tokens");
         double cost = json::extract_number(raw_output, "total_cost_usd");
 
         // Extract the result text from JSON
@@ -263,7 +323,8 @@ public:
         std::string effective_session_id = returned_session_id.value_or(task_session_id);
 
         // Update task in DB
-        mark_done(task_id, output_text, tokens_in, tokens_out, cost);
+        mark_done(task_id, output_text, tokens_in, tokens_out, cost,
+                  cache_creation, cache_read);
 
         return {
             .success = true,
@@ -273,6 +334,8 @@ public:
             .tokens_out = tokens_out,
             .cost = cost,
             .session_id = effective_session_id,
+            .cache_creation_tokens = cache_creation,
+            .cache_read_tokens = cache_read,
         };
     }
 
@@ -280,10 +343,13 @@ private:
     Database& db_;
 
     void mark_done(int64_t task_id, const std::string& result,
-                   int64_t tokens_in, int64_t tokens_out, double cost) {
+                   int64_t tokens_in, int64_t tokens_out, double cost,
+                   int64_t cache_creation, int64_t cache_read) {
         db_.execute(
             "UPDATE tasks SET status = 'done', result = ?, "
             "token_in = ?, token_out = ?, cost = ?, "
+            "cache_creation_input_tokens = ?, "
+            "cache_read_input_tokens = ?, "
             "completed_at = datetime('now') "
             "WHERE id = ?",
             [&](sqlite3_stmt* stmt) {
@@ -291,7 +357,9 @@ private:
                 sqlite3_bind_int64(stmt, 2, tokens_in);
                 sqlite3_bind_int64(stmt, 3, tokens_out);
                 sqlite3_bind_double(stmt, 4, cost);
-                sqlite3_bind_int64(stmt, 5, task_id);
+                sqlite3_bind_int64(stmt, 5, cache_creation);
+                sqlite3_bind_int64(stmt, 6, cache_read);
+                sqlite3_bind_int64(stmt, 7, task_id);
             }
         );
     }

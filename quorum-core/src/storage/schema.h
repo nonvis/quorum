@@ -49,7 +49,8 @@ inline void create_schema(Database& db) {
         "  started_at TEXT,"
         "  completed_at TEXT,"
         "  conversation_id INTEGER REFERENCES conversations(id),"
-        "  session_id TEXT"
+        "  session_id TEXT,"
+        "  system_prompt TEXT"  // Phase 7 Track 5 — stable per-agent prefix
         ")"
     );
     db.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)");

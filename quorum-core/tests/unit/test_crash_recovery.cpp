@@ -63,7 +63,10 @@ static void init_schema(sui::quorum::Database& db) {
         "  started_at TEXT,"
         "  completed_at TEXT,"
         "  conversation_id INTEGER REFERENCES conversations(id),"
-        "  session_id TEXT"
+        "  session_id TEXT,"
+        "  system_prompt TEXT,"  // Phase 7 Track 5
+        "  cache_creation_input_tokens INTEGER,"
+        "  cache_read_input_tokens INTEGER"
         ")"
     );
     db.execute(

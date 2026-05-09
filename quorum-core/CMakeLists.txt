@@ -179,3 +179,16 @@ add_test(NAME test_crash_recovery COMMAND test_crash_recovery)
 add_executable(test_assembler_rule_cap tests/unit/test_assembler_rule_cap.cpp)
 target_include_directories(test_assembler_rule_cap PRIVATE src)
 add_test(NAME test_assembler_rule_cap COMMAND test_assembler_rule_cap)
+
+# Phase 7 Track 5 — system-prompt split for cache reuse
+add_executable(test_assembler_split tests/unit/test_assembler_split.cpp)
+target_include_directories(test_assembler_split PRIVATE src)
+add_test(NAME test_assembler_split COMMAND test_assembler_split)
+
+add_executable(test_invoker_cache_fields tests/unit/test_invoker_cache_fields.cpp)
+target_include_directories(test_invoker_cache_fields PRIVATE src)
+add_test(NAME test_invoker_cache_fields COMMAND test_invoker_cache_fields)
+
+add_executable(test_invoker_sysprompt_flag tests/unit/test_invoker_sysprompt_flag.cpp)
+target_include_directories(test_invoker_sysprompt_flag PRIVATE src)
+add_test(NAME test_invoker_sysprompt_flag COMMAND test_invoker_sysprompt_flag)

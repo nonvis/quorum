@@ -191,6 +191,14 @@ static void init_schema(sui::quorum::Database& db) {
         db.execute("ALTER TABLE conversations ADD COLUMN team TEXT");
     if (!column_exists(db, "conversations", "mode"))
         db.execute("ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'generic'");
+
+    // Phase 7 Track 5 — system-prompt split + cache metrics
+    if (!column_exists(db, "tasks", "system_prompt"))
+        db.execute("ALTER TABLE tasks ADD COLUMN system_prompt TEXT");
+    if (!column_exists(db, "tasks", "cache_creation_input_tokens"))
+        db.execute("ALTER TABLE tasks ADD COLUMN cache_creation_input_tokens INTEGER");
+    if (!column_exists(db, "tasks", "cache_read_input_tokens"))
+        db.execute("ALTER TABLE tasks ADD COLUMN cache_read_input_tokens INTEGER");
 }
 
 // Count currently active (running) tasks

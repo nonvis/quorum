@@ -277,6 +277,20 @@ namespace detail {
     return scored;
 }
 
+// Phase 7 Track 5 — system-prompt split for Anthropic prefix-cache reuse.
+//
+// `claude -p --append-system-prompt-file <path>` appends to Claude Code's
+// default system prompt. Stable identity (CONTEXT.md + SKILL.md + output
+// rules) goes in system_prompt; per-task variable content (rules, refs,
+// inbox, roster, current task) stays in user_message and is piped via stdin.
+// Two consecutive turns for the same agent now share an identical prefix,
+// which lets the API charge `cache_read_input_tokens` instead of
+// `cache_creation_input_tokens` on the second hit.
+struct AssembledPrompt {
+    std::string system_prompt;   // stable per agent — appended via --append-system-prompt-file
+    std::string user_message;    // varies per task — piped via stdin
+};
+
 // Assembles context for agent invocation from vault contents + task description.
 // Reads CONTEXT.md (always), then recent knowledge files up to budget.
 class ContextAssembler {
@@ -326,11 +340,11 @@ public:
         return roster;
     }
 
-    // Build a prompt string from agent vault + task description.
-    //
-    // `agent_role` selects the role-scope subdirectory used for role-scoped
-    // rules: <project_root>/.quorum/knowledge/roles/<agent_role>/. When empty
-    // (or when project_root is empty), role-scope resolution is skipped.
+    // Legacy single-string entry point. Phase 7 Track 5 made assemble_split()
+    // the canonical builder; assemble() is now a thin shim that concatenates
+    // system_prompt + user_message with the historical "\n---\n\n" glue so
+    // pre-Track-5 callers and tests (test_assembler_rule_cap) see the same
+    // byte layout.
     [[nodiscard]] std::string assemble(const std::string& agent_name,
                                         const std::string& vault_dir,
                                         const std::string& task_type,
@@ -340,22 +354,48 @@ public:
                                         const std::string& project_root = {},
                                         const std::string& agent_role = {},
                                         ContextBudget budget = {}) const {
-        std::string prompt;
+        auto split = assemble_split(agent_name, vault_dir, task_type,
+                                    task_description, team_roster, skill_file,
+                                    project_root, agent_role, budget);
+        if (split.system_prompt.empty()) return split.user_message;
+        return split.system_prompt + "\n---\n\n" + split.user_message;
+    }
+
+    // Phase 7 Track 5 — split the assembled prompt into a stable system_prompt
+    // (CONTEXT.md + SKILL.md + output rules) and a per-task user_message
+    // (rules, refs, inbox, roster, current task).
+    //
+    // `agent_role` selects the role-scope subdirectory used for role-scoped
+    // rules: <project_root>/.quorum/knowledge/roles/<agent_role>/. When empty
+    // (or when project_root is empty), role-scope resolution is skipped.
+    [[nodiscard]] AssembledPrompt assemble_split(
+        const std::string& agent_name,
+        const std::string& vault_dir,
+        const std::string& task_type,
+        const std::string& task_description,
+        const std::string& team_roster = {},
+        const std::string& skill_file = {},
+        const std::string& project_root = {},
+        const std::string& agent_role = {},
+        ContextBudget budget = {}) const {
+        AssembledPrompt out;
+        std::string& system_prompt = out.system_prompt;
+        std::string& prompt = out.user_message;
         size_t files_loaded = 0;
 
-        // Always load CONTEXT.md first
+        // Always load CONTEXT.md first — stable identity, system_prompt.
         auto context_path = std::filesystem::path(vault_dir) / "CONTEXT.md";
         if (std::filesystem::exists(context_path)) {
             auto content = read_file(context_path);
             if (!content.empty()) {
-                prompt += "# Agent Context\n\n";
-                prompt += content;
-                prompt += "\n\n";
+                system_prompt += "# Agent Context\n\n";
+                system_prompt += content;
+                system_prompt += "\n\n";
                 ++files_loaded;
             }
         }
 
-        // Load SKILL.md if provided
+        // Load SKILL.md if provided — stable identity, system_prompt.
         if (!skill_file.empty()) {
             std::string spath = skill_file;
             // 1. Expand ~/
@@ -375,9 +415,9 @@ public:
             if (std::filesystem::exists(skill_path)) {
                 auto content = read_file(skill_path);
                 if (!content.empty()) {
-                    prompt += "# Skill Reference\n\n";
-                    prompt += content;
-                    prompt += "\n\n";
+                    system_prompt += "# Skill Reference\n\n";
+                    system_prompt += content;
+                    system_prompt += "\n\n";
                     ++files_loaded;
                 }
             }
@@ -623,7 +663,7 @@ public:
             prompt += team_roster;
         }
 
-        // Append task
+        // Append task — variable per turn, lives in user_message.
         prompt += "---\n\n";
         prompt += "# Current Task\n\n";
         prompt += "**Task type:** " + task_type + "\n";
@@ -631,52 +671,54 @@ public:
         prompt += task_description;
         prompt += "\n";
 
-        // Legacy output rules — only when NOT in team mode
-        if (team_roster.empty()) {
-            prompt += "\n";
-            prompt += "---\n\n";
-            prompt += "# CRITICAL — Output Rules\n\n";
-            prompt += "You MUST follow these rules for ALL output:\n\n";
-            prompt += "1. **NEVER write files directly.** Do not use Write, Edit, or any file-creation tool. ";
-            prompt += "All output goes in your response text as structured blocks.\n";
-            prompt += "2. **NEVER run commands that modify files.** You may READ files and RUN queries ";
-            prompt += "(sqlite3, cat, ls, grep), but never write, move, or delete.\n";
-            prompt += "3. **ALL findings must use structured blocks** in your response: ";
-            prompt += "VAULT_UPDATE, OBSERVATION, PROPOSAL, SUMMARY.\n";
-            prompt += "4. **Only write to YOUR vault.** VAULT_UPDATE paths must start with `knowledge/` or `inbox/`.\n\n";
-            prompt += "The daemon extracts these blocks from your response text and routes them. ";
-            prompt += "If you write files directly, the daemon cannot track your output.\n\n";
+        // Legacy output rules — stable identity, always emitted in
+        // system_prompt regardless of team mode. The legacy assemble() shim
+        // (concatenated as system_prompt + "\n---\n\n" + user_message)
+        // preserves the historical byte layout that the team-mode path
+        // previously depended on (the rules block was suppressed for team
+        // mode in the single-string flow). In split mode the rules become
+        // unconditional because they're identity, not per-turn instruction.
+        system_prompt += "---\n\n";
+        system_prompt += "# CRITICAL — Output Rules\n\n";
+        system_prompt += "You MUST follow these rules for ALL output:\n\n";
+        system_prompt += "1. **NEVER write files directly.** Do not use Write, Edit, or any file-creation tool. ";
+        system_prompt += "All output goes in your response text as structured blocks.\n";
+        system_prompt += "2. **NEVER run commands that modify files.** You may READ files and RUN queries ";
+        system_prompt += "(sqlite3, cat, ls, grep), but never write, move, or delete.\n";
+        system_prompt += "3. **ALL findings must use structured blocks** in your response: ";
+        system_prompt += "VAULT_UPDATE, OBSERVATION, PROPOSAL, SUMMARY.\n";
+        system_prompt += "4. **Only write to YOUR vault.** VAULT_UPDATE paths must start with `knowledge/` or `inbox/`.\n\n";
+        system_prompt += "The daemon extracts these blocks from your response text and routes them. ";
+        system_prompt += "If you write files directly, the daemon cannot track your output.\n\n";
 
-            // Append output format instructions
-            prompt += "---\n\n";
-            prompt += "# Output Instructions\n\n";
-            prompt += "When you have findings, use these structured blocks in your response:\n\n";
-            prompt += "- **VAULT_UPDATE**: Your current distilled beliefs. Overwrites previous. Keep concise.\n";
-            prompt += "- **OBSERVATION**: What you noticed. Timestamped, accumulated over time. Write freely.\n";
-            prompt += "- **PROPOSAL**: Actions requiring consensus from other agents.\n\n";
-            prompt += "```VAULT_UPDATE\n";
-            prompt += "path: knowledge/<filename>.md\n";
-            prompt += "content: |\n";
-            prompt += "  <content to write>\n";
-            prompt += "```\n\n";
-            prompt += "```PROPOSAL\n";
-            prompt += "title: <title>\n";
-            prompt += "requires_consensus_from: [<agent_names>]\n";
-            prompt += "content: |\n";
-            prompt += "  <proposal details>\n";
-            prompt += "```\n\n";
-            prompt += "```OBSERVATION\n";
-            prompt += "title: <what you observed>\n";
-            prompt += "tags: [<relevant, topic, tags>]\n";
-            prompt += "content: |\n";
-            prompt += "  <detailed observation -- accumulated, never overwritten>\n";
-            prompt += "```\n\n";
-            prompt += "```SUMMARY\n";
-            prompt += "<brief findings summary>\n";
-            prompt += "```\n";
-        }
+        system_prompt += "---\n\n";
+        system_prompt += "# Output Instructions\n\n";
+        system_prompt += "When you have findings, use these structured blocks in your response:\n\n";
+        system_prompt += "- **VAULT_UPDATE**: Your current distilled beliefs. Overwrites previous. Keep concise.\n";
+        system_prompt += "- **OBSERVATION**: What you noticed. Timestamped, accumulated over time. Write freely.\n";
+        system_prompt += "- **PROPOSAL**: Actions requiring consensus from other agents.\n\n";
+        system_prompt += "```VAULT_UPDATE\n";
+        system_prompt += "path: knowledge/<filename>.md\n";
+        system_prompt += "content: |\n";
+        system_prompt += "  <content to write>\n";
+        system_prompt += "```\n\n";
+        system_prompt += "```PROPOSAL\n";
+        system_prompt += "title: <title>\n";
+        system_prompt += "requires_consensus_from: [<agent_names>]\n";
+        system_prompt += "content: |\n";
+        system_prompt += "  <proposal details>\n";
+        system_prompt += "```\n\n";
+        system_prompt += "```OBSERVATION\n";
+        system_prompt += "title: <what you observed>\n";
+        system_prompt += "tags: [<relevant, topic, tags>]\n";
+        system_prompt += "content: |\n";
+        system_prompt += "  <detailed observation -- accumulated, never overwritten>\n";
+        system_prompt += "```\n\n";
+        system_prompt += "```SUMMARY\n";
+        system_prompt += "<brief findings summary>\n";
+        system_prompt += "```\n";
 
-        return prompt;
+        return out;
     }
 
 private:

@@ -148,10 +148,15 @@ static void test_assemble_with_roster() {
           "D: output contains task description");
     check(output.find("HANDOFF") != std::string::npos,
           "D: output contains 'HANDOFF' (routing instructions)");
-    check(output.find("VAULT_UPDATE") == std::string::npos,
-          "D: output does NOT contain 'VAULT_UPDATE' (legacy rules skipped)");
-    check(output.find("OBSERVATION") == std::string::npos,
-          "D: output does NOT contain 'OBSERVATION' (legacy rules skipped)");
+    // Phase 7 Track 5 inverted the pre-Track-5 contract: the output rules
+    // block ("VAULT_UPDATE", "OBSERVATION", "# CRITICAL — Output Rules") is
+    // stable identity and now lives unconditionally in system_prompt. The
+    // legacy assemble() shim concatenates system_prompt + user_message, so
+    // those tokens DO appear in team-mode output by design.
+    check(output.find("VAULT_UPDATE") != std::string::npos,
+          "D: output contains 'VAULT_UPDATE' (Track 5: rules always in system_prompt)");
+    check(output.find("OBSERVATION") != std::string::npos,
+          "D: output contains 'OBSERVATION' (Track 5: rules always in system_prompt)");
 
     cleanup_temp(vault_dir);
 }

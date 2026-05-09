@@ -368,15 +368,36 @@ app.post("/api/budget", async (c) => {
 
 app.get("/api/budget/agents", (c) => {
   try {
+    // Phase 7 Track 5 — surface Anthropic prompt-cache totals + hit ratio.
+    // cache_hit_ratio = cache_read / (cache_read + cache_creation + input)
+    // — i.e. share of input-side tokens served from cache. Coalesce nulls
+    // to 0 so legacy rows (pre-Track-5 columns) don't poison the math.
     const rows = freshQuery<{
       agent: string;
       tasks: number;
       total_cost: number;
       avg_cost: number;
+      cache_read_tokens: number;
+      cache_creation_tokens: number;
+      input_tokens: number;
+      cache_hit_ratio: number;
     }>(
       "SELECT agent, COUNT(*) as tasks, " +
       "ROUND(COALESCE(SUM(cost), 0), 2) as total_cost, " +
-      "ROUND(COALESCE(AVG(cost), 0), 2) as avg_cost " +
+      "ROUND(COALESCE(AVG(cost), 0), 2) as avg_cost, " +
+      "COALESCE(SUM(cache_read_input_tokens), 0) as cache_read_tokens, " +
+      "COALESCE(SUM(cache_creation_input_tokens), 0) as cache_creation_tokens, " +
+      "COALESCE(SUM(token_in), 0) as input_tokens, " +
+      "CASE WHEN " +
+      "  (COALESCE(SUM(cache_read_input_tokens), 0) + " +
+      "   COALESCE(SUM(cache_creation_input_tokens), 0) + " +
+      "   COALESCE(SUM(token_in), 0)) > 0 " +
+      "THEN ROUND(" +
+      "  CAST(COALESCE(SUM(cache_read_input_tokens), 0) AS REAL) / " +
+      "  (COALESCE(SUM(cache_read_input_tokens), 0) + " +
+      "   COALESCE(SUM(cache_creation_input_tokens), 0) + " +
+      "   COALESCE(SUM(token_in), 0)), 4) " +
+      "ELSE 0 END as cache_hit_ratio " +
       "FROM tasks WHERE cost > 0 GROUP BY agent ORDER BY total_cost DESC"
     );
     return c.json(rows);

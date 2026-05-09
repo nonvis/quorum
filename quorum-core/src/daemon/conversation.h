@@ -399,6 +399,7 @@ private:
                      const std::string& task_type, const std::string& prompt,
                      const std::string& session_id) {
         std::string final_prompt = prompt;
+        std::string final_system_prompt;
 
         if (assembler_) {
             // Build roster
@@ -419,26 +420,32 @@ private:
                 }
             }
 
-            // Assemble full prompt with vault context + roster + task
+            // Phase 7 Track 5 — split system_prompt (stable identity, cached
+            // by Anthropic prefix-cache) from user_message (per-task body
+            // piped on stdin). The system_prompt column is read by the
+            // invoker and emitted via --append-system-prompt-file.
             if (!vault_dir.empty()) {
-                final_prompt = assembler_->assemble(
+                auto split = assembler_->assemble_split(
                     agent, vault_dir, task_type, prompt,
                     roster, skill_file, project_root_, agent_role);
+                final_system_prompt = std::move(split.system_prompt);
+                final_prompt = std::move(split.user_message);
             } else {
-                // No vault -- just roster + task
+                // No vault -- just roster + task; nothing stable to cache.
                 final_prompt = roster + "\n---\n\n# Current Task\n\n" + prompt + "\n";
             }
         }
 
         db_.execute(
-            "INSERT INTO tasks (agent, task_type, prompt, conversation_id, session_id) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO tasks (agent, task_type, prompt, system_prompt, "
+            "conversation_id, session_id) VALUES (?, ?, ?, ?, ?, ?)",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_text(stmt, 1, agent.c_str(), -1, SQLITE_TRANSIENT);
                 sqlite3_bind_text(stmt, 2, task_type.c_str(), -1, SQLITE_TRANSIENT);
                 sqlite3_bind_text(stmt, 3, final_prompt.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_int64(stmt, 4, conv_id);
-                sqlite3_bind_text(stmt, 5, session_id.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 4, final_system_prompt.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_int64(stmt, 5, conv_id);
+                sqlite3_bind_text(stmt, 6, session_id.c_str(), -1, SQLITE_TRANSIENT);
             }
         );
     }
