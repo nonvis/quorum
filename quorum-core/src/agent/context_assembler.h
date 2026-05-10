@@ -468,6 +468,9 @@ public:
             std::string scope_label;  // "project" | "role: <role>" | "vault: <agent>"
             std::string content;      // read once, reused for hash + emit
             int scope_rank = 2;       // 0 agent, 1 role, 2 project
+            // Phase 9 Track 3: cached frontmatter tags for inventory rendering.
+            // Populated only for rules (kind == Rule); plains skip the parse.
+            std::vector<std::string> tags;
         };
 
         auto scope_for_vault = std::string("vault: ") + agent_name;
@@ -514,6 +517,10 @@ public:
                 if (sf.content.empty()) continue;
 
                 if (kind == KnowledgeKind::Rule) {
+                    // Phase 9 Track 3 — parse frontmatter tags once at walk
+                    // time (parity with RefEntry from Track 2). Zero extra
+                    // I/O: content was already read above.
+                    sf.tags = parse_frontmatter_tags(sf.content);
                     rules_out.push_back(std::move(sf));
                 } else {
                     plains_out.push_back(std::move(sf));
@@ -667,8 +674,13 @@ public:
         // see (project + role + agent vault, plus teammate vaults for the
         // brainstorm-mode scribe). Keeps the agent from defaulting to "create
         // new file" when an existing one would be the right VAULT_UPDATE
-        // target. Only filename + scope label + ISO mtime — Track 3 will
-        // enrich with frontmatter tags.
+        // target.
+        //
+        // Phase 9 Track 3 — line format:
+        //   `- <name> [t1, t2] (<scope>) — <human mtime>`
+        // Bracketed tag list is omitted entirely when the file's frontmatter
+        // has no tags (or for cross-vault metadata-only entries where we
+        // intentionally don't parse content).
         //
         // Sourced from `rules_for_inventory` (the pre-eviction copy) and
         // `all_refs` so cap-evicted rules still appear in the inventory.
@@ -678,17 +690,18 @@ public:
                 std::string filename;
                 std::string scope_label;
                 std::filesystem::file_time_type mtime;
+                std::vector<std::string> tags;  // Track 3: rendered as [a, b]
             };
             std::vector<InventoryEntry> inventory;
             inventory.reserve(rules_for_inventory.size() + all_refs.size());
 
             for (const auto& sf : rules_for_inventory) {
                 inventory.push_back({sf.path.filename().string(),
-                                     sf.scope_label, sf.mtime});
+                                     sf.scope_label, sf.mtime, sf.tags});
             }
             for (const auto& r : all_refs) {
                 inventory.push_back({r.path.filename().string(),
-                                     r.scope_label, r.mtime});
+                                     r.scope_label, r.mtime, r.tags});
             }
 
             // Brainstorm-mode scribe cross-vault: list rules + refs in
@@ -715,9 +728,14 @@ public:
                                 kentry.path().filename().string());
                             if (kind != KnowledgeKind::Rule &&
                                 kind != KnowledgeKind::Reference) continue;
+                            // Cross-vault entries are metadata-only (no
+                            // content read), so tags stay empty — the
+                            // emit loop will skip the [tags] bracket for
+                            // these lines.
                             inventory.push_back({kentry.path().filename().string(),
                                                  other_label,
-                                                 kentry.last_write_time()});
+                                                 kentry.last_write_time(),
+                                                 {}});
                         }
                     }
                 }
@@ -741,8 +759,22 @@ public:
                           "decide whether a VAULT_UPDATE should target an "
                           "existing file or create a new one.\n\n";
                 for (const auto& e : inventory) {
-                    prompt += "- " + e.filename + " (" + e.scope_label +
-                              ") — " + format_iso8601_utc(e.mtime) + "\n";
+                    prompt += "- " + e.filename;
+                    // Phase 9 Track 3: render tags as `[a, b, c]` between
+                    // filename and scope. Brackets are omitted entirely
+                    // when the file has no tags so untagged lines stay
+                    // visually clean (and so cross-vault metadata-only
+                    // entries don't show a phantom empty bracket pair).
+                    if (!e.tags.empty()) {
+                        prompt += " [";
+                        for (size_t i = 0; i < e.tags.size(); ++i) {
+                            if (i > 0) prompt += ", ";
+                            prompt += e.tags[i];
+                        }
+                        prompt += "]";
+                    }
+                    prompt += " (" + e.scope_label + ") — " +
+                              format_human_mtime(e.mtime) + "\n";
                 }
                 if (inv_evicted > 0) {
                     prompt += "\n[" + std::to_string(inv_evicted) +
@@ -871,6 +903,35 @@ private:
         char buf[32];
         std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
         return std::string(buf);
+    }
+
+    // Phase 9 Track 3 — render a filesystem mtime as a human-relative string
+    // (e.g. "just now", "5m ago", "3h ago", "2d ago"). Used by the
+    // ## Vault Inventory section so agents see recency at a glance without
+    // parsing ISO timestamps. Negative deltas (future mtimes from clock
+    // skew) clamp to "just now".
+    [[nodiscard]] static std::string format_human_mtime(
+        const std::filesystem::file_time_type& ft) {
+        std::chrono::system_clock::time_point sys;
+#if defined(__cpp_lib_chrono) && __cpp_lib_chrono >= 201907L
+        sys = std::chrono::clock_cast<std::chrono::system_clock>(ft);
+#else
+        // Pre-C++20 fallback: anchor via now() delta (mirrors
+        // format_iso8601_utc on older toolchains).
+        auto delta = ft - std::filesystem::file_time_type::clock::now();
+        sys = std::chrono::system_clock::now() +
+            std::chrono::duration_cast<std::chrono::system_clock::duration>(delta);
+#endif
+        auto now = std::chrono::system_clock::now();
+        auto delta_sec = std::chrono::duration_cast<std::chrono::seconds>(
+            now - sys).count();
+        if (delta_sec < 60) return "just now";
+        auto delta_min = delta_sec / 60;
+        if (delta_min < 60) return std::to_string(delta_min) + "m ago";
+        auto delta_hr = delta_min / 60;
+        if (delta_hr < 24) return std::to_string(delta_hr) + "h ago";
+        auto delta_day = delta_hr / 24;
+        return std::to_string(delta_day) + "d ago";
     }
 
     // List files sorted by modification time (most recent first)
