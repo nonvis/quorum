@@ -185,6 +185,11 @@ add_executable(test_assembler_split tests/unit/test_assembler_split.cpp)
 target_include_directories(test_assembler_split PRIVATE src)
 add_test(NAME test_assembler_split COMMAND test_assembler_split)
 
+# Phase 9 Track 1 — ## Vault Inventory injection
+add_executable(test_assembler_inventory tests/unit/test_assembler_inventory.cpp)
+target_include_directories(test_assembler_inventory PRIVATE src)
+add_test(NAME test_assembler_inventory COMMAND test_assembler_inventory)
+
 add_executable(test_invoker_cache_fields tests/unit/test_invoker_cache_fields.cpp)
 target_include_directories(test_invoker_cache_fields PRIVATE src)
 add_test(NAME test_invoker_cache_fields COMMAND test_invoker_cache_fields)

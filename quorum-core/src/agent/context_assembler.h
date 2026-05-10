@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <ctime>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -346,10 +349,12 @@ public:
                                         const std::string& skill_file = {},
                                         const std::string& project_root = {},
                                         const std::string& agent_role = {},
-                                        ContextBudget budget = {}) const {
+                                        ContextBudget budget = {},
+                                        const std::string& conversation_mode = {}) const {
         auto split = assemble_split(agent_name, vault_dir, task_type,
                                     task_description, team_roster, skill_file,
-                                    project_root, agent_role, budget);
+                                    project_root, agent_role, budget,
+                                    conversation_mode);
         if (split.system_prompt.empty()) return split.user_message;
         return split.system_prompt + "\n---\n\n" + split.user_message;
     }
@@ -370,7 +375,8 @@ public:
         const std::string& skill_file = {},
         const std::string& project_root = {},
         const std::string& agent_role = {},
-        ContextBudget budget = {}) const {
+        ContextBudget budget = {},
+        const std::string& conversation_mode = {}) const {
         AssembledPrompt out;
         std::string& system_prompt = out.system_prompt;
         std::string& prompt = out.user_message;
@@ -562,6 +568,12 @@ public:
         std::sort(all_rules.begin(), all_rules.end(), by_recency_desc);
         std::sort(all_plains.begin(), all_plains.end(), by_recency_desc);
 
+        // Phase 9 Track 1 — snapshot the un-evicted rule list for the
+        // ## Vault Inventory section. The inventory must surface ALL rules
+        // the agent could plausibly target with a VAULT_UPDATE, not just
+        // the recency-capped subset that gets preloaded.
+        std::vector<ScopedFile> rules_for_inventory = all_rules;
+
         // Apply MAX_RULES cap on the UNION of both scopes (recency wins).
         size_t evicted = 0;
         if (all_rules.size() > MAX_RULES) {
@@ -629,6 +641,99 @@ public:
                     prompt += "\n";
                 }
                 prompt += "Use the Read tool to load full content if any look relevant.\n\n";
+            }
+        }
+
+        // Phase 9 Track 1 — ## Vault Inventory
+        //
+        // Lists every rule-*.md and ref-*.md the agent's resolution scope can
+        // see (project + role + agent vault, plus teammate vaults for the
+        // brainstorm-mode scribe). Keeps the agent from defaulting to "create
+        // new file" when an existing one would be the right VAULT_UPDATE
+        // target. Only filename + scope label + ISO mtime — Track 3 will
+        // enrich with frontmatter tags.
+        //
+        // Sourced from `rules_for_inventory` (the pre-eviction copy) and
+        // `all_refs` so cap-evicted rules still appear in the inventory.
+        // The 50-entry cap operates on the union sorted by mtime DESC.
+        {
+            struct InventoryEntry {
+                std::string filename;
+                std::string scope_label;
+                std::filesystem::file_time_type mtime;
+            };
+            std::vector<InventoryEntry> inventory;
+            inventory.reserve(rules_for_inventory.size() + all_refs.size());
+
+            for (const auto& sf : rules_for_inventory) {
+                inventory.push_back({sf.path.filename().string(),
+                                     sf.scope_label, sf.mtime});
+            }
+            for (const auto& r : all_refs) {
+                inventory.push_back({r.path.filename().string(),
+                                     r.scope_label, r.mtime});
+            }
+
+            // Brainstorm-mode scribe cross-vault: list rules + refs in
+            // teammate vaults the scribe can cross-write into. Teammate
+            // vaults are sibling dirs of `vault_dir` under <base>/vaults/.
+            // Only filenames + mtimes are read (no content) — inventory is
+            // metadata-only.
+            if (agent_role == "scribe" && conversation_mode == "brainstorm") {
+                auto vault_path = std::filesystem::path(vault_dir);
+                auto vaults_root = vault_path.parent_path();
+                if (std::filesystem::exists(vaults_root) &&
+                    std::filesystem::is_directory(vaults_root)) {
+                    for (const auto& sib : std::filesystem::directory_iterator(vaults_root)) {
+                        if (!sib.is_directory()) continue;
+                        auto other_name = sib.path().filename().string();
+                        if (other_name == agent_name) continue;
+                        auto other_knowledge = sib.path() / "knowledge";
+                        if (!std::filesystem::exists(other_knowledge) ||
+                            !std::filesystem::is_directory(other_knowledge)) continue;
+                        std::string other_label = "vault: " + other_name;
+                        for (const auto& kentry : std::filesystem::directory_iterator(other_knowledge)) {
+                            if (!kentry.is_regular_file()) continue;
+                            auto kind = classify_knowledge_filename(
+                                kentry.path().filename().string());
+                            if (kind != KnowledgeKind::Rule &&
+                                kind != KnowledgeKind::Reference) continue;
+                            inventory.push_back({kentry.path().filename().string(),
+                                                 other_label,
+                                                 kentry.last_write_time()});
+                        }
+                    }
+                }
+            }
+
+            if (!inventory.empty()) {
+                std::sort(inventory.begin(), inventory.end(),
+                          [](const InventoryEntry& a, const InventoryEntry& b) {
+                              return a.mtime > b.mtime;
+                          });
+
+                constexpr size_t kInventoryCap = 50;
+                size_t inv_evicted = 0;
+                if (inventory.size() > kInventoryCap) {
+                    inv_evicted = inventory.size() - kInventoryCap;
+                    inventory.resize(kInventoryCap);
+                }
+
+                prompt += "## Vault Inventory\n\n";
+                prompt += "Knowledge files in your scope. Use this list to "
+                          "decide whether a VAULT_UPDATE should target an "
+                          "existing file or create a new one.\n\n";
+                for (const auto& e : inventory) {
+                    prompt += "- " + e.filename + " (" + e.scope_label +
+                              ") — " + format_iso8601_utc(e.mtime) + "\n";
+                }
+                if (inv_evicted > 0) {
+                    prompt += "\n[" + std::to_string(inv_evicted) +
+                              " additional files omitted from inventory — "
+                              "most-recent " + std::to_string(kInventoryCap) +
+                              " listed]\n";
+                }
+                prompt += "\n";
             }
         }
 
@@ -719,6 +824,36 @@ private:
         std::ifstream f(path);
         if (!f.is_open()) return {};
         return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
+    }
+
+    // Phase 9 Track 1 — render a filesystem mtime as ISO-8601 UTC
+    // (e.g. "2026-05-10T14:23:11Z"). Used by the ## Vault Inventory
+    // section. clock_cast keeps the conversion portable across libc++ /
+    // libstdc++; falls back to a now-anchored offset on platforms where
+    // clock_cast is unavailable (older toolchains).
+    [[nodiscard]] static std::string format_iso8601_utc(
+        const std::filesystem::file_time_type& ft) {
+        std::time_t t;
+#if defined(__cpp_lib_chrono) && __cpp_lib_chrono >= 201907L
+        auto sys = std::chrono::clock_cast<std::chrono::system_clock>(ft);
+        t = std::chrono::system_clock::to_time_t(sys);
+#else
+        // Pre-C++20 fallback: anchor via now() delta. Loses no precision
+        // for our purpose (seconds-resolution display).
+        auto delta = ft - std::filesystem::file_time_type::clock::now();
+        auto sys = std::chrono::system_clock::now() +
+            std::chrono::duration_cast<std::chrono::system_clock::duration>(delta);
+        t = std::chrono::system_clock::to_time_t(sys);
+#endif
+        std::tm tm{};
+#ifdef _WIN32
+        gmtime_s(&tm, &t);
+#else
+        gmtime_r(&t, &tm);
+#endif
+        char buf[32];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
+        return std::string(buf);
     }
 
     // List files sorted by modification time (most recent first)

@@ -424,10 +424,20 @@ private:
             // by Anthropic prefix-cache) from user_message (per-task body
             // piped on stdin). The system_prompt column is read by the
             // invoker and emitted via --append-system-prompt-file.
+            //
+            // Phase 9 Track 1 — pass conversation_mode through to the
+            // assembler so brainstorm-mode scribes get cross-vault
+            // inventory entries. Mode is sourced from the conversation row
+            // (set by start() / start_team_with_mode()).
+            std::string conv_mode;
+            if (auto conv = db_.get_conversation(conv_id)) {
+                conv_mode = conv->mode;
+            }
             if (!vault_dir.empty()) {
                 auto split = assembler_->assemble_split(
                     agent, vault_dir, task_type, prompt,
-                    roster, skill_file, project_root_, agent_role);
+                    roster, skill_file, project_root_, agent_role,
+                    /*budget=*/{}, conv_mode);
                 final_system_prompt = std::move(split.system_prompt);
                 final_prompt = std::move(split.user_message);
             } else {
