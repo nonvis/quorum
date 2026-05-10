@@ -137,6 +137,7 @@ static void print_usage(const char* prog) {
               << "  " << prog << " benchmark --role <r> --task <name>          Run one synthetic benchmark for a role-specialty\n"
               << "  " << prog << " benchmark --role <r>                        Run all benchmarks for a role-specialty (aggregate)\n"
               << "  " << prog << " benchmark --role <r> --dry-run              Smoke-test setup; skip the daemon spawn\n"
+              << "  " << prog << " benchmark --role <r> --keep-tempdir         Skip tempdir cleanup; print path for inspection\n"
               << "  " << prog << " status                                    List conversations\n"
               << "  " << prog << " --config <path>                            Start daemon\n"
               << "  " << prog << " --config <path> converse --budget 3.0 \"g\"  Custom budget\n"
@@ -445,6 +446,7 @@ int main(int argc, char* argv[]) {
     std::string bench_role;
     std::string bench_task;
     bool bench_dry_run = false;
+    bool bench_keep_tempdir = false;
     bool exit_on_complete = false;
 
     if (subcommand == "converse") {
@@ -515,6 +517,8 @@ int main(int argc, char* argv[]) {
                 bench_task = sub_args[++i];
             } else if (sub_args[i] == "--dry-run") {
                 bench_dry_run = true;
+            } else if (sub_args[i] == "--keep-tempdir") {
+                bench_keep_tempdir = true;
             }
         }
     } else if (!subcommand.empty() && subcommand != "status") {
@@ -542,7 +546,7 @@ int main(int argc, char* argv[]) {
             }
         }
         return sui::quorum::cli::run_benchmark(
-            bench_role, bench_task, bench_dry_run, verbose);
+            bench_role, bench_task, bench_dry_run, verbose, bench_keep_tempdir);
     }
 
     // Teams doesn't need --config -- reads .quorum/teams/ directly

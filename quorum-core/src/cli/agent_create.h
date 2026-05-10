@@ -130,7 +130,7 @@ inline std::string generate_context_md(
                 << role << "). " << description << "\n"
                 << universal_rules_for_role(role);
             sui::quorum::vault::write_context_with_history(context_path, oss.str());
-            return "minimal -- template not found";
+            return "no template; minimal scaffold used";
         }
     }
 
@@ -141,7 +141,7 @@ inline std::string generate_context_md(
             << role << "). " << description << "\n"
             << universal_rules_for_role(role);
         sui::quorum::vault::write_context_with_history(context_path, oss.str());
-        return "minimal -- template not found";
+        return "no template; minimal scaffold used";
     }
 
     // AI mode: use claude -p to fill the template

@@ -37,7 +37,6 @@
 // resolution + the parser. Real benchmark runs (Track 9) hit the daemon.
 
 #include <algorithm>
-#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -54,7 +53,6 @@
 #include "agent/rubric.h"
 #include "cli/agent_create.h"
 #include "cli/init.h"
-#include "storage/database.h"
 #include "utils/subprocess.h"
 
 namespace fs = std::filesystem;
@@ -201,7 +199,8 @@ run_one_benchmark(const std::string& role_specialty,
                   const std::string& task_name,
                   const fs::path& benchmarks_dir,
                   bool dry_run,
-                  bool verbose) {
+                  bool verbose,
+                  bool keep_tempdir = false) {
     namespace bd = benchmark_detail;
 
     // 1. Locate task dir + read task.md
@@ -271,7 +270,12 @@ run_one_benchmark(const std::string& role_specialty,
     auto cleanup = [&]() {
         try {
             fs::current_path(saved_cwd);
-            fs::remove_all(tempdir);
+            if (keep_tempdir) {
+                std::cout << "  Tempdir kept (--keep-tempdir): "
+                          << tempdir.string() << "\n";
+            } else {
+                fs::remove_all(tempdir);
+            }
         } catch (...) {
             // best-effort cleanup
         }
@@ -456,7 +460,8 @@ inline void print_aggregate(const std::string& role_specialty,
 inline int run_benchmark(const std::string& role_specialty,
                          const std::string& task_name = "",
                          bool dry_run = false,
-                         bool verbose = false) {
+                         bool verbose = false,
+                         bool keep_tempdir = false) {
     namespace bd = benchmark_detail;
 
     if (role_specialty.empty()) {
@@ -493,7 +498,8 @@ inline int run_benchmark(const std::string& role_specialty,
         std::cout << "Running benchmark: " << role_specialty
                   << "/" << task_name << "\n";
         auto score = run_one_benchmark(role_specialty, task_name,
-                                        benchmarks_dir, dry_run, verbose);
+                                        benchmarks_dir, dry_run, verbose,
+                                        keep_tempdir);
         if (score) {
             std::cout << "Score: " << std::fixed << std::setprecision(0)
                       << *score << "\n";
@@ -517,7 +523,8 @@ inline int run_benchmark(const std::string& role_specialty,
         std::cout << "[" << (results.size() + 1) << "/" << tasks.size()
                   << "] " << t << "\n";
         auto score = run_one_benchmark(role_specialty, t,
-                                        benchmarks_dir, dry_run, verbose);
+                                        benchmarks_dir, dry_run, verbose,
+                                        keep_tempdir);
         results.push_back({t, score});
     }
 

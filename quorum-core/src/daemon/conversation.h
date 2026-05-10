@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "utils/config.h"
-#include "utils/uuid.h"
 #include "storage/database.h"
 #include "agent/output_parser.h"
 #include "agent/context_assembler.h"

@@ -35,8 +35,6 @@
 
 #include "agent/context_assembler.h"
 #include "agent/output_parser.h"
-#include "daemon/conversation.h"
-#include "storage/database.h"
 #include "utils/config.h"
 #include "vault/vault_manager.h"
 
