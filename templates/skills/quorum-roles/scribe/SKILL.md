@@ -172,11 +172,15 @@ Decision rule:
 - **Topic overlaps an existing entry** — reuse that entry's exact
   filename from the inventory's filename column. Update in place; do
   not coin a new slug. The daemon will overwrite the file in place.
-- **Topic is genuinely new** — create a new file. Pick a descriptive
-  filename consistent with the existing prefix conventions
-  (`rule-*.md` for always-on directives, `ref-*.md` for searchable
-  references). The canonical slug-naming convention is documented
-  separately; for now, follow the pattern of nearby inventory entries.
+- **Topic is genuinely new** — create a new file. Slug format is
+  kebab-case, content keywords only, 2–5 tokens, no dates, no version
+  suffixes, no conversation IDs. Examples:
+  - `rule-cargo-fmt-before-commit.md` — always-on policy
+  - `rule-no-amend-after-push.md` — always-on policy
+  - `ref-escrow-pattern.md` — searchable design reference
+  - `ref-walrus-blob-lifecycle.md` — searchable domain reference
+  Avoid `rule-2026-05-style.md` (date causes drift), `ref-style.md`
+  (single-word too vague), `rule-style-v2.md` (update in place instead).
 - **Inventory is empty or absent** — create freely; nothing to reuse.
 
 ### Exception: per-conversation narrative notes
