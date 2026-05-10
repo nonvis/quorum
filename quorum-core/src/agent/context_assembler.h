@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "utils/config.h"
+#include "utils/frontmatter.h"
 
 namespace sui::quorum {
 
@@ -81,6 +82,7 @@ struct RefEntry {
     int scope_rank = 2;
     std::string content;
     std::filesystem::file_time_type mtime{};
+    std::vector<std::string> tags;  // Phase 9 Track 2: cached frontmatter tags
 };
 
 namespace detail {
@@ -257,7 +259,19 @@ namespace detail {
 
         int fn_hits = detail::count_token_matches(fname_lower, tokens);
         int content_hits = detail::count_token_matches(content_lower, tokens);
-        int score = fn_hits * 3 + content_hits;
+
+        // Phase 9 Track 2 — exact (case-insensitive) whole-tag matches
+        // between query tokens and the ref's cached frontmatter tags.
+        // Each (query_token, tag) equality contributes 1; weight ×5.
+        // Tags were already lowercased at parse time.
+        int tag_hits = 0;
+        for (const auto& tok : tokens) {
+            for (const auto& tag : r.tags) {
+                if (tok == tag) ++tag_hits;
+            }
+        }
+
+        int score = fn_hits * 3 + tag_hits * 5 + content_hits;
         if (score <= 0) continue;
 
         ScoredRef s;
@@ -484,6 +498,9 @@ public:
                     r.scope_rank = scope_rank;
                     r.mtime = entry.last_write_time();
                     r.content = read_file(r.path);
+                    // Phase 9 Track 2 — parse frontmatter tags once at walk
+                    // time so search_references doesn't re-parse per query.
+                    r.tags = parse_frontmatter_tags(r.content);
                     refs_out.push_back(std::move(r));
                     continue;
                 }

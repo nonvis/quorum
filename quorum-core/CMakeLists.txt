@@ -190,6 +190,11 @@ add_executable(test_assembler_inventory tests/unit/test_assembler_inventory.cpp)
 target_include_directories(test_assembler_inventory PRIVATE src)
 add_test(NAME test_assembler_inventory COMMAND test_assembler_inventory)
 
+# Phase 9 Track 2 — frontmatter tag parsing + scoring
+add_executable(test_frontmatter_scoring tests/unit/test_frontmatter_scoring.cpp)
+target_include_directories(test_frontmatter_scoring PRIVATE src)
+add_test(NAME test_frontmatter_scoring COMMAND test_frontmatter_scoring)
+
 add_executable(test_invoker_cache_fields tests/unit/test_invoker_cache_fields.cpp)
 target_include_directories(test_invoker_cache_fields PRIVATE src)
 add_test(NAME test_invoker_cache_fields COMMAND test_invoker_cache_fields)
