@@ -79,7 +79,7 @@ prompt: {What was done, files changed, build/test results}
 Rules:
 - Never HANDOFF to yourself
 - HANDOFF must be a standalone block at the very end of your response
-- Always route to scribe (not done) — scribe records your work
+- Routing target follows the team-aware rule from "Order of Operations" #5: HANDOFF to evaluator if evaluator is in your team, otherwise to scribe. Never HANDOFF directly to `done` — scribe (or evaluator → scribe) records your work first.
 
 ### SUMMARY
 
