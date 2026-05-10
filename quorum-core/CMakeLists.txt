@@ -219,6 +219,13 @@ target_include_directories(test_evaluator_pipeline PRIVATE src)
 target_link_libraries(test_evaluator_pipeline PRIVATE SQLite::SQLite3)
 add_test(NAME test_evaluator_pipeline COMMAND test_evaluator_pipeline)
 
+# Phase 9 Track 6 — multi-conversation accumulation (#21) + inventory-aware
+# update wiring (#23). Both cases share parser + VaultManager setup.
+add_executable(test_inventory_write_side tests/integration/test_inventory_write_side.cpp)
+target_include_directories(test_inventory_write_side PRIVATE src)
+target_link_libraries(test_inventory_write_side PRIVATE SQLite::SQLite3)
+add_test(NAME test_inventory_write_side COMMAND test_inventory_write_side)
+
 # Phase 8 Track 5 / Track 6 #28 — rubric override integration test
 add_executable(test_benchmark_runner tests/integration/test_benchmark_runner.cpp)
 target_include_directories(test_benchmark_runner PRIVATE src)
