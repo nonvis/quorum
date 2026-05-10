@@ -160,6 +160,38 @@ agent's task prompt — well-named ref filenames boost retrieval
 precision (filename token matches are weighted 3x higher than content
 matches).
 
+## Consult Vault Inventory Before VAULT_UPDATE
+
+Every prompt you receive now includes a `## Vault Inventory` section
+listing the knowledge files already in your scope (filename, tags,
+modified-time). Before emitting a `VAULT_UPDATE` for a `rule-*.md` or
+`ref-*.md` file, scan that inventory.
+
+Decision rule:
+
+- **Topic overlaps an existing entry** — reuse that entry's exact
+  filename from the inventory's filename column. Update in place; do
+  not coin a new slug. The daemon will overwrite the file in place.
+- **Topic is genuinely new** — create a new file. Pick a descriptive
+  filename consistent with the existing prefix conventions
+  (`rule-*.md` for always-on directives, `ref-*.md` for searchable
+  references). The canonical slug-naming convention is documented
+  separately; for now, follow the pattern of nearby inventory entries.
+- **Inventory is empty or absent** — create freely; nothing to reuse.
+
+### Exception: per-conversation narrative notes
+
+`conv-{N}-task-{M}.md` files (Job 3 above) are **always-create**, never
+reused. They are append-only audit logs of what happened in each
+conversation, by design (Phase 7). The inventory will list previous
+`conv-*-task-*.md` files; ignore them when deciding whether to write
+today's narrative note. Today's narrative note is always a fresh file
+with today's `{N}` and `{M}`.
+
+This exception applies ONLY to `conv-*-task-*.md`. Any other plain-named
+note (e.g. `2026-05-architecture-notes.md`) follows the standard
+consult-before-create rule.
+
 ## Block Formats
 
 ### HANDOFF — always to done

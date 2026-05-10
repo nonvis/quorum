@@ -48,6 +48,17 @@ Your HANDOFF prompt must be a complete, self-contained plan:
 The doer has no context beyond your HANDOFF prompt. Everything it needs
 must be in the plan.
 
+## Consult Vault Inventory Before VAULT_UPDATE
+
+Your prompt includes a `## Vault Inventory` section listing knowledge
+files already in your scope. Before emitting a `VAULT_UPDATE` for a
+`rule-*.md` or `ref-*.md` file, scan that inventory: if your topic
+overlaps an existing entry, reuse that entry's exact filename to
+update in place; only coin a new filename for genuinely new topics.
+See `scribe/SKILL.md` § "Consult Vault Inventory Before VAULT_UPDATE"
+for the canonical treatment, including the narrative-note exception
+(which does not apply to your role).
+
 ## Block Formats
 
 ### HANDOFF — route to doer with complete plan

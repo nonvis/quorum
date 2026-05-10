@@ -80,6 +80,17 @@ Evaluator mostly doesn't run in brainstorm mode. Brainstorm produces curated kno
 
 If invoked in brainstorm anyway, score the curated knowledge files for clarity, focus, and actionability against a placeholder rubric (clarity / focus / actionability, equal weights). If no placeholder rubric is configured, skip evaluation: emit an EVALUATION block with `total: 0` and a note explaining brainstorm mode was not scored, then HANDOFF to scribe.
 
+## Consult Vault Inventory Before VAULT_UPDATE
+
+Your prompt includes a `## Vault Inventory` section listing knowledge
+files already in your scope. Before emitting a `VAULT_UPDATE` for a
+`rule-*.md` or `ref-*.md` file, scan that inventory: if your topic
+overlaps an existing entry, reuse that entry's exact filename to
+update in place; only coin a new filename for genuinely new topics.
+See `scribe/SKILL.md` § "Consult Vault Inventory Before VAULT_UPDATE"
+for the canonical treatment, including the narrative-note exception
+(which does not apply to your role).
+
 ## Block Formats
 
 ### EVALUATION — score breakdown
