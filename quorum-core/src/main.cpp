@@ -445,6 +445,7 @@ int main(int argc, char* argv[]) {
     std::string bench_role;
     std::string bench_task;
     bool bench_dry_run = false;
+    bool exit_on_complete = false;
 
     if (subcommand == "converse") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
@@ -461,6 +462,8 @@ int main(int argc, char* argv[]) {
                               << mode_name << "')\n";
                     return 1;
                 }
+            } else if (sub_args[i] == "--once") {
+                exit_on_complete = true;
             } else {
                 goal_text = sub_args[i]; // last positional = goal
             }
@@ -814,6 +817,11 @@ int main(int argc, char* argv[]) {
                     std::cerr << "ERROR: converse requires a goal string\n";
                     return 1;
                 }
+                if (exit_on_complete) {
+                    std::cerr << "ERROR: --once requires no other daemon to be running.\n"
+                              << "Existing daemon detected via PID lock; benchmark cannot run.\n";
+                    return 1;
+                }
                 auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, team_name, mode_name);
                 std::cout << "Conversation " << id << " created.\n";
                 std::cout << "Daemon already running — it will pick up the conversation.\n";
@@ -853,6 +861,10 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // --once: target conversation id whose terminal state ends the daemon loop.
+    // 0 = not in --once mode (daemon runs until SIGINT/SIGTERM as before).
+    int64_t once_target_conv_id = 0;
+
     // converse/resume dispatch (daemon path — PID lock acquired)
     if (subcommand == "converse") {
         if (goal_text.empty()) {
@@ -862,6 +874,11 @@ int main(int argc, char* argv[]) {
         }
         auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, team_name, mode_name);
         std::cout << "Conversation " << id << " created. Starting daemon...\n";
+        if (exit_on_complete) {
+            once_target_conv_id = id;
+            std::cout << "[--once] daemon will exit when conversation "
+                      << id << " reaches a terminal state.\n";
+        }
         // fall through to daemon loop
     } else if (subcommand == "resume") {
         if (conv_id_arg == 0) {
@@ -1130,6 +1147,17 @@ int main(int argc, char* argv[]) {
         uint64_t now = epoch_seconds();
         scheduler.tick(now);
         message_bus.drain();
+
+        // --once: exit cleanly when the target conversation reaches terminal state.
+        if (once_target_conv_id != 0) {
+            auto conv = db.get_conversation(once_target_conv_id);
+            if (conv && (conv->state == "done" || conv->state == "closed")) {
+                std::cout << "\n[--once] conversation " << once_target_conv_id
+                          << " reached terminal state '" << conv->state
+                          << "' — exiting daemon loop.\n";
+                break;
+            }
+        }
     }
 
     std::cout << "\nShutting down..." << std::endl;

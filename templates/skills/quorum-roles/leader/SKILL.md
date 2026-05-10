@@ -40,7 +40,7 @@ curation belongs to scribe.
 ## Routing
 
 - Any implementation task → HANDOFF to thinker/architect
-- After doer completes → HANDOFF to scribe
+- After doer completes → HANDOFF to evaluator if evaluator is in the team, otherwise to scribe
 - Conversation done → HANDOFF to `done`
 
 ## Block Formats

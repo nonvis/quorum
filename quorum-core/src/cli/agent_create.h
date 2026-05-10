@@ -56,7 +56,7 @@ inline std::string universal_rules_for_role(const std::string& role) {
         rules += "7. **Do NOT modify the work being evaluated.** You are read-only by design.\n";
         rules += "8. **Preserve and use the task number.** Your incoming HANDOFF prompt starts with \"Task N:\" — use that N when referencing what you scored.\n";
     } else {
-        rules += "6. **When done, HANDOFF to scribe** — always. Do NOT hand off to leader or architect.\n";
+        rules += "6. **When done, HANDOFF to evaluator if evaluator is in your team, otherwise to scribe.** Do NOT hand off to leader or architect.\n";
         rules += "7. **Do NOT start the next task** — only do the one you were given.\n";
         rules += "8. **Preserve the task number.** Your HANDOFF prompt must start with the same \"Task N:\" prefix you received.\n";
     }

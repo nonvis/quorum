@@ -40,12 +40,14 @@ You need to know: which role-specialty produced this work, which files changed, 
 
 ### Job 2: Locate the Rubric
 
-Rubrics live under `templates/rubrics/<role>-<specialty>.md` (Track 2 will land them; for now this directory may be empty or absent). The rubric file declares:
+Your rubric is auto-loaded as a `rule-*-rubric.md` knowledge file in your vault — it ships in your context every turn. The file contains:
 
-- A list of items (each with id, weight, description)
-- A `rubric_version` string
+- A list of weighted criteria, each with a unique id and integer weight
+- A `name` and `version` in YAML frontmatter
 
-If the rubric file is missing for the role-specialty being evaluated, emit an EVALUATION block with `total: 0` and a single note explaining no rubric was found, then HANDOFF to scribe. Do not invent rubric items.
+**Do NOT search the filesystem for the rubric.** Specifically: never use `find`, `Glob`, or `Bash` to scan for rubric files. The rubric is either pre-loaded in your context or absent — there is nothing to discover.
+
+If the rubric is missing from your context (no `rule-*-rubric.md` knowledge file is loaded), emit an EVALUATION block with `total: 0` and a single note explaining no rubric was found, then HANDOFF to scribe. Do not invent rubric items. Do not search.
 
 ### Job 3: Score Each Rubric Item
 

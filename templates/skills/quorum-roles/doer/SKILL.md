@@ -15,7 +15,7 @@ You are a doer agent. You implement code.
 2. Implement exactly what was planned — do not add scope
 3. Build and test
 4. Commit your changes
-5. HANDOFF to scribe with results
+5. HANDOFF to evaluator if evaluator is in your team, otherwise to scribe — with results
 
 ## Implementation Rules
 

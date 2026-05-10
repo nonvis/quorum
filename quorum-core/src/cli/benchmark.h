@@ -240,6 +240,17 @@ run_one_benchmark(const std::string& role_specialty,
                   << rubric->total_weight << " total weight)\n";
     }
 
+    // Resolve the rubric's source path to absolute *before* we chdir into
+    // the tempdir, so the later copy step still finds it.
+    fs::path rubric_source_abs;
+    try {
+        rubric_source_abs = fs::absolute(rubric->source_path);
+    } catch (const fs::filesystem_error& e) {
+        std::cerr << "ERROR: failed to resolve rubric source path '"
+                  << rubric->source_path << "': " << e.what() << "\n";
+        return std::nullopt;
+    }
+
     // 3. Create temp dir
     char tmpl[] = "/tmp/quorum-bench-XXXXXX";
     if (mkdtemp(tmpl) == nullptr) {
@@ -303,6 +314,31 @@ run_one_benchmark(const std::string& role_specialty,
         cleanup();
         return std::nullopt;
     }
+
+    // Place the rubric where the evaluator's context assembler will preload
+    // it. Without this, the evaluator agent has no in-context handle to its
+    // rubric and previously fell into a filesystem-scan loop. The auto-
+    // preloaded `rule-*-rubric.md` knowledge file ships in every turn.
+    {
+        fs::path rubric_dest = tempdir
+            / ".quorum" / "vaults" / "evaluator" / "knowledge"
+            / ("rule-" + role_specialty + "-rubric.md");
+        try {
+            fs::create_directories(rubric_dest.parent_path());
+            fs::copy_file(rubric_source_abs, rubric_dest,
+                          fs::copy_options::overwrite_existing);
+            if (verbose) {
+                std::cout << "  Copied rubric to: "
+                          << rubric_dest.string() << "\n";
+            }
+        } catch (const fs::filesystem_error& e) {
+            std::cerr << "ERROR: failed to copy rubric to evaluator vault: "
+                      << e.what() << "\n";
+            cleanup();
+            return std::nullopt;
+        }
+    }
+
     if (!scaffold("scribe", "scribe")) {
         std::cerr << "ERROR: failed to scaffold scribe agent\n";
         cleanup();
@@ -343,7 +379,7 @@ run_one_benchmark(const std::string& role_specialty,
     }
 
     auto cmd = daemon_path
-        + " converse --team benchmark '" + escaped_goal + "'";
+        + " converse --once --team benchmark '" + escaped_goal + "'";
     if (verbose) {
         std::cout << "  Spawning: " << cmd << "\n";
     }
