@@ -336,10 +336,15 @@ public:
         // "thinker" appeared in the printed path. Routing is enforced
         // implicitly by the daemon; the agent only needs to know the
         // override mechanism (HANDOFF block) and the no-handoff fallback.
-        roster += "If you want to specify the next agent, output a HANDOFF block:\n\n";
+        roster += "If you want to specify the next agent, output a HANDOFF block. "
+                  "Use the YAML block-scalar form (`prompt: |` then 2-space-indented "
+                  "lines) for multi-line instructions — a bare `prompt: text` reads "
+                  "only up to the end of the first line; everything after is dropped.\n\n";
         roster += "```HANDOFF\n";
         roster += "to: <agent_id | human | done>\n";
-        roster += "prompt: <instructions for the next agent>\n";
+        roster += "prompt: |\n";
+        roster += "  <instructions for the next agent>\n";
+        roster += "  (indent every continuation line by exactly 2 spaces)\n";
         roster += "```\n\n";
 
         if (!conv_cfg.leader.empty()) {
