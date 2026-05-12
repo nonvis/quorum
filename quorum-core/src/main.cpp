@@ -927,6 +927,13 @@ int main(int argc, char* argv[]) {
     // Task dispatch: check for pending tasks and invoke them.
     // Handles both Task Queue tasks (operator-seeded) and
     // Conversation tasks (daemon-created via ConversationEngine).
+    //
+    // Phase 9 finding #2 — `last_dispatched_conv_id` lets us re-scan the
+    // agents directory whenever a task from a different conversation enters
+    // dispatch. This way the running daemon picks up agents added externally
+    // via `quorum agent create` between conversations without restart, while
+    // avoiding I/O on every same-conv task.
+    int64_t last_dispatched_conv_id = 0;
     scheduler.add("task_dispatch", 5, [&]() {
         // Check window budget
         if (is_window_expired(db)) {
@@ -961,6 +968,18 @@ int main(int argc, char* argv[]) {
 
         if (verbose) {
             std::cout << "[dispatch] invoking task " << task_id << "\n";
+        }
+
+        // Phase 9 finding #2 — refresh agents from disk on conversation
+        // boundary so externally-created agents become visible without
+        // daemon restart.
+        {
+            auto conv_id_opt = db.get_conversation_for_task(task_id);
+            int64_t conv_id = conv_id_opt.value_or(0);
+            if (conv_id != 0 && conv_id != last_dispatched_conv_id) {
+                sui::quorum::reload_agents_inplace(cfg.agents, ".quorum/agents");
+                last_dispatched_conv_id = conv_id;
+            }
         }
 
         // Look up agent metadata by id

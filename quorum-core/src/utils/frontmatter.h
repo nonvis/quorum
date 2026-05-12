@@ -89,4 +89,35 @@ namespace sui::quorum {
     return tags;
 }
 
+// Phase 9 finding #27d — strip leading YAML frontmatter so scoring code that
+// reads file bodies doesn't double-count tag words (once as tag-hit ×5, once
+// as content-hit ×1). Returns content unchanged if no frontmatter or if the
+// opening `---` is unterminated (matches parse_frontmatter_tags's fail-open).
+[[nodiscard]] inline std::string strip_frontmatter(const std::string& content) {
+    const size_t n = content.size();
+    size_t i = 0;
+    while (i < n && (content[i] == '\n' || content[i] == '\r' ||
+                     content[i] == ' ' || content[i] == '\t')) {
+        ++i;
+    }
+    if (i + 3 > n || content.compare(i, 3, "---") != 0) return content;
+    if (i + 3 != n && content[i + 3] != '\n' && content[i + 3] != '\r') return content;
+    size_t lf = content.find('\n', i);
+    if (lf == std::string::npos) return content;
+    size_t scan = lf + 1;
+    while (scan < n) {
+        size_t end = content.find('\n', scan);
+        std::string line = (end == std::string::npos)
+            ? content.substr(scan)
+            : content.substr(scan, end - scan);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line == "---") {
+            return (end == std::string::npos) ? std::string{} : content.substr(end + 1);
+        }
+        if (end == std::string::npos) return content;  // unterminated
+        scan = end + 1;
+    }
+    return content;
+}
+
 }  // namespace sui::quorum

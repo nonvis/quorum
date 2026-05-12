@@ -268,6 +268,19 @@ inline int create_agent(const AgentCreateParams& p) {
         }
     }
 
+    // 4c. Phase 9 finding #3 — `--skill <name>` shorthand stores
+    // `.claude/skills/<name>/SKILL.md` (project-relative). If that doesn't
+    // resolve project-locally, fall back to $HOME/.claude/skills/<name>/SKILL.md
+    // so user-level skills (e.g. quorum-roles/*) work without a full path.
+    if (!skill_file.empty() && skill_file.starts_with(".claude/skills/") &&
+        !fs::exists(root_prefix + skill_file)) {
+        auto home = std::getenv("HOME");
+        if (home) {
+            auto user_path = std::string(home) + "/" + skill_file;
+            if (fs::exists(user_path)) skill_file = user_path;
+        }
+    }
+
     // 5. Generate YAML config
     std::string yaml;
     yaml += "id: " + p.name + "\n";
@@ -386,7 +399,19 @@ inline int modify_agent(const AgentCreateParams& overrides) {
         changed = true;
     }
     if (!overrides.skill_file.empty() && overrides.skill_file != existing->skill_file) {
-        existing->skill_file = overrides.skill_file;
+        // Phase 9 finding #3 — resolve --skill <name> shorthand against $HOME
+        // when the path is project-relative `.claude/skills/<name>/SKILL.md`
+        // and the file is not present in the project.
+        auto resolved = overrides.skill_file;
+        if (resolved.starts_with(".claude/skills/") &&
+            !fs::exists(root + "/" + resolved)) {
+            auto home = std::getenv("HOME");
+            if (home) {
+                auto user_path = std::string(home) + "/" + resolved;
+                if (fs::exists(user_path)) resolved = user_path;
+            }
+        }
+        existing->skill_file = resolved;
         changed = true;
     }
     if (!overrides.target_dir.empty() && overrides.target_dir != existing->target_dir) {

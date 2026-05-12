@@ -144,17 +144,53 @@ static void test_t6_tag_outranks_filename() {
     check(pos_tagged < pos_filename_only,
           "T6: ref-tagged.md ranked ABOVE ref-walrus-name.md");
 
-    // Score signal:
-    //   ref-tagged.md       → tag_hits=1 (×5) + content_hits=1 (the literal
-    //                         "walrus" in the frontmatter line itself, since
-    //                         content scanning is whole-file) = 6
+    // Score signal (post-#27d: frontmatter stripped from content scoring):
+    //   ref-tagged.md       → tag_hits=1 (×5) + content_hits=0 = 5
     //   ref-walrus-name.md  → fn_hits=1 (×3) = 3
-    // Ordering invariant 6 > 3 still holds (the spec's example arithmetic
-    // ignored content_hits inside frontmatter; actual scorer counts it).
-    check(split.user_message.find("score: 6") != std::string::npos,
-          "T6: tagged ref reports score: 6 (5 tag + 1 content from frontmatter)");
+    // Ordering 5 > 3 holds; no double-counting of tag words via frontmatter.
+    check(split.user_message.find("score: 5") != std::string::npos,
+          "T6: tagged ref reports score: 5 (5 tag + 0 content; #27d)");
     check(split.user_message.find("score: 3") != std::string::npos,
           "T6: filename-only ref reports score: 3 (filename match only)");
+
+    cleanup(vault);
+}
+
+// ---------------------------------------------------------------------------
+// T8: #27d regression — frontmatter words don't double-count in content score
+// ---------------------------------------------------------------------------
+
+static void test_t8_frontmatter_no_double_count() {
+    std::cout << "\n=== T8. #27d: frontmatter words excluded from content scoring ===\n\n";
+
+    auto vault = make_temp_vault();
+
+    // ref-just-tag.md: query word "walrus" appears ONLY in frontmatter.
+    //   Pre-fix: tag_hits=1 (×5) + content_hits=1 = 6
+    //   Post-fix: tag_hits=1 (×5) + content_hits=0 = 5
+    write_knowledge(vault, "ref-just-tag.md",
+        "---\ntags: [walrus]\n---\n# Note\n\nNo relevant words in body.\n");
+
+    // ref-body-only.md: query word "walrus" appears ONLY in body, untagged.
+    //   tag_hits=0, content_hits=1, fn_hits=0 → score 1.
+    write_knowledge(vault, "ref-body-only.md",
+        "# Other note\n\nBody mentions walrus once here.\n");
+
+    sui::quorum::ContextAssembler assembler;
+    auto split = assembler.assemble_split(
+        "agent-t8", vault, "turn", "walrus");
+
+    auto pos_section = split.user_message.find("## Searched References");
+    check(pos_section != std::string::npos,
+          "T8: '## Searched References' section present");
+    check(split.user_message.find("score: 5") != std::string::npos,
+          "T8: tag-only ref scores 5 (no content-side double-count)");
+    check(split.user_message.find("score: 1") != std::string::npos,
+          "T8: body-only ref scores 1 (single content hit)");
+    // Negative: NEITHER ref should report score: 6 anywhere — that would mean
+    // the frontmatter word leaked into content_hits.
+    check(split.user_message.find("score: 6") == std::string::npos,
+          "T8: no score: 6 anywhere (frontmatter not double-counted)");
 
     cleanup(vault);
 }
@@ -225,6 +261,7 @@ int main() {
     test_t5_mixed_case();
     test_t6_tag_outranks_filename();
     test_t7_untagged_backcompat();
+    test_t8_frontmatter_no_double_count();
 
     std::cout << "\n---------------------------------------------------\n";
     std::cout << "  passed: " << g_passed << "  failed: " << g_failed << "\n";

@@ -505,10 +505,13 @@ public:
                     r.scope_label = scope_label;
                     r.scope_rank = scope_rank;
                     r.mtime = entry.last_write_time();
-                    r.content = read_file(r.path);
+                    auto raw = read_file(r.path);
                     // Phase 9 Track 2 — parse frontmatter tags once at walk
                     // time so search_references doesn't re-parse per query.
-                    r.tags = parse_frontmatter_tags(r.content);
+                    r.tags = parse_frontmatter_tags(raw);
+                    // Phase 9 finding #27d — store body without frontmatter so
+                    // tag words don't score as both tag-hits (×5) and content-hits.
+                    r.content = strip_frontmatter(raw);
                     refs_out.push_back(std::move(r));
                     continue;
                 }

@@ -229,6 +229,19 @@ inline std::vector<AgentMetadata> load_agents_from_directory(const std::string& 
     return agents;
 }
 
+// Phase 9 finding #2 — refresh an existing agents vector from a directory.
+// Returns true when the directory exists and reload happened (even if it
+// produced zero agents; the caller decides). Returns false if the directory
+// is missing — leaves `agents` untouched in that case so the daemon doesn't
+// silently lose its in-memory roster.
+inline bool reload_agents_inplace(std::vector<AgentMetadata>& agents,
+                                  const std::string& agents_dir) {
+    namespace fs = std::filesystem;
+    if (!fs::exists(agents_dir) || !fs::is_directory(agents_dir)) return false;
+    agents = load_agents_from_directory(agents_dir);
+    return true;
+}
+
 inline std::optional<QuorumConfig> load_config(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) {

@@ -176,6 +176,12 @@ target_include_directories(test_crash_recovery PRIVATE src)
 target_link_libraries(test_crash_recovery PRIVATE SQLite::SQLite3)
 add_test(NAME test_crash_recovery COMMAND test_crash_recovery)
 
+# Phase 9 finding #2 — daemon-side hot reload of agents directory
+add_executable(test_agent_hot_reload tests/unit/test_agent_hot_reload.cpp)
+target_include_directories(test_agent_hot_reload PRIVATE src)
+target_link_libraries(test_agent_hot_reload PRIVATE SQLite::SQLite3)
+add_test(NAME test_agent_hot_reload COMMAND test_agent_hot_reload)
+
 add_executable(test_assembler_rule_cap tests/unit/test_assembler_rule_cap.cpp)
 target_include_directories(test_assembler_rule_cap PRIVATE src)
 add_test(NAME test_assembler_rule_cap COMMAND test_assembler_rule_cap)

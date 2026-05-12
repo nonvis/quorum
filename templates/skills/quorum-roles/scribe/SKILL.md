@@ -196,6 +196,44 @@ This exception applies ONLY to `conv-*-task-*.md`. Any other plain-named
 note (e.g. `2026-05-architecture-notes.md`) follows the standard
 consult-before-create rule.
 
+## Author Frontmatter Tags for rule-*/ref-*
+
+Every new `rule-*.md` and `ref-*.md` you write MUST open with YAML
+frontmatter declaring 2–5 lowercase tags that capture the file's
+retrieval handles — the words a future agent would actually query.
+
+```markdown
+---
+tags: [coin, balance, sui-framework]
+---
+
+# Note body starts here.
+```
+
+Why: the retrieval scorer weights tag-exact matches ×5 above filename
+matches (×3) and body content (×1). A `ref-*.md` written without tags
+relies on filename+content matching alone, which routinely loses to
+weaker but tagged refs. Untagged files are a regression on Phase 9
+Track 2's tag-scoring channel.
+
+Tag-authoring guidance:
+
+- **Lowercase, single-line array form only**: `tags: [a, b, c]`.
+  Multi-line YAML lists, quoted strings, or nested keys are not parsed
+  by the daemon (`utils/frontmatter.h`).
+- **2–5 tags**: enough to cover the retrieval surface, few enough that
+  each one actually narrows. One tag is rarely enough; >5 starts adding
+  noise.
+- **Pick content keywords, not filenames or dates**: tags are the words
+  a query would carry (`coin`, `balance`, `dynamic-fields`), not the
+  slug components or month.
+- **Conv-narrative notes** (`conv-{N}-task-{M}.md`) do NOT need tags —
+  they're append-only audit logs, never retrieved by the scorer.
+
+When updating an existing `rule-*.md` / `ref-*.md` in place, preserve
+its frontmatter tags (add to them if the update broadens the topic; do
+not silently drop them).
+
 ## Block Formats
 
 ### HANDOFF — always to done

@@ -231,6 +231,60 @@ static void test_skill_file_in_yaml() {
     cleanup_temp(tmp);
 }
 
+// --- Test F2: --skill <name> resolves to $HOME path when not project-local --
+// Phase 9 finding #3 — main.cpp parses `--skill <name>` into
+// `.claude/skills/<name>/SKILL.md`. When that doesn't exist project-locally,
+// create_agent should fall back to $HOME/.claude/skills/<name>/SKILL.md.
+
+static void test_skill_home_fallback() {
+    std::cout << "\n=== F2. --skill <name> falls back to $HOME (#3) ===\n\n";
+
+    auto tmp = make_temp_dir();
+    auto data_dir = tmp + "/data";
+
+    // Create a fake $HOME with a skill file at the expected layout.
+    auto fake_home = tmp + "/fakehome";
+    auto fake_skill_dir = fake_home + "/.claude/skills/fake-role";
+    fs::create_directories(fake_skill_dir);
+    {
+        std::ofstream f(fake_skill_dir + "/SKILL.md");
+        f << "---\nname: fake-role\n---\n# Fake role skill\n";
+    }
+
+    // Save + override HOME for the duration of this test.
+    const char* prev_home = std::getenv("HOME");
+    std::string saved_home = prev_home ? prev_home : "";
+    setenv("HOME", fake_home.c_str(), 1);
+
+    auto original_cwd = fs::current_path();
+    fs::current_path(tmp);
+
+    sui::quorum::cli::AgentCreateParams p;
+    p.role = "scribe";
+    p.name = "home-skill-agent";
+    p.project = "test-proj";
+    p.data_dir = data_dir;
+    // Mimic what main.cpp's `--skill fake-role` parsing produces: a
+    // project-relative path that doesn't exist project-locally.
+    p.skill_file = ".claude/skills/fake-role/SKILL.md";
+    p.no_ai = true;
+
+    int rc = sui::quorum::cli::create_agent(p);
+    check(rc == 0, "F2: create_agent returns 0");
+
+    auto yaml = read_file("configs/agents/test-proj/home-skill-agent.yaml");
+    auto expected = std::string("skill_file: ") + fake_home + "/.claude/skills/fake-role/SKILL.md";
+    check(yaml.find(expected) != std::string::npos,
+          "F2: YAML stores $HOME-expanded skill path when project-local missing");
+
+    // Restore HOME.
+    if (prev_home) setenv("HOME", saved_home.c_str(), 1);
+    else unsetenv("HOME");
+
+    fs::current_path(original_cwd);
+    cleanup_temp(tmp);
+}
+
 // --- Test G: Evaluator role end-to-end (Phase 8 Track 6 #25) ----------------
 
 static void test_evaluator_role_create() {
@@ -341,6 +395,7 @@ int main() {
     test_doer_executor_section();
     test_non_doer_no_executor();
     test_skill_file_in_yaml();
+    test_skill_home_fallback();
     test_evaluator_role_create();
     test_evaluator_universal_rules();
     test_evaluator_skill_source_exists();

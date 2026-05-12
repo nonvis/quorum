@@ -39,9 +39,20 @@ public:
     ConversationEngine(Database& db, const ConversationConfig& cfg,
                        const std::vector<AgentMetadata>& agents,
                        const ContextAssembler* assembler = nullptr,
-                       const std::string& project_root = {})
+                       const std::string& project_root = {},
+                       std::string agents_dir = ".quorum/agents")
         : db_(db), cfg_(cfg), agents_(agents), assembler_(assembler),
-          project_root_(project_root) {}
+          project_root_(project_root), agents_dir_(std::move(agents_dir)) {}
+
+    // Phase 9 finding #2 — re-scan the agents directory and replace the
+    // engine's local roster with whatever's on disk now. Called at conversation
+    // boundaries (start/resume/recover) so the engine picks up agents added
+    // externally via `quorum agent create`. The daemon's task-dispatch loop
+    // refreshes its own copy separately (main.cpp); both sides read the same
+    // disk source. Safe to call when the dir doesn't exist (no-op).
+    void reload_agents() {
+        reload_agents_inplace(agents_, agents_dir_);
+    }
 
     // Start a new conversation. Creates the first task for the leader agent.
     // Returns conversation ID.
@@ -53,6 +64,7 @@ public:
     int64_t start(const std::string& goal, double budget_usd = 5.0,
                   int max_rounds = 20, const std::string& team = "",
                   const std::string& mode = "") {
+        reload_agents();  // Phase 9 finding #2 — refresh roster from disk
         auto conv_id = db_.create_conversation(goal, budget_usd, max_rounds);
 
         // Store team name on conversation record
@@ -288,6 +300,7 @@ public:
 
     // Resume a paused conversation. Dispatches to the leader.
     bool resume(int64_t conversation_id) {
+        reload_agents();  // Phase 9 finding #2 — refresh roster from disk
         auto conv = db_.get_conversation(conversation_id);
         if (!conv || conv->state != "paused") return false;
 
@@ -328,6 +341,7 @@ public:
     // Recover a conversation after daemon crash.
     // Re-dispatches to leader so it can decide how to proceed.
     bool recover(int64_t conversation_id) {
+        reload_agents();  // Phase 9 finding #2 — refresh roster from disk
         auto conv = db_.get_conversation(conversation_id);
         if (!conv || conv->state != "active") return false;
 
@@ -373,6 +387,7 @@ private:
     std::vector<AgentMetadata> agents_;
     const ContextAssembler* assembler_ = nullptr;
     std::string project_root_;
+    std::string agents_dir_;  // Phase 9 finding #2 — reload source
 
     bool is_known_agent(const std::string& agent_id) const {
         return std::any_of(agents_.begin(), agents_.end(),
