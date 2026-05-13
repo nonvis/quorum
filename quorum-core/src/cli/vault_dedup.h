@@ -17,8 +17,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <iterator>
-#include <set>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -27,7 +25,6 @@
 #include <vector>
 
 #include "agent/context_assembler.h"   // detail::tokenize_lower, classify_knowledge_filename, KnowledgeKind
-#include "utils/discover.h"            // discover_project_root
 #include "utils/frontmatter.h"         // strip_frontmatter
 
 namespace sui::quorum::cli {

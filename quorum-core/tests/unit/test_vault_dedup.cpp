@@ -8,14 +8,12 @@
 //
 // Run: ctest -R test_vault_dedup --output-on-failure
 
-#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <thread>
 
 #include <unistd.h>
 
