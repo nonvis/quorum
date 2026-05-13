@@ -45,7 +45,8 @@ static void init_conversations_table(sui::quorum::Database& db) {
         "  current_agent TEXT,"
         "  path_index INTEGER NOT NULL DEFAULT 0,"
         "  team TEXT,"
-        "  mode TEXT NOT NULL DEFAULT 'generic'"
+        "  mode TEXT NOT NULL DEFAULT 'generic',"
+        "  no_vault_write INTEGER NOT NULL DEFAULT 0"
         ")"
     );
 }
@@ -306,9 +307,15 @@ static void test_mode_column_migration() {
     auto pre_id = db.create_conversation("legacy goal", 5.0, 3);
     check(pre_id > 0, "9: pre-migration: legacy row inserted");
 
-    // 2. Run the migration (matches src/main.cpp init_schema migration)
+    // 2. Run the migrations (matches src/main.cpp init_schema migration).
+    //    `no_vault_write` is Phase 10 Track 5 and is referenced by
+    //    get_conversation()'s SELECT, so it must be present even when this
+    //    test focuses on the mode-column migration.
     if (!column_exists(db, "conversations", "mode")) {
         db.execute("ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'generic'");
+    }
+    if (!column_exists(db, "conversations", "no_vault_write")) {
+        db.execute("ALTER TABLE conversations ADD COLUMN no_vault_write INTEGER NOT NULL DEFAULT 0");
     }
     check(column_exists(db, "conversations", "mode"),
           "9: post-migration: mode column present");

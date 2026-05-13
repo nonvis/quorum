@@ -26,6 +26,7 @@ struct ConversationRecord {
     int path_index{0};          // position in default_path
     std::string team;
     std::string mode{"generic"};  // execution mode: "generic" (default) or "brainstorm"
+    bool no_vault_write{false};   // Phase 10 Track 5: suppress VAULT_UPDATE filesystem writes
 };
 
 class Database {
@@ -128,7 +129,8 @@ public:
         bool found = false;
         query(
             "SELECT id, goal, state, round, max_rounds, budget_usd, spent_usd, "
-            "current_agent, path_index, team, COALESCE(mode, 'generic') "
+            "current_agent, path_index, team, COALESCE(mode, 'generic'), "
+            "COALESCE(no_vault_write, 0) "
             "FROM conversations WHERE id = ?",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_int64(stmt, 1, conv_id);
@@ -151,6 +153,7 @@ public:
                 rec.team = tm ? tm : "";
                 auto md = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 10));
                 rec.mode = md ? md : "generic";
+                rec.no_vault_write = sqlite3_column_int(stmt, 11) != 0;
             }
         );
         return found ? std::optional{rec} : std::nullopt;

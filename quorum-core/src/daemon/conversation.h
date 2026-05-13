@@ -63,7 +63,8 @@ public:
     // warning and fall back to "generic".
     int64_t start(const std::string& goal, double budget_usd = 5.0,
                   int max_rounds = 20, const std::string& team = "",
-                  const std::string& mode = "") {
+                  const std::string& mode = "",
+                  bool no_vault_write = false) {
         reload_agents();  // Phase 9 finding #2 — refresh roster from disk
         auto conv_id = db_.create_conversation(goal, budget_usd, max_rounds);
 
@@ -90,6 +91,14 @@ public:
             "UPDATE conversations SET mode = ? WHERE id = ?",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_text(stmt, 1, resolved_mode.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_int64(stmt, 2, conv_id);
+            });
+
+        // Phase 10 Track 5 — persist --no-vault-write so resume/recover inherit it.
+        db_.execute(
+            "UPDATE conversations SET no_vault_write = ? WHERE id = ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int(stmt, 1, no_vault_write ? 1 : 0);
                 sqlite3_bind_int64(stmt, 2, conv_id);
             });
 
@@ -121,6 +130,13 @@ public:
         std::cout << "[conversation " << conv_id << "] started"
                   << " -- " << display
                   << " -> " << first_agent << "\n";
+
+        // Phase 10 Track 5 — operator-visible banner when VAULT_UPDATE writes
+        // are suppressed for the lifetime of this conversation.
+        if (no_vault_write) {
+            std::cout << "[conversation " << conv_id
+                      << "] --no-vault-write: VAULT_UPDATE writes will be SUPPRESSED for this conversation\n";
+        }
 
         return conv_id;
     }

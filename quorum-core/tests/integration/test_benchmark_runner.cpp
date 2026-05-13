@@ -63,7 +63,8 @@ static void init_schema(sui::quorum::Database& db) {
         "  current_agent TEXT,"
         "  path_index INTEGER NOT NULL DEFAULT 0,"
         "  team TEXT,"
-        "  mode TEXT NOT NULL DEFAULT 'generic'"
+        "  mode TEXT NOT NULL DEFAULT 'generic',"
+        "  no_vault_write INTEGER NOT NULL DEFAULT 0"
         ")"
     );
     db.execute(

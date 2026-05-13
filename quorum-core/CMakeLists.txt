@@ -211,6 +211,12 @@ add_executable(test_vault_audit tests/unit/test_vault_audit.cpp)
 target_include_directories(test_vault_audit PRIVATE src)
 add_test(NAME test_vault_audit COMMAND test_vault_audit)
 
+# Phase 10 Track 5 — quorum converse --no-vault-write suppression flag
+add_executable(test_no_vault_write tests/unit/test_no_vault_write.cpp)
+target_include_directories(test_no_vault_write PRIVATE src)
+target_link_libraries(test_no_vault_write PRIVATE SQLite::SQLite3)
+add_test(NAME test_no_vault_write COMMAND test_no_vault_write)
+
 add_executable(test_invoker_cache_fields tests/unit/test_invoker_cache_fields.cpp)
 target_include_directories(test_invoker_cache_fields PRIVATE src)
 add_test(NAME test_invoker_cache_fields COMMAND test_invoker_cache_fields)

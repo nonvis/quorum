@@ -161,6 +161,7 @@ static void print_usage(const char* prog) {
               << "  --max-rounds <n>     Max revision rounds (default: 3)\n"
               << "  --team <name>        Team preset from .quorum/teams/ (optional)\n"
               << "  --mode <generic|brainstorm>  Conversation mode (default: generic)\n"
+              << "  --no-vault-write     Suppress VAULT_UPDATE filesystem writes for this conversation\n"
               << "  --conversation <id>  Conversation ID for resume/close\n"
               << "  --help               Show this message\n"
               << "\nAgent create options:\n"
@@ -214,6 +215,9 @@ static void init_schema(sui::quorum::Database& db) {
         db.execute("ALTER TABLE conversations ADD COLUMN team TEXT");
     if (!column_exists(db, "conversations", "mode"))
         db.execute("ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'generic'");
+    // Phase 10 Track 5 — --no-vault-write flag persistence (mirrors mode pattern)
+    if (!column_exists(db, "conversations", "no_vault_write"))
+        db.execute("ALTER TABLE conversations ADD COLUMN no_vault_write INTEGER NOT NULL DEFAULT 0");
 
     // Phase 7 Track 5 — system-prompt split + cache metrics
     if (!column_exists(db, "tasks", "system_prompt"))
@@ -454,6 +458,7 @@ int main(int argc, char* argv[]) {
     bool bench_dry_run = false;
     bool bench_keep_tempdir = false;
     bool exit_on_complete = false;
+    bool conv_no_vault_write = false;   // Phase 10 Track 5
     sui::quorum::cli::VaultDedupOptions vault_dedup_opts;
     sui::quorum::cli::VaultAuditOptions vault_audit_opts;
     std::string vault_subcmd_arg;
@@ -476,6 +481,8 @@ int main(int argc, char* argv[]) {
                 }
             } else if (sub_args[i] == "--once") {
                 exit_on_complete = true;
+            } else if (sub_args[i] == "--no-vault-write") {
+                conv_no_vault_write = true;
             } else {
                 goal_text = sub_args[i]; // last positional = goal
             }
@@ -945,7 +952,7 @@ int main(int argc, char* argv[]) {
                               << "Existing daemon detected via PID lock; benchmark cannot run.\n";
                     return 1;
                 }
-                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, team_name, mode_name);
+                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, team_name, mode_name, conv_no_vault_write);
                 std::cout << "Conversation " << id << " created.\n";
                 std::cout << "Daemon already running — it will pick up the conversation.\n";
             } else if (subcommand == "resume") {
@@ -995,7 +1002,7 @@ int main(int argc, char* argv[]) {
             release_pid_lock(cfg.daemon.pid_file);
             return 1;
         }
-        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, team_name, mode_name);
+        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, team_name, mode_name, conv_no_vault_write);
         std::cout << "Conversation " << id << " created. Starting daemon...\n";
         if (exit_on_complete) {
             once_target_conv_id = id;
@@ -1126,6 +1133,20 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        // Phase 10 Track 5 — resolve conversation-level VAULT_UPDATE suppression
+        // flag. If set, the task_dispatch closure parses VAULT_UPDATE blocks
+        // normally but skips the filesystem write step and emits a stderr/stdout
+        // notice. The flag is set at conversation start() time and inherited by
+        // resume/recover automatically.
+        bool conv_no_vault_write = false;
+        {
+            auto conv_id_opt = db.get_conversation_for_task(task_id);
+            if (conv_id_opt) {
+                auto conv = db.get_conversation(*conv_id_opt);
+                if (conv) conv_no_vault_write = conv->no_vault_write;
+            }
+        }
+
         auto result = invoker.invoke(task_id, task_agent_meta, task_mode);
 
         if (verbose) {
@@ -1177,19 +1198,30 @@ int main(int argc, char* argv[]) {
                 //      path: <agent-id>/inbox/<file>.md)
                 //   - all other (mode × role) combinations: own-vault only
                 if (!parsed.vault_updates.empty()) {
-                    // Phase 8 Track 7 (#30): pass project_root so brainstorm
-                    // scribe ref cross-writes get auto-promoted to project
-                    // scope (.quorum/knowledge/) for team-wide searchability.
-                    auto applied = vault_manager.apply_all_updates_with_context(
-                        agent_id, emitting_role, task_mode, cfg.agents,
-                        parsed.vault_updates,
-                        project_root_str.value_or(""));
-                    if (verbose) {
+                    if (conv_no_vault_write) {
+                        // Phase 10 Track 5 — suppression branch. Unconditional
+                        // log (not verbose-gated) per spec #20 — operator must
+                        // see when writes are being dropped.
                         std::cout << "[dispatch] task " << task_id
-                                  << " — " << applied << "/" << parsed.vault_updates.size()
-                                  << " vault updates applied for " << agent_id
-                                  << " (mode=" << task_mode
-                                  << ", role=" << emitting_role << ")\n";
+                                  << " — VAULT_UPDATE suppressed "
+                                  << "(--no-vault-write, "
+                                  << parsed.vault_updates.size()
+                                  << " update(s) dropped)\n";
+                    } else {
+                        // Phase 8 Track 7 (#30): pass project_root so brainstorm
+                        // scribe ref cross-writes get auto-promoted to project
+                        // scope (.quorum/knowledge/) for team-wide searchability.
+                        auto applied = vault_manager.apply_all_updates_with_context(
+                            agent_id, emitting_role, task_mode, cfg.agents,
+                            parsed.vault_updates,
+                            project_root_str.value_or(""));
+                        if (verbose) {
+                            std::cout << "[dispatch] task " << task_id
+                                      << " — " << applied << "/" << parsed.vault_updates.size()
+                                      << " vault updates applied for " << agent_id
+                                      << " (mode=" << task_mode
+                                      << ", role=" << emitting_role << ")\n";
+                        }
                     }
                 }
 
