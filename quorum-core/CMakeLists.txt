@@ -206,6 +206,11 @@ add_executable(test_vault_dedup tests/unit/test_vault_dedup.cpp)
 target_include_directories(test_vault_dedup PRIVATE src)
 add_test(NAME test_vault_dedup COMMAND test_vault_dedup)
 
+# Phase 10 Track 4 — quorum vault audit CLI
+add_executable(test_vault_audit tests/unit/test_vault_audit.cpp)
+target_include_directories(test_vault_audit PRIVATE src)
+add_test(NAME test_vault_audit COMMAND test_vault_audit)
+
 add_executable(test_invoker_cache_fields tests/unit/test_invoker_cache_fields.cpp)
 target_include_directories(test_invoker_cache_fields PRIVATE src)
 add_test(NAME test_invoker_cache_fields COMMAND test_invoker_cache_fields)
