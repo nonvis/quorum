@@ -29,6 +29,7 @@
 #include "cli/benchmark.h"
 #include "cli/init.h"
 #include "cli/skills.h"
+#include "cli/vault_dedup.h"
 #include "utils/discover.h"
 
 namespace fs = std::filesystem;
@@ -134,6 +135,8 @@ static void print_usage(const char* prog) {
               << "  " << prog << " converse --team quick-build \"fix bug\"     Use specific team\n"
               << "  " << prog << " teams                                      List available teams\n"
               << "  " << prog << " skills                                     List available Claude Code skills\n"
+              << "  " << prog << " vault dedup [--vault <path>] [--dry-run] [--global] [--threshold <f>]\n"
+              << "                                          Cluster near-duplicate rule-*.md/ref-*.md files\n"
               << "  " << prog << " benchmark --role <r> --task <name>          Run one synthetic benchmark for a role-specialty\n"
               << "  " << prog << " benchmark --role <r>                        Run all benchmarks for a role-specialty (aggregate)\n"
               << "  " << prog << " benchmark --role <r> --dry-run              Smoke-test setup; skip the daemon spawn\n"
@@ -448,6 +451,9 @@ int main(int argc, char* argv[]) {
     bool bench_dry_run = false;
     bool bench_keep_tempdir = false;
     bool exit_on_complete = false;
+    sui::quorum::cli::VaultDedupOptions vault_dedup_opts;
+    std::string vault_subcmd_arg;
+    bool vault_path_explicit = false;
 
     if (subcommand == "converse") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
@@ -521,6 +527,31 @@ int main(int argc, char* argv[]) {
                 bench_keep_tempdir = true;
             }
         }
+    } else if (subcommand == "vault") {
+        for (size_t i = 0; i < sub_args.size(); ++i) {
+            if (vault_subcmd_arg.empty() && sub_args[i] == "dedup") {
+                vault_subcmd_arg = "dedup";
+            } else if (sub_args[i] == "--vault" && i + 1 < sub_args.size()) {
+                vault_dedup_opts.vault_path = sub_args[++i];
+                vault_path_explicit = true;
+            } else if (sub_args[i] == "--dry-run") {
+                vault_dedup_opts.dry_run = true;
+            } else if (sub_args[i] == "--global") {
+                vault_dedup_opts.use_global = true;
+            } else if (sub_args[i] == "--threshold" && i + 1 < sub_args.size()) {
+                try {
+                    vault_dedup_opts.threshold = std::stod(sub_args[++i]);
+                } catch (...) {
+                    std::cerr << "ERROR: --threshold requires a numeric value\n";
+                    return 1;
+                }
+            }
+        }
+        if (vault_subcmd_arg.empty()) {
+            std::cerr << "ERROR: vault requires a sub-subcommand (dedup)\n";
+            std::cerr << "Usage: quorum vault dedup [--vault <path>] [--dry-run] [--global] [--threshold <f>]\n";
+            return 1;
+        }
     } else if (!subcommand.empty() && subcommand != "status") {
         std::cerr << "Unknown subcommand: " << subcommand << "\n";
         print_usage(argv[0]);
@@ -585,6 +616,33 @@ int main(int argc, char* argv[]) {
         return sui::quorum::cli::list_skills(*root);
     }
 
+    // Vault dedup doesn't need --config unless --global is set.
+    // Without --global: scan project-scope <project_root>/.quorum/knowledge/.
+    // With --global: load config to read global_knowledge_path (handled below).
+    if (subcommand == "vault" && vault_subcmd_arg == "dedup") {
+        if (vault_dedup_opts.use_global && vault_path_explicit) {
+            std::cerr << "ERROR: --global and --vault are mutually exclusive\n";
+            return 1;
+        }
+        if (!vault_dedup_opts.use_global && !vault_path_explicit) {
+            // Default: project-scope vault.
+            auto root = sui::quorum::discover_project_root();
+            if (!root) {
+                std::cerr << "ERROR: no .quorum/ found in current or parent directories\n";
+                std::cerr << "Run 'quorum init' or pass --vault <path>\n";
+                return 1;
+            }
+            vault_dedup_opts.vault_path =
+                (fs::path(*root) / ".quorum" / "knowledge").string();
+            return sui::quorum::cli::run_vault_dedup(vault_dedup_opts);
+        }
+        if (!vault_dedup_opts.use_global && vault_path_explicit) {
+            // Explicit --vault path; standalone.
+            return sui::quorum::cli::run_vault_dedup(vault_dedup_opts);
+        }
+        // --global case falls through to config load below.
+    }
+
     // Agent list/modify/history don't need --config -- they work with .quorum/ directly
     if (subcommand == "agent" && agent_subcmd == "list") {
         return sui::quorum::cli::list_agents();
@@ -634,6 +692,17 @@ int main(int argc, char* argv[]) {
     auto& cfg = *cfg_opt;
 
     sui::quorum::validate_config(cfg);
+
+    // Vault dedup --global: now that config is loaded, resolve target path.
+    if (subcommand == "vault" && vault_subcmd_arg == "dedup" && vault_dedup_opts.use_global) {
+        if (cfg.global_knowledge_path.empty()) {
+            std::cerr << "ERROR: --global requires 'global_knowledge_path' in .quorum/config.yaml "
+                      << "(Track 2 feature; not yet configured)\n";
+            return 2;
+        }
+        vault_dedup_opts.vault_path = cfg.global_knowledge_path;
+        return sui::quorum::cli::run_vault_dedup(vault_dedup_opts);
+    }
 
     // Load team presets from .quorum/teams/ if available
     if (fs::exists(".quorum/teams") && fs::is_directory(".quorum/teams")) {

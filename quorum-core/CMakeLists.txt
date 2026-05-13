@@ -201,6 +201,11 @@ add_executable(test_frontmatter_scoring tests/unit/test_frontmatter_scoring.cpp)
 target_include_directories(test_frontmatter_scoring PRIVATE src)
 add_test(NAME test_frontmatter_scoring COMMAND test_frontmatter_scoring)
 
+# Phase 10 Track 3 — quorum vault dedup CLI
+add_executable(test_vault_dedup tests/unit/test_vault_dedup.cpp)
+target_include_directories(test_vault_dedup PRIVATE src)
+add_test(NAME test_vault_dedup COMMAND test_vault_dedup)
+
 add_executable(test_invoker_cache_fields tests/unit/test_invoker_cache_fields.cpp)
 target_include_directories(test_invoker_cache_fields PRIVATE src)
 add_test(NAME test_invoker_cache_fields COMMAND test_invoker_cache_fields)

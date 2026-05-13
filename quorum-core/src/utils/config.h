@@ -109,6 +109,7 @@ struct QuorumConfig {
     ConversationConfig conversations;
     std::vector<AgentMetadata> agents;
     std::vector<TeamPreset> teams;
+    std::string global_knowledge_path;  // Phase 10 Track 2 — operator-curated cross-project knowledge (read-only). Empty = 3-scope behavior. Field plumbed in Track 3; YAML parser support added in Track 2.
 };
 
 namespace detail {
