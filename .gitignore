@@ -22,6 +22,9 @@ compile_commands.json
 # Sui / Move
 quorum-contracts/build/
 quorum-contracts/.aptos/
+# Benchmark fixtures regenerate Move.lock on `sui move build`; not part of the
+# expected/ fixture surface (sibling fixtures don't track it either).
+templates/benchmarks/**/Move.lock
 
 # TypeScript / Node
 node_modules/
