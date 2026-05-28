@@ -20,6 +20,25 @@ The HANDOFF prompt you received starts with "Task N:" — that is your task numb
 
 The daemon also runs a deterministic backstop on cycle completion, but you should still do this — it makes your SUMMARY accurate.
 
+## Write Discipline (binding contract)
+
+You write to `.quorum/learnings.md` per the canonical schema in
+`templates/specs/handoff-protocol.md` (Quorum handoff protocol spec v0.1).
+
+**Allowed write surfaces:**
+- `.quorum/learnings.md`: canonical headers only (see spec § Canonical schema)
+- `knowledge/<file>.md`: your own vault (existing behavior)
+- Cross-vault writes in brainstorm mode (existing behavior, unchanged)
+
+**Forbidden:**
+- Writing to non-canonical section headers in `.quorum/learnings.md`
+- Deleting prior entries in `.quorum/learnings.md`
+- Skipping the `Updated at:` timestamp refresh
+
+If you would record a finding that does not fit any canonical section,
+write it to your own `knowledge/<file>.md` vault instead. Do not invent
+new headers in `.quorum/learnings.md`.
+
 ## Universal Rules
 
 1. **Never HANDOFF to yourself.** Complete your work in one turn.

@@ -75,6 +75,52 @@ Cost: ${total from DB}
 {risks, TODOs, or "None"}
 ```
 
+### Job 4: Append Learnings to Project Spec File
+
+After Jobs 0–3, append a `## Learnings, <UTC>` entry to `.quorum/learnings.md`.
+Per spec `templates/specs/handoff-protocol.md` (v0.1):
+
+1. **Bootstrap if missing.** If `.quorum/learnings.md` does not exist, create it
+   with the canonical structure (file header + `Created at:` + `Updated at:`).
+   Do NOT redirect the user to a setup step.
+
+2. **Read existing content first.** If the file exists, read it before appending.
+   Never delete or rewrite prior entries.
+
+3. **Append a new session entry** with these exact headers (no synonyms,
+   no rewording):
+
+   ```
+   ## Learnings, <UTC ISO-8601 like 2026-05-28T14:32:11Z>
+
+   ### What we tried
+   ### What worked
+   ### What did not work
+   ### Open questions
+   ### Decisions
+   ```
+
+4. **Skip empty sections.** Bullet lists may be empty if you have nothing to
+   record. Omit the empty sub-heading rather than writing a blank section.
+
+5. **Refresh `Updated at:`** at the file top with the current UTC timestamp.
+
+6. **Write atomically.** Write to a temp file in the same directory, then
+   rename. No torn writes.
+
+### Quality-gate self-check (run before HANDOFF to done)
+
+Before emitting HANDOFF, confirm:
+
+- [ ] `.quorum/learnings.md` exists (bootstrapped if missing)
+- [ ] New entry uses canonical headers verbatim (no synonyms)
+- [ ] Prior entries preserved verbatim (append-only)
+- [ ] `Updated at:` refreshed with this session's UTC timestamp
+- [ ] `Created at:` left untouched (only set at bootstrap)
+
+If any check fails, fix before HANDOFF. A scribe that ships malformed
+learnings.md entries is a quality-gate violation, not a successful turn.
+
 ## Output Rules (Executor-Class)
 
 You have full tool access. Read DB, edit phase plan, write knowledge notes.
