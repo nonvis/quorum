@@ -217,6 +217,11 @@ target_include_directories(test_no_vault_write PRIVATE src)
 target_link_libraries(test_no_vault_write PRIVATE SQLite::SQLite3)
 add_test(NAME test_no_vault_write COMMAND test_no_vault_write)
 
+# Phase 10 Track 10: scribe write-discipline (handoff protocol v0.1)
+add_executable(test_scribe_write_discipline tests/unit/test_scribe_write_discipline.cpp)
+target_include_directories(test_scribe_write_discipline PRIVATE src)
+add_test(NAME test_scribe_write_discipline COMMAND test_scribe_write_discipline)
+
 add_executable(test_invoker_cache_fields tests/unit/test_invoker_cache_fields.cpp)
 target_include_directories(test_invoker_cache_fields PRIVATE src)
 add_test(NAME test_invoker_cache_fields COMMAND test_invoker_cache_fields)
