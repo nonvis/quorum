@@ -237,6 +237,11 @@ add_executable(test_librarian_pipeline tests/unit/test_librarian_pipeline.cpp)
 target_include_directories(test_librarian_pipeline PRIVATE src)
 add_test(NAME test_librarian_pipeline COMMAND test_librarian_pipeline)
 
+# Phase 12: quorum ask CLI (ask the manager, read-only) — pure helpers
+add_executable(test_ask tests/unit/test_ask.cpp)
+target_include_directories(test_ask PRIVATE src)
+add_test(NAME test_ask COMMAND test_ask)
+
 add_executable(test_invoker_cache_fields tests/unit/test_invoker_cache_fields.cpp)
 target_include_directories(test_invoker_cache_fields PRIVATE src)
 add_test(NAME test_invoker_cache_fields COMMAND test_invoker_cache_fields)

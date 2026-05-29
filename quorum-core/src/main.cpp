@@ -32,6 +32,7 @@
 #include "cli/vault_dedup.h"
 #include "cli/vault_audit.h"
 #include "cli/librarian_curate.h"
+#include "cli/ask.h"
 #include "utils/discover.h"
 
 namespace fs = std::filesystem;
@@ -143,6 +144,7 @@ static void print_usage(const char* prog) {
               << "                                          List stale (last_reviewed > N days) and expired rule/ref files\n"
               << "  " << prog << " librarian curate [--project <path>] [--dry-run] [--apply]\n"
               << "                                          Curate scribe output into the project's Pitch/Decision-Log/Roadmap\n"
+              << "  " << prog << " ask \"<question>\" [--project <path|name>]   Ask a project's manager (leader) a question, read-only\n"
               << "  " << prog << " benchmark --role <r> --task <name>          Run one synthetic benchmark for a role-specialty\n"
               << "  " << prog << " benchmark --role <r>                        Run all benchmarks for a role-specialty (aggregate)\n"
               << "  " << prog << " benchmark --role <r> --dry-run              Smoke-test setup; skip the daemon spawn\n"
@@ -468,6 +470,7 @@ int main(int argc, char* argv[]) {
     bool vault_path_explicit = false;
     sui::quorum::cli::LibrarianCurateOptions librarian_curate_opts;  // Phase 11
     std::string librarian_subcmd_arg;
+    sui::quorum::cli::AskOptions ask_opts;  // Phase 12 — `quorum ask`
 
     if (subcommand == "converse") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
@@ -605,6 +608,17 @@ int main(int argc, char* argv[]) {
             std::cerr << "ERROR: --dry-run and --apply are mutually exclusive\n";
             return 1;
         }
+    } else if (subcommand == "ask") {
+        // Phase 12 — `quorum ask "<question>" [--project <path|name>]`.
+        // The question is positional (everything that isn't a flag);
+        // --project takes the next arg.
+        for (size_t i = 0; i < sub_args.size(); ++i) {
+            if (sub_args[i] == "--project" && i + 1 < sub_args.size()) {
+                ask_opts.project = sub_args[++i];
+            } else {
+                ask_opts.question = sub_args[i];  // last positional = question
+            }
+        }
     } else if (!subcommand.empty() && subcommand != "status") {
         std::cerr << "Unknown subcommand: " << subcommand << "\n";
         print_usage(argv[0]);
@@ -728,6 +742,16 @@ int main(int argc, char* argv[]) {
             // else: run_librarian_curate defaults to cwd.
         }
         return sui::quorum::cli::run_librarian_curate(librarian_curate_opts);
+    }
+
+    // Phase 12 — `quorum ask "<question>" [--project <path|name>]`. No --config
+    // needed: read-only single-shot leader invocation against the target project
+    // (default cwd, or --project <path|name>). run_ask resolves the project
+    // root (verifies .quorum/ exists), assembles the manager prompt, and prints
+    // the synthesized answer. cwd = project root during the live call so the
+    // leader can read the live code.
+    if (subcommand == "ask") {
+        return sui::quorum::cli::run_ask(ask_opts);
     }
 
     // Agent list/modify/history don't need --config -- they work with .quorum/ directly
