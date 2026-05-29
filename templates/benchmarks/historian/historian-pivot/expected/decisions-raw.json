@@ -1,0 +1,105 @@
+{
+  "schema": "historian/tier1-decisions/v1",
+  "root": "/tmp/quorum-bench-historian",
+  "mined_at_utc": "2026-05-30T00:00:00Z",
+  "gh_authed": true,
+  "decision_log": "00 - Decision Log.md",
+  "repo_count": 2,
+  "repos": [
+    {
+      "name": "gateway",
+      "owner_repo": "acme/gateway",
+      "default_branch": "main",
+      "current_branch": "main",
+      "recent_commits": [
+        {
+          "hash": "a1b2c3d",
+          "date": "2026-05-12",
+          "author": "Priya Nadar",
+          "subject": "Adopt Postgres for the session store (replaces in-memory map)"
+        },
+        {
+          "hash": "e4f5a6b",
+          "date": "2026-05-15",
+          "author": "Priya Nadar",
+          "subject": "chore: bump axios 1.6.0 -> 1.6.2"
+        },
+        {
+          "hash": "c7d8e9f",
+          "date": "2026-05-20",
+          "author": "Tomas Berg",
+          "subject": "Switch rate-limit window from fixed to sliding-log"
+        },
+        {
+          "hash": "0a1b2c3",
+          "date": "2026-05-24",
+          "author": "Tomas Berg",
+          "subject": "style: run prettier across src/"
+        }
+      ],
+      "open_prs": [
+        {
+          "number": 142,
+          "title": "Revert Redis session store; go back to Postgres-only",
+          "author": "Priya Nadar",
+          "createdAt": "2026-05-28T09:00:00Z",
+          "headRefName": "revert-redis-sessions",
+          "url": "https://github.com/acme/gateway/pull/142"
+        }
+      ],
+      "merged_to_default_prs": [
+        {
+          "number": 118,
+          "title": "Use Postgres for the session store",
+          "author": "Priya Nadar",
+          "mergedAt": "2026-05-12T14:00:00Z",
+          "url": "https://github.com/acme/gateway/pull/118"
+        },
+        {
+          "number": 131,
+          "title": "Move sessions to Redis for lower read latency",
+          "author": "Dao Le",
+          "mergedAt": "2026-05-21T11:30:00Z",
+          "url": "https://github.com/acme/gateway/pull/131"
+        },
+        {
+          "number": 124,
+          "title": "Sliding-log rate limiting",
+          "author": "Tomas Berg",
+          "mergedAt": "2026-05-20T16:45:00Z",
+          "url": "https://github.com/acme/gateway/pull/124"
+        }
+      ]
+    },
+    {
+      "name": "contracts",
+      "owner_repo": "acme/contracts",
+      "default_branch": "main",
+      "current_branch": "main",
+      "recent_commits": [
+        {
+          "hash": "f1e2d3c",
+          "date": "2026-05-10",
+          "author": "Mara Quinn",
+          "subject": "Make the registry UpgradeCap a 2-of-3 multisig"
+        },
+        {
+          "hash": "b4a5c6d",
+          "date": "2026-05-18",
+          "author": "Mara Quinn",
+          "subject": "test: add coverage for registry::revoke"
+        }
+      ],
+      "open_prs": [],
+      "merged_to_default_prs": [
+        {
+          "number": 57,
+          "title": "Registry UpgradeCap held by a 2-of-3 multisig",
+          "author": "Mara Quinn",
+          "mergedAt": "2026-05-10T10:00:00Z",
+          "url": "https://github.com/acme/contracts/pull/57"
+        }
+      ]
+    }
+  ]
+}

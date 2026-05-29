@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# run-knower.sh <project-dir> <cartographer|architect>
+# run-knower.sh <project-dir> <cartographer|architect|historian>
 #
 # Run a single read-only "knower" Tier-2 LLM pass and produce its vault
 # artifact. THIS SPENDS CLAUDE TOKENS (it runs `quorum converse`).
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
-    echo "ERROR: usage: $0 <project-dir> <cartographer|architect>" >&2
+    echo "ERROR: usage: $0 <project-dir> <cartographer|architect|historian>" >&2
     exit 1
 fi
 
@@ -54,8 +54,13 @@ case "$KNOWER" in
         BUDGET="3.0"
         GOAL="Map the component interconnections per your SKILL: read the cartographer index + CLAUDE.md, recover edges with file evidence, emit knowledge/ref-architecture-map.md, HANDOFF done."
         ;;
+    historian)
+        ARTIFACT="$PROJECT_DIR/.quorum/vaults/historian/knowledge/ref-decisions.md"
+        BUDGET="2.5"
+        GOAL="Produce the decision history per your historian SKILL: read .quorum/historian/decisions-raw.json + CLAUDE.md (honor it), recognize significant decisions (merged-to-main PRs first-class), track pivots/supersession with PR/commit provenance, surface open PRs as in-flight, emit knowledge/ref-decisions.md, HANDOFF done."
+        ;;
     *)
-        echo "ERROR: unknown knower '$KNOWER' (expected: cartographer | architect)" >&2
+        echo "ERROR: unknown knower '$KNOWER' (expected: cartographer | architect | historian)" >&2
         exit 1
         ;;
 esac
