@@ -43,12 +43,12 @@ Artifacts:
 - cartographer → `.quorum/vaults/cartographer/knowledge/ref-project-index.md`
 - architect → `.quorum/vaults/architect/knowledge/ref-architecture-map.md`
 
-`quorum converse` does **not** self-exit cleanly — it lingers after the
-conversation reaches `done`. This wrapper therefore launches converse in the
-background, records the artifact's pre-run mtime, polls up to ~15 min
-(90 × 10 s) for the artifact to appear/update, flushes (`sleep 6`), then kills
-the converse pid and `pkill`s any lingering `build/quorum_daemon`. It prints
-whether the artifact is PRESENT and its path.
+`quorum converse` now **exits cleanly when its conversation reaches `done`**
+(default behavior as of `d213496`; pass `--keep-alive` for a persistent daemon).
+So this wrapper just runs converse and lets it self-exit, then prints whether
+the artifact is PRESENT. A background-launch + wait-for-exit + last-resort kill
+remains only as a safety net (warns if it ever fires); it is no longer the
+primary mechanism.
 
 ### `cartographer_index.py`
 
@@ -79,8 +79,11 @@ scripts/run-knower.sh /path/to/workspace architect      # spends tokens
 
 ## Follow-up
 
-- **Fix converse self-exit in the C++ daemon.** `quorum converse` lingers after
-  reaching `done` instead of exiting; `run-knower.sh` works around it by
-  background-launch + poll-for-artifact + kill. Once the daemon exits cleanly
-  on `HANDOFF to: done`, the wrapper's kill/poll machinery can be simplified to
-  a plain foreground invocation.
+- ~~Fix converse self-exit in the C++ daemon.~~ **DONE (`d213496`):** `converse`
+  defaults to exit-on-complete (exits when the conversation reaches a terminal
+  state); `--keep-alive` opts into the old persistent-daemon behavior. The
+  run-knower wrapper was simplified accordingly.
+- **Knower rubrics + evaluator + benchmarks.** cartographer/architect ship the
+  SKILL (craft) layer; the measurement layer (rubric + evaluator scoring +
+  synthetic benchmarks) that makes them fully "Active" specialties is still TODO.
+- **historian** (decisions/why) — third knower, designed but not yet built/validated.
