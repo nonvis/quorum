@@ -7,6 +7,8 @@
 #include <string_view>
 #include <vector>
 
+#include "vault/scribe_writer.h"
+
 namespace sui::quorum {
 
 // ─── Data structures ──────────────────────────────────────────────────────────
@@ -57,6 +59,7 @@ struct EvaluationBlock {
 struct ParsedOutput {
     std::string summary;                     // contents of SUMMARY block (empty if absent)
     std::vector<VaultUpdate> vault_updates;  // VAULT_UPDATE blocks
+    std::vector<ScribeLearningsEntry> learnings_updates;  // LEARNINGS_UPDATE blocks (Phase 10 Track 10 v0.2)
     std::vector<Proposal>    proposals;      // PROPOSAL blocks
     std::vector<Review>      reviews;        // REVIEW blocks
     std::vector<ParsedObservation> observations;  // OBSERVATION blocks
@@ -70,7 +73,7 @@ struct ParsedOutput {
 
 // Parses structured blocks from agent output.
 //
-// Recognized block types: VAULT_UPDATE, PROPOSAL, REVIEW, OBSERVATION, SUMMARY, HANDOFF, EVALUATION
+// Recognized block types: VAULT_UPDATE, PROPOSAL, REVIEW, OBSERVATION, SUMMARY, HANDOFF, EVALUATION, LEARNINGS_UPDATE
 //
 // Three accepted formats (in order of precedence):
 //
@@ -190,7 +193,7 @@ public:
                         bool skip = false;
                         for (const char* t : {"VAULT_UPDATE", "PROPOSAL",
                              "OBSERVATION", "SUMMARY", "REVIEW", "HANDOFF",
-                             "EVALUATION"}) {
+                             "EVALUATION", "LEARNINGS_UPDATE"}) {
                             if (ft == t) {
                                 if (block_type.empty()) {
                                     block_type = t;
@@ -227,6 +230,7 @@ public:
     [[nodiscard]] bool has_actionable_output(const ParsedOutput& p) const {
         return !p.vault_updates.empty() || !p.proposals.empty() ||
                !p.reviews.empty() || !p.observations.empty() ||
+               !p.learnings_updates.empty() ||
                p.handoff.has_value();
     }
 
@@ -328,7 +332,7 @@ private:
         if (type == "VAULT_UPDATE" || type == "PROPOSAL" ||
             type == "REVIEW"       || type == "SUMMARY"  ||
             type == "OBSERVATION"  || type == "HANDOFF"  ||
-            type == "EVALUATION") {
+            type == "EVALUATION"   || type == "LEARNINGS_UPDATE") {
             return type;
         }
         return {};
@@ -388,7 +392,7 @@ private:
         // Check if remainder starts with a known type followed by non-alpha or end
         for (const char* t : {"VAULT_UPDATE", "PROPOSAL",
              "OBSERVATION", "SUMMARY", "REVIEW", "HANDOFF",
-             "EVALUATION"}) {
+             "EVALUATION", "LEARNINGS_UPDATE"}) {
             std::string_view type_sv(t);
             if (line.size() >= type_sv.size() &&
                 line.substr(0, type_sv.size()) == type_sv) {
@@ -675,6 +679,54 @@ private:
             }
             if (ok) {
                 out.evaluation = std::move(e);  // last EVALUATION wins
+            }
+
+        } else if (type == "LEARNINGS_UPDATE") {
+            // Phase 10 Track 10 v0.2 - scribe is analyst-class at runtime
+            // (Sub-gate F empirical 2026-05-29); it emits a LEARNINGS_UPDATE
+            // block and the daemon writes .quorum/learnings.md via
+            // apply_scribe_learnings_update. Shape A: sub-fields utc + five
+            // bullet lists. Empty sub-fields are omitted by the scribe; the
+            // primitive's render_subsection drops empty sub-sections.
+            auto bag = parse_kv(lines);
+            ScribeLearningsEntry e;
+            e.utc_timestamp = bag.get_str("utc");
+
+            // Split a multi-line value into bullets: one bullet per line
+            // that begins (post-trim) with "- ". Lines without the prefix
+            // are silently dropped (v0.2 behaviour; see plan R6).
+            auto split_bullets = [](const std::string& multi) {
+                std::vector<std::string> result;
+                std::string cur;
+                auto emit = [&](const std::string& s) {
+                    auto t = trim(std::string_view(s));
+                    if (t.size() >= 2 && t.substr(0, 2) == "- ") {
+                        result.push_back(t.substr(2));
+                    }
+                };
+                for (char c : multi) {
+                    if (c == '\n') {
+                        emit(cur);
+                        cur.clear();
+                    } else {
+                        cur += c;
+                    }
+                }
+                if (!cur.empty()) emit(cur);
+                return result;
+            };
+
+            e.tried          = split_bullets(bag.get_str("tried"));
+            e.worked         = split_bullets(bag.get_str("worked"));
+            e.did_not_work   = split_bullets(bag.get_str("did_not_work"));
+            e.open_questions = split_bullets(bag.get_str("open_questions"));
+            e.decisions      = split_bullets(bag.get_str("decisions"));
+
+            if (e.utc_timestamp.empty()) {
+                std::cerr << "[output_parser] LEARNINGS_UPDATE missing utc"
+                          << " - block dropped\n";
+            } else {
+                out.learnings_updates.push_back(std::move(e));
             }
 
         } else if (type == "HANDOFF") {

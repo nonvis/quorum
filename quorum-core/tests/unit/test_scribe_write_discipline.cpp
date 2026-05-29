@@ -25,6 +25,7 @@
 
 #include <unistd.h>
 
+#include "agent/output_parser.h"
 #include "vault/scribe_writer.h"
 
 namespace fs = std::filesystem;
@@ -276,6 +277,195 @@ static void test_D_validate_headers() {
           "D: single-bad reason names the heading");
 }
 
+// ---- Case E: parser basic LEARNINGS_UPDATE parse ---------------------------
+// Phase 10 Track 10 v0.2 - the parser must recognize a complete
+// LEARNINGS_UPDATE block (all five sub-fields populated) and surface a
+// single ScribeLearningsEntry on ParsedOutput.learnings_updates. The
+// entry then drives apply_scribe_learnings_update end-to-end to confirm
+// parser-to-primitive integration.
+static void test_E_parser_basic(const fs::path& tdir) {
+    std::cout << "\n=== Case E: parser parses well-formed LEARNINGS_UPDATE ===\n\n";
+
+    const std::string raw =
+        "```LEARNINGS_UPDATE\n"
+        "utc: 2026-05-29T01:31:45Z\n"
+        "tried: |\n"
+        "  - did X\n"
+        "  - tried Y\n"
+        "worked: |\n"
+        "  - X worked because Z\n"
+        "did_not_work: |\n"
+        "  - Y failed due to W\n"
+        "open_questions: |\n"
+        "  - is V resolvable?\n"
+        "decisions: |\n"
+        "  - chose X over Y because Z\n"
+        "```\n";
+
+    sui::quorum::OutputParser parser;
+    auto parsed = parser.parse(raw);
+
+    check(parsed.learnings_updates.size() == 1,
+          "E: exactly one learnings_updates entry parsed");
+    if (parsed.learnings_updates.size() != 1) return;
+
+    const auto& e = parsed.learnings_updates[0];
+    check(e.utc_timestamp == "2026-05-29T01:31:45Z",
+          "E: utc_timestamp parsed");
+    check(e.tried.size() == 2 && e.tried[0] == "did X" && e.tried[1] == "tried Y",
+          "E: tried bullets parsed (2 entries)");
+    check(e.worked.size() == 1 && e.worked[0] == "X worked because Z",
+          "E: worked bullets parsed (1 entry)");
+    check(e.did_not_work.size() == 1 && e.did_not_work[0] == "Y failed due to W",
+          "E: did_not_work bullets parsed (1 entry)");
+    check(e.open_questions.size() == 1 && e.open_questions[0] == "is V resolvable?",
+          "E: open_questions bullets parsed (1 entry)");
+    check(e.decisions.size() == 1 &&
+              e.decisions[0] == "chose X over Y because Z",
+          "E: decisions bullets parsed (1 entry)");
+
+    // End-to-end: apply the parsed entry and assert the on-disk file
+    // contains all five canonical sub-headings.
+    auto proj = tdir / "E";
+    fs::create_directories(proj);
+    auto r = sui::quorum::apply_scribe_learnings_update(proj.string(), e);
+    check(r.ok, "E: apply_scribe_learnings_update ok");
+    check(r.bootstrapped, "E: bootstrap on fresh dir");
+
+    auto content = read_file(proj / ".quorum" / "learnings.md");
+    check(content.find("## Learnings, 2026-05-29T01:31:45Z") != std::string::npos,
+          "E: session heading present on disk");
+    check(content.find("### What we tried") != std::string::npos,
+          "E: tried heading on disk");
+    check(content.find("- did X") != std::string::npos,
+          "E: tried bullet 1 on disk");
+    check(content.find("- tried Y") != std::string::npos,
+          "E: tried bullet 2 on disk");
+    check(content.find("### What worked") != std::string::npos,
+          "E: worked heading on disk");
+    check(content.find("### What did not work") != std::string::npos,
+          "E: did_not_work heading on disk");
+    check(content.find("### Open questions") != std::string::npos,
+          "E: open_questions heading on disk");
+    check(content.find("### Decisions") != std::string::npos,
+          "E: decisions heading on disk");
+}
+
+// ---- Case F: parser drops empty sub-fields ---------------------------------
+// The scribe omits a sub-field line entirely when it has no bullets to
+// emit. The parser must produce an entry whose unfilled vectors are
+// empty, and the rendered on-disk file must skip the corresponding
+// `### ...` sub-headings.
+static void test_F_parser_empty_subfields_omitted(const fs::path& tdir) {
+    std::cout << "\n=== Case F: parser handles omitted sub-fields ===\n\n";
+
+    const std::string raw =
+        "```LEARNINGS_UPDATE\n"
+        "utc: 2026-05-29T02:00:00Z\n"
+        "worked: |\n"
+        "  - only thing that worked\n"
+        "```\n";
+
+    sui::quorum::OutputParser parser;
+    auto parsed = parser.parse(raw);
+
+    check(parsed.learnings_updates.size() == 1,
+          "F: exactly one learnings_updates entry parsed");
+    if (parsed.learnings_updates.size() != 1) return;
+
+    const auto& e = parsed.learnings_updates[0];
+    check(e.utc_timestamp == "2026-05-29T02:00:00Z", "F: utc parsed");
+    check(e.tried.empty(),          "F: tried empty (sub-field omitted)");
+    check(e.did_not_work.empty(),   "F: did_not_work empty");
+    check(e.open_questions.empty(), "F: open_questions empty");
+    check(e.decisions.empty(),      "F: decisions empty");
+    check(e.worked.size() == 1 && e.worked[0] == "only thing that worked",
+          "F: worked has the single bullet");
+
+    // End-to-end on-disk check: only `### What worked` should appear.
+    auto proj = tdir / "F";
+    fs::create_directories(proj);
+    auto r = sui::quorum::apply_scribe_learnings_update(proj.string(), e);
+    check(r.ok, "F: apply_scribe_learnings_update ok");
+
+    auto content = read_file(proj / ".quorum" / "learnings.md");
+    check(content.find("### What worked") != std::string::npos,
+          "F: worked heading present on disk");
+    check(content.find("- only thing that worked") != std::string::npos,
+          "F: worked bullet present on disk");
+    check(content.find("### What we tried") == std::string::npos,
+          "F: tried heading omitted on disk");
+    check(content.find("### What did not work") == std::string::npos,
+          "F: did_not_work heading omitted on disk");
+    check(content.find("### Open questions") == std::string::npos,
+          "F: open_questions heading omitted on disk");
+    check(content.find("### Decisions") == std::string::npos,
+          "F: decisions heading omitted on disk");
+}
+
+// ---- Case G: parser delimits LEARNINGS_UPDATE in markdown context ----------
+// Real scribe output wraps the block in narrative text. The parser must
+// pick the block out of the surrounding free_text, leaving text before
+// and after as free_text rather than swallowing it.
+static void test_G_parser_block_in_context(const fs::path& tdir) {
+    std::cout << "\n=== Case G: parser delimits LEARNINGS_UPDATE in markdown ===\n\n";
+
+    const std::string raw =
+        "Some narrative summary before the block.\n"
+        "Another line of free text.\n"
+        "\n"
+        "```LEARNINGS_UPDATE\n"
+        "utc: 2026-05-29T03:15:30Z\n"
+        "tried: |\n"
+        "  - tried X in context\n"
+        "decisions: |\n"
+        "  - decided Y in context\n"
+        "```\n"
+        "\n"
+        "And a trailing line of free text after the block.\n";
+
+    sui::quorum::OutputParser parser;
+    auto parsed = parser.parse(raw);
+
+    check(parsed.learnings_updates.size() == 1,
+          "G: exactly one learnings_updates entry parsed");
+    if (parsed.learnings_updates.size() != 1) return;
+
+    const auto& e = parsed.learnings_updates[0];
+    check(e.utc_timestamp == "2026-05-29T03:15:30Z", "G: utc parsed in context");
+    check(e.tried.size() == 1 && e.tried[0] == "tried X in context",
+          "G: tried bullet parsed in context");
+    check(e.decisions.size() == 1 && e.decisions[0] == "decided Y in context",
+          "G: decisions bullet parsed in context");
+    check(e.worked.empty() && e.did_not_work.empty() && e.open_questions.empty(),
+          "G: unmentioned sub-fields empty");
+
+    // free_text should contain the narrative around the block but NOT
+    // the block's structured field lines.
+    check(parsed.free_text.find("Some narrative summary before the block.")
+              != std::string::npos,
+          "G: pre-block free_text preserved");
+    check(parsed.free_text.find("trailing line of free text after the block.")
+              != std::string::npos,
+          "G: post-block free_text preserved");
+    check(parsed.free_text.find("utc: 2026-05-29T03:15:30Z") == std::string::npos,
+          "G: block sub-fields not leaked into free_text");
+
+    // End-to-end on-disk check.
+    auto proj = tdir / "G";
+    fs::create_directories(proj);
+    auto r = sui::quorum::apply_scribe_learnings_update(proj.string(), e);
+    check(r.ok, "G: apply_scribe_learnings_update ok");
+
+    auto content = read_file(proj / ".quorum" / "learnings.md");
+    check(content.find("## Learnings, 2026-05-29T03:15:30Z") != std::string::npos,
+          "G: session heading on disk");
+    check(content.find("- tried X in context") != std::string::npos,
+          "G: tried bullet on disk");
+    check(content.find("- decided Y in context") != std::string::npos,
+          "G: decisions bullet on disk");
+}
+
 // ---- main ------------------------------------------------------------------
 int main() {
     auto tdir = fs::temp_directory_path() /
@@ -287,6 +477,9 @@ int main() {
     test_B_append_only(tdir);
     test_C_timestamps(tdir);
     test_D_validate_headers();
+    test_E_parser_basic(tdir);
+    test_F_parser_empty_subfields_omitted(tdir);
+    test_G_parser_block_in_context(tdir);
 
     std::error_code ec;
     fs::remove_all(tdir, ec);
