@@ -1225,6 +1225,54 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
+                // Phase 10 Track 10 v0.2 — apply LEARNINGS_UPDATE blocks.
+                // Parser surfaces zero-or-more ScribeLearningsEntry on
+                // parsed.learnings_updates; each lands in
+                // <project_root>/.quorum/learnings.md via the daemon-side
+                // primitive apply_scribe_learnings_update() (header-only,
+                // pulled transitively through output_parser.h). The scribe
+                // is analyst-class at runtime (no Edit/Write) so this is
+                // the only path to write learnings.md. Suppression respects
+                // the same --no-vault-write flag as VAULT_UPDATE for
+                // semantic consistency (any on-disk vault mutation off).
+                if (!parsed.learnings_updates.empty()) {
+                    if (conv_no_vault_write) {
+                        std::cout << "[dispatch] task " << task_id
+                                  << " — LEARNINGS_UPDATE suppressed "
+                                  << "(--no-vault-write, "
+                                  << parsed.learnings_updates.size()
+                                  << " entry(ies) dropped)\n";
+                    } else {
+                        const auto& root = project_root_str.value_or("");
+                        if (root.empty()) {
+                            std::cerr << "[dispatch] task " << task_id
+                                      << " — LEARNINGS_UPDATE skipped (no "
+                                      << "project root; daemon started "
+                                      << "outside a quorum project)\n";
+                        } else {
+                            for (const auto& entry : parsed.learnings_updates) {
+                                auto r = sui::quorum::apply_scribe_learnings_update(
+                                    root, entry);
+                                if (!r.ok) {
+                                    std::cerr << "[dispatch] task " << task_id
+                                              << " — LEARNINGS_UPDATE write "
+                                              << "FAILED: " << r.reason << "\n";
+                                } else if (r.bootstrapped) {
+                                    std::cout << "[dispatch] task " << task_id
+                                              << " — LEARNINGS_UPDATE "
+                                              << "bootstrapped "
+                                              << ".quorum/learnings.md\n";
+                                } else if (verbose) {
+                                    std::cout << "[dispatch] task " << task_id
+                                              << " — LEARNINGS_UPDATE "
+                                              << "appended to "
+                                              << ".quorum/learnings.md\n";
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Phase 8 Track 3 — persist EVALUATION block to evaluations
                 // table. Evaluator agent ID = agent_id (the agent whose turn
                 // just produced the block). Scored agent ID is taken from
