@@ -75,51 +75,80 @@ Cost: ${total from DB}
 {risks, TODOs, or "None"}
 ```
 
-### Job 4: Append Learnings to Project Spec File
+### Job 4: Emit a LEARNINGS_UPDATE block for project-wide learnings
 
-After Jobs 0–3, append a `## Learnings, <UTC>` entry to `.quorum/learnings.md`.
-Per spec `templates/specs/handoff-protocol.md` (v0.1):
+After Jobs 0-3, also emit ONE `LEARNINGS_UPDATE` block in your output. The
+daemon parses it and appends a structured entry to `.quorum/learnings.md`
+at the project root. You do NOT write the file yourself, do NOT use Edit
+or Write tools for this path; you emit a structured block exactly like
+VAULT_UPDATE, and the daemon does the rest.
 
-1. **Bootstrap if missing.** If `.quorum/learnings.md` does not exist, create it
-   with the canonical structure (file header + `Created at:` + `Updated at:`).
-   Do NOT redirect the user to a setup step.
+Per spec `templates/specs/handoff-protocol.md` (v0.2), the daemon enforces:
 
-2. **Read existing content first.** If the file exists, read it before appending.
-   Never delete or rewrite prior entries.
+- Canonical sub-section names by construction (the block has named fields,
+  not free-form headings).
+- Append-only across re-runs (your block appends a new session entry; prior
+  entries stay verbatim).
+- Bootstrap on first write (daemon creates `.quorum/learnings.md` with the
+  canonical file header if it does not exist).
+- UTC `Updated at:` refresh + atomic writeback.
 
-3. **Append a new session entry** with these exact headers (no synonyms,
-   no rewording):
+### LEARNINGS_UPDATE block format
 
-   ```
-   ## Learnings, <UTC ISO-8601 like 2026-05-28T14:32:11Z>
+Emit exactly one block, in this shape:
 
-   ### What we tried
-   ### What worked
-   ### What did not work
-   ### Open questions
-   ### Decisions
-   ```
+```LEARNINGS_UPDATE
+utc: <UTC ISO-8601 timestamp like 2026-05-29T01:31:45Z>
+tried: |
+  - <bullet, action verb first>
+  - <bullet>
+worked: |
+  - <bullet, with evidence>
+did_not_work: |
+  - <bullet, with evidence and conclusion>
+open_questions: |
+  - <bullet, written as a question>
+decisions: |
+  - <bullet, with rationale>
+```
 
-4. **Skip empty sections.** Bullet lists may be empty if you have nothing to
-   record. Omit the empty sub-heading rather than writing a blank section.
+Each sub-field uses the `key: |` multi-line YAML form. Indent each bullet
+with 2 spaces under the field. Use `- ` (dash, space) bullet prefix per
+line. Empty sub-fields: OMIT the entire `<field>: |` line if you have no
+bullets for that field. The daemon drops empty sub-sections from the
+rendered output automatically.
 
-5. **Refresh `Updated at:`** at the file top with the current UTC timestamp.
+If `utc:` is missing or empty, the daemon rejects the entry with a stderr
+diagnostic and does not write the file.
 
-6. **Write atomically.** Write to a temp file in the same directory, then
-   rename. No torn writes.
+### When to emit Job 4
 
-### Quality-gate self-check (run before HANDOFF to done)
+Emit ONE `LEARNINGS_UPDATE` block per scribe turn, after the Job 0-3
+VAULT_UPDATE / phase plan / commit work. The block goes in the same scribe
+output as your VAULT_UPDATE blocks; the daemon parses both in the same
+pass.
+
+If the conversation produced nothing worth recording at the project level
+(trivial query, single-step lookup), omit the block entirely. Not every
+turn needs a learnings entry. The spec's "Not everything needs a record"
+rule applies.
+
+### Quality-gate self-check (before HANDOFF to done)
 
 Before emitting HANDOFF, confirm:
 
-- [ ] `.quorum/learnings.md` exists (bootstrapped if missing)
-- [ ] New entry uses canonical headers verbatim (no synonyms)
-- [ ] Prior entries preserved verbatim (append-only)
-- [ ] `Updated at:` refreshed with this session's UTC timestamp
-- [ ] `Created at:` left untouched (only set at bootstrap)
+- [ ] `LEARNINGS_UPDATE` block present (if the turn had a finding worth
+      recording at project scope)
+- [ ] `utc:` is a UTC ISO-8601 timestamp (the "Z" suffix matters; not a
+      local-time string)
+- [ ] All non-empty sub-fields use `key: |` multi-line form
+- [ ] Bullet lines are indented 2 spaces and start with `- `
+- [ ] No invented sub-field names (only the five canonical ones:
+      tried / worked / did_not_work / open_questions / decisions)
 
-If any check fails, fix before HANDOFF. A scribe that ships malformed
-learnings.md entries is a quality-gate violation, not a successful turn.
+If the quality-gate fails, fix before HANDOFF. The daemon will reject
+malformed blocks with a stderr diagnostic, so a bad block produces no
+disk mutation, only noise.
 
 ## Output Rules (Executor-Class)
 

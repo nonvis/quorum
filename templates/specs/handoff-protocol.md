@@ -2,8 +2,8 @@
 
 > Contract for the markdown context files Quorum scribes write to `.quorum/` in the user's project workspace. Skill authors read this before authoring any skill that produces or consumes phase context. v0.1 scope: scribe-only.
 
-Spec version: 0.1
-Last updated: 2026-05-28
+Spec version: 0.2
+Last updated: 2026-05-29
 Source lineage: Suiperpower core/skills/data/specs/phase-handoff.md v1.0
 
 ## Why this spec exists
@@ -86,6 +86,44 @@ Use UTC, not local time.
 
 Atomic writeback: write the new content to `.quorum/learnings.md.tmp.<pid>` in the same directory, `fsync` the temp file, then `std::filesystem::rename` it over the canonical path. No torn writes; readers always see either the prior complete file or the new complete file.
 
+## Write Mechanism (v0.2)
+
+`.quorum/learnings.md` is populated by the daemon, not by scribe directly.
+v0.1 designed scribe to use Edit/Write tools, but Sub-gate F (2026-05-29)
+showed scribe is analyst-class at runtime and lacks Edit/Write access.
+v0.2 ships a `LEARNINGS_UPDATE` block type the scribe emits in its output;
+the daemon parses it and calls `apply_scribe_learnings_update()` to append
+to the file.
+
+Block format:
+
+    LEARNINGS_UPDATE
+    utc: <UTC ISO-8601>
+    tried: |
+      - bullet
+    worked: |
+      - bullet with evidence
+    did_not_work: |
+      - bullet with evidence
+    open_questions: |
+      - bullet as a question
+    decisions: |
+      - bullet with rationale
+
+Each sub-field is optional. Empty sub-fields omit the entire `<field>: |`
+line; the daemon does not render empty sub-sections.
+
+The daemon enforces all five rules at the block boundary:
+1. Canonical headers - sub-field names are fixed (no free-form headings).
+2. Append-only - the primitive appends; never overwrites prior entries.
+3. Non-deletion - trivially holds (scribe is the sole writer in v0.2).
+4. Bootstrap - daemon creates `.quorum/learnings.md` on first block.
+5. UTC + atomic - daemon uses tmp + fsync + rename, refreshes `Updated at:`.
+
+The `--no-vault-write` conversation flag (Phase 10 Track 5) suppresses
+`LEARNINGS_UPDATE` writes alongside `VAULT_UPDATE`, with a mirrored
+`[dispatch] task N — LEARNINGS_UPDATE suppressed (...)` diagnostic.
+
 ## Canonical schema for .quorum/learnings.md
 
 Bootstrap structure (created on first scribe write if file does not exist):
@@ -141,3 +179,4 @@ Skills are forward-compatible by default: they ignore unknown sections.
 ## Changelog
 
 - **0.1** (2026-05-28): Initial spec. scribe-only scope. learnings.md with `## What we tried / What worked / What did not work / Open questions / Decisions` canonical sections. Append-only, non-deletion, bootstrap, UTC + atomic. Lifted from Suiperpower phase-handoff spec v1.0.
+- **0.2** (2026-05-29): Reversed v0.1 Q12 lock ("tool-call-driven via SKILL.md text"). Sub-gate F (2026-05-29) empirically showed scribe is analyst-class at runtime and cannot Edit/Write directly - three production-scribe attempts against fresh fixtures all failed to write `.quorum/learnings.md`. v0.2 ships `LEARNINGS_UPDATE` block parsing in `output_parser.h` + daemon wiring in `main.cpp` task_dispatch that calls the existing `apply_scribe_learnings_update()` primitive. SKILL.md Job 4 rewritten to emit the block instead of (mythical) direct file writes. Five rules enforced at the block boundary rather than at the scribe-prompt boundary.
