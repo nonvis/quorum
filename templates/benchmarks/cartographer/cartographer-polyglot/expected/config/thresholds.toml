@@ -1,0 +1,9 @@
+# Runtime configuration for the sweep service.
+
+[rpc]
+sui_fullnode = "https://fullnode.mainnet.sui.io:443"
+
+[thresholds]
+# liquidation triggers when health factor drops below this
+min_health_factor = 1.05
+poll_interval_secs = 5
