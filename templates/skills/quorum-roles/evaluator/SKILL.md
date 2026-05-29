@@ -54,10 +54,24 @@ If the rubric is missing from your context (no `rule-*-rubric.md` knowledge file
 For each item in the rubric:
 
 - Read enough of the changed files to make a judgment
-- Decide passed: true / false (binary per item; the weighting handles grading)
+- Decide `passed`: `true` / `false` / `"na"` (binary per item; the weighting handles grading)
 - Optionally record a short note explaining why if the call is non-obvious
 
-Total = sum of weights of passed items. Maximum = sum of all weights, normalized to 0-100.
+**`"na"` (not applicable) — for items the *task* does not exercise.** A rubric is the union of everything its role could ever be scored on; a single task often exercises only a subset. When an item scores a deliverable **the task did not ask for** — e.g. a multi-task suite deliberately splits "map the system" and "reason about a change" across separate tasks — mark that item `"na"` instead of `false`. N/A items are **excluded from both the numerator and the denominator**: they neither earn nor cost weight, and the score renormalizes over the items that actually applied.
+
+- **N/A is for task-scope, never for agent-omission.** If the task *did* ask for the deliverable and the agent skipped, botched, or stubbed it, that is `false` — not `"na"`. (Mirrors the move-dev rule: a stub-only test file is FAIL, not N/A.) Defaulting to `"na"` to inflate a score is a scoring error.
+- **Never N/A a deliverable that was actually provided.** If the agent addressed an item and it's gradeable, score it `true`/`false`. Marking a *passed* item `"na"` would lower the score — N/A only ever applies to items that are genuinely outside the task's scope.
+- If the per-task evaluator-notes name which items are N/A for this task, honor them (subject to the two rules above).
+
+Scoring — renormalized over applicable weight:
+
+```
+passed_weight     = Σ weight of items with passed == true
+applicable_weight = Σ weight of items with passed != "na"   (true + false; excludes na)
+total (0-100)     = round( passed_weight / applicable_weight × 100 )
+```
+
+When no item is N/A this reduces to the plain "sum of passed weights over sum of all weights." If *every* item is N/A (nothing applied), emit `total: 0` with a note saying the task exercised no rubric items.
 
 ### Job 4: Emit the EVALUATION Block
 
@@ -108,9 +122,9 @@ Field details:
 
 - `role`: the role-specialty being scored (e.g. `move-dev`). Required.
 - `rubric_version`: matches the `version` from the rubric file frontmatter (e.g. `v1`). Required.
-- `total`: numeric score, normalized 0-100. Plain number — do NOT include a `%` suffix. Required.
-- `items_json`: a **single-line JSON array** of per-item objects. Each object has `id` (string), `weight` (int), `passed` (bool), and optional `notes` (string). Keep it on one line so the daemon's parser doesn't have to handle nested YAML. Example:
-  `[{"id":"compile-clean","weight":5,"passed":true},{"id":"move-2024-idioms","weight":4,"passed":false,"notes":"uses old public fun for internal helpers"}]`
+- `total`: numeric score, normalized 0-100, **renormalized over applicable (non-`"na"`) weight** (see Job 3). Plain number — do NOT include a `%` suffix. Required.
+- `items_json`: a **single-line JSON array** of per-item objects. Each object has `id` (string), `weight` (int), `passed` (`true` / `false` / `"na"`), and optional `notes` (string). Keep it on one line so the daemon's parser doesn't have to handle nested YAML. Example (the third item is out-of-scope for this task, so it's excluded from the denominator):
+  `[{"id":"compile-clean","weight":5,"passed":true},{"id":"move-2024-idioms","weight":4,"passed":false,"notes":"uses old public fun for internal helpers"},{"id":"change-impact-blast-radius","weight":7,"passed":"na","notes":"task did not request a change-impact analysis"}]`
 - `notes`: free-form summary explaining the score (1-3 sentences).
 - `scored`: optional. The agent_id whose work was evaluated. If omitted, the daemon defaults to the most recent task agent in this conversation other than yourself. Set this explicitly when you want to be unambiguous (e.g. the team had multiple doers).
 

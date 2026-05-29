@@ -62,11 +62,45 @@ as the entry and `db ... insert` as the sink.
 - **Primary-flow tracing (10)** — the 4-hop chain above with correct entry +
   sink.
 
-## Items scored lighter / N/A here
+## N/A for this task — exclude from scoring (see evaluator SKILL § Job 3 `"na"`)
 
-- **Change-impact reasoning** is exercised by the sibling `architect-impact`
-  task, not this one; if the architect volunteers blast-radius reasoning here,
-  score it, otherwise treat those items as not-the-focus.
-- **Boundary/coupling + invariants** — the clean layering (api→service→repo→db)
-  is the obvious boundary call; noting the strict chain + that `db`/`models` are
-  leaves earns it. Don't over-penalize a thin treatment on this easy fixture.
+This is the **map** task. By the suite's design the two architect tasks split
+the rubric: `architect-map` exercises inventory + interconnection + map-form +
+primary-flow; the sibling `architect-impact` exercises change-impact. This
+task's deliverables (component table, edge list, primary-flow trace) propose no
+change to reason about. Therefore:
+
+- **Change-impact reasoning — the three `change-impact.*` items (15 wt)** —
+  mark `passed: "na"` (excluded from numerator AND denominator; the score
+  renormalizes over the remaining ~85 wt). Scoring them `false` because the
+  architect didn't volunteer a blast-radius analysis is a scoring error — the
+  task never asked for one. **EXCEPTION:** if the architect *does* volunteer a
+  change-impact / blast-radius analysis, score those items `true`/`false`
+  normally instead of N/A.
+
+Do NOT N/A anything the task DID ask for. Inventory, interconnection, map-form,
+primary-flow, and clarity items are all in-scope — score them `true`/`false`.
+A requested deep-dive / diagram isn't part of this task either, but the map's
+component-table responsibilities and its renderable edge-list shape ordinarily
+satisfy `depth.*` and `clarity.*` on their own — score those on what the map
+delivers, don't N/A them.
+
+## Boundary / coupling + invariants (10 wt) — in-scope, but easy fixture
+
+In-scope and scored, but light on this tiny fixture. The clean layering
+(api→service→repository→db) is the obvious boundary call. For full marks the map
+should ALSO surface the two facts the fixture actually has:
+
+- **Coupling hotspot:** `models` has **fan-in 3** — `api`, `service`, AND
+  `repository` all import it (`from models import ...`). It's the one shared
+  dependency; naming it as the coupling hotspot (not merely "a leaf") earns
+  `boundary.coupling-hotspots`.
+- **Cross-boundary invariant:** the order **id**. `service` builds the Order
+  with `id=0` (`service.py`), and `db.Connection.insert` assigns the real id
+  (`db.py`), which `repository.save` writes back onto the Order and returns up
+  the chain. "id is created downstream, not by the service" is the load-bearing
+  invariant — naming it earns `boundary.invariants`.
+
+A map that notes only the strict chain + that `db`/`models` are leaves earns
+`boundary.layering` but not the other two. Don't invent further invariants —
+these are the only ones this fixture has; over-claiming is not rewarded.

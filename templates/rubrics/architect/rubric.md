@@ -54,6 +54,7 @@ are documentation; per-item `(W)` weights drive scoring.
 - [ ] (2) The correct sink / terminal effect of the flow is identified
 
 ## Change-impact reasoning (weight 15)
+_Conditional category: applicable ONLY when the task poses a hypothetical change or asks for a blast-radius analysis. On a pure mapping task that proposes no change, the agent has nothing to reason about — mark these items `"na"` (NOT `false`); they are excluded from the denominator and the score renormalizes over the remaining weight (see evaluator SKILL § Job 3). If the agent volunteers a change-impact analysis anyway, score normally._
 - [ ] (7) Given a hypothetical change, the affected components (blast radius) are correctly identified
 - [ ] (5) The reasoning follows the actual edges — affected components are reachable from the changed one via real dependencies
 - [ ] (3) Unaffected components are not over-claimed — the blast radius is scoped, not "everything"
