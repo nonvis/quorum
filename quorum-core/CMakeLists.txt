@@ -227,6 +227,11 @@ add_executable(test_librarian_curate tests/unit/test_librarian_curate.cpp)
 target_include_directories(test_librarian_curate PRIVATE src)
 add_test(NAME test_librarian_curate COMMAND test_librarian_curate)
 
+# Phase 11 Batch B: librarian curate pipeline (parse -> validate -> diff -> apply)
+add_executable(test_librarian_pipeline tests/unit/test_librarian_pipeline.cpp)
+target_include_directories(test_librarian_pipeline PRIVATE src)
+add_test(NAME test_librarian_pipeline COMMAND test_librarian_pipeline)
+
 add_executable(test_invoker_cache_fields tests/unit/test_invoker_cache_fields.cpp)
 target_include_directories(test_invoker_cache_fields PRIVATE src)
 add_test(NAME test_invoker_cache_fields COMMAND test_invoker_cache_fields)

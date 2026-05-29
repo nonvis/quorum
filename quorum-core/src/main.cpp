@@ -31,6 +31,7 @@
 #include "cli/skills.h"
 #include "cli/vault_dedup.h"
 #include "cli/vault_audit.h"
+#include "cli/librarian_curate.h"
 #include "utils/discover.h"
 
 namespace fs = std::filesystem;
@@ -140,6 +141,8 @@ static void print_usage(const char* prog) {
               << "                                          Cluster near-duplicate rule-*.md/ref-*.md files\n"
               << "  " << prog << " vault audit [--vault <path>] [--days N] [--global]\n"
               << "                                          List stale (last_reviewed > N days) and expired rule/ref files\n"
+              << "  " << prog << " librarian curate [--project <path>] [--dry-run] [--apply]\n"
+              << "                                          Curate scribe output into the project's Pitch/Decision-Log/Roadmap\n"
               << "  " << prog << " benchmark --role <r> --task <name>          Run one synthetic benchmark for a role-specialty\n"
               << "  " << prog << " benchmark --role <r>                        Run all benchmarks for a role-specialty (aggregate)\n"
               << "  " << prog << " benchmark --role <r> --dry-run              Smoke-test setup; skip the daemon spawn\n"
@@ -463,6 +466,8 @@ int main(int argc, char* argv[]) {
     sui::quorum::cli::VaultAuditOptions vault_audit_opts;
     std::string vault_subcmd_arg;
     bool vault_path_explicit = false;
+    sui::quorum::cli::LibrarianCurateOptions librarian_curate_opts;  // Phase 11
+    std::string librarian_subcmd_arg;
 
     if (subcommand == "converse") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
@@ -579,6 +584,27 @@ int main(int argc, char* argv[]) {
             std::cerr << "       quorum vault audit [--vault <path>] [--global] [--days N]\n";
             return 1;
         }
+    } else if (subcommand == "librarian") {
+        for (size_t i = 0; i < sub_args.size(); ++i) {
+            if (librarian_subcmd_arg.empty() && sub_args[i] == "curate") {
+                librarian_subcmd_arg = sub_args[i];
+            } else if (sub_args[i] == "--project" && i + 1 < sub_args.size()) {
+                librarian_curate_opts.project_path = sub_args[++i];
+            } else if (sub_args[i] == "--dry-run") {
+                librarian_curate_opts.dry_run = true;
+            } else if (sub_args[i] == "--apply") {
+                librarian_curate_opts.apply_all = true;
+            }
+        }
+        if (librarian_subcmd_arg.empty()) {
+            std::cerr << "ERROR: librarian requires a sub-subcommand (curate)\n";
+            std::cerr << "Usage: quorum librarian curate [--project <path>] [--dry-run] [--apply]\n";
+            return 1;
+        }
+        if (librarian_curate_opts.dry_run && librarian_curate_opts.apply_all) {
+            std::cerr << "ERROR: --dry-run and --apply are mutually exclusive\n";
+            return 1;
+        }
     } else if (!subcommand.empty() && subcommand != "status") {
         std::cerr << "Unknown subcommand: " << subcommand << "\n";
         print_usage(argv[0]);
@@ -689,6 +715,19 @@ int main(int argc, char* argv[]) {
             return sui::quorum::cli::run_vault_audit(vault_audit_opts);
         }
         // --global case falls through to config load below.
+    }
+
+    // Phase 11 — `quorum librarian curate`. No --config needed: operates on the
+    // target project root (default cwd, or --project <path>). Resolves the
+    // project root, bootstraps the skeleton, invokes the librarian, and applies
+    // its blocks behind the operator gate.
+    if (subcommand == "librarian" && librarian_subcmd_arg == "curate") {
+        if (librarian_curate_opts.project_path.empty()) {
+            auto root = sui::quorum::discover_project_root();
+            if (root) librarian_curate_opts.project_path = *root;
+            // else: run_librarian_curate defaults to cwd.
+        }
+        return sui::quorum::cli::run_librarian_curate(librarian_curate_opts);
     }
 
     // Agent list/modify/history don't need --config -- they work with .quorum/ directly
