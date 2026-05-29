@@ -21,7 +21,6 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
-#include <functional>
 #include <iostream>
 #include <sstream>
 #include <string>

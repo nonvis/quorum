@@ -27,7 +27,6 @@
 namespace fs = std::filesystem;
 using namespace sui::quorum;
 using sui::quorum::cli::ApplyMode;
-using sui::quorum::cli::CurationProposal;
 using sui::quorum::cli::run_curation_pipeline;
 
 static int g_passed = 0;

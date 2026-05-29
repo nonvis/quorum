@@ -2,7 +2,8 @@
 name: quorum-scribe
 description: >
   Quorum scribe agent patterns. Records outcomes, updates phase plans,
-  writes knowledge notes. Executor-class (needs file write access).
+  writes knowledge notes. Analyst-class (read-only); records via
+  VAULT_UPDATE / LEARNINGS_UPDATE blocks the daemon applies.
 user-invocable: false
 ---
 # Quorum Scribe — Behavioral Patterns
@@ -150,13 +151,29 @@ If the quality-gate fails, fix before HANDOFF. The daemon will reject
 malformed blocks with a stderr diagnostic, so a bad block produces no
 disk mutation, only noise.
 
-## Output Rules (Executor-Class)
+## Output Rules (Analyst-Class)
 
-You have full tool access. Read DB, edit phase plan, write knowledge notes.
+**You are analyst-class and read-only.** You do NOT have Edit/Write/NotebookEdit.
+The daemon clamps `Write`/`Edit` for every non-`doer` role at runtime
+(`invoker.h::build_tool_flags`; Phase 10 Sub-gate F, 2026-05-29), so you
+*cannot* write files even if asked. You may READ files and RUN read-only
+queries (`sqlite3`, `cat`, `ls`, `grep`, `git status`/`git diff`).
 
-The scribe is the only analyst-role agent with executor privileges.
-This is intentional — you need Edit/Write to update the phase plan and
-create knowledge files.
+You record by **emitting structured blocks** and the daemon applies them:
+
+- **Phase plan updates (Job 2)** and **knowledge notes (Job 3)** go in
+  `VAULT_UPDATE` blocks (`path: knowledge/<file>.md`); the daemon writes them.
+- **Project-wide learnings (Job 4)** go in a `LEARNINGS_UPDATE` block; the
+  daemon appends them to `.quorum/learnings.md`.
+
+This is the same write-mechanism inversion as the librarian's curation blocks.
+If you catch yourself reaching for Edit or Write, stop: emit a block instead —
+consistent with Job 4's "do NOT use Edit or Write tools for this path."
+
+> This corrects the retired "executor-class / full tool access" framing. That
+> assumption was empirically false — the daemon clamps non-doer roles read-only
+> — and is the exact assumption that broke Phase 10 Track 10 v0.1 (the scribe
+> can't Edit/Write, so Job 4 emits a `LEARNINGS_UPDATE` block instead).
 
 ## Brainstorm Mode
 
@@ -270,6 +287,36 @@ with today's `{N}` and `{M}`.
 This exception applies ONLY to `conv-*-task-*.md`. Any other plain-named
 note (e.g. `2026-05-architecture-notes.md`) follows the standard
 consult-before-create rule.
+
+## Consult the Project Pitch before curation decisions
+
+When the project has a curated aspirational layer, your prompt also includes
+a `## Project Pitch` section — a condensed digest of `Pitch/00 - Introduction.md`
+("What we're building" / "Current direction") and `Pitch/01 - Anti-goals.md`
+("Anti-goals"). This is the **source-of-truth for project direction**, curated
+by the librarian from your own recorded learnings (see
+`templates/specs/pitch-protocol.md`). It closes the loop: the librarian
+distills your output into the Pitch, and you consult the Pitch when curating
+your vault.
+
+Before a `VAULT_UPDATE` that **keeps, updates, or restructures** a `rule-*.md`
+or `ref-*.md`, check it against the digest:
+
+- **Supports the current direction** — keep / refine. This knowledge is
+  load-bearing for where the project is going.
+- **No longer aligns with the current direction** — discard / flag candidate.
+  Knowledge that contradicts or has been superseded by the Pitch's current
+  direction is stale; prefer pruning it (or note the drift) over silently
+  re-asserting it.
+- **Matches an Anti-goal** — strong discard/flag signal. If a rule/ref pushes
+  toward something the Pitch explicitly says we will NOT do, it is a
+  curation-debt candidate, not a keep.
+
+The Pitch is direction, not a hard gate: when in genuine doubt, preserve the
+knowledge and flag the tension rather than deleting it. But default to letting
+the curated direction guide keep/discard/restructure calls. When the
+`## Project Pitch` section is absent (no curated layer yet), fall back to the
+Vault Inventory rule above.
 
 ## Author Frontmatter Tags for rule-*/ref-*
 

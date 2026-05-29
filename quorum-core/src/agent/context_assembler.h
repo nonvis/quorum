@@ -794,6 +794,50 @@ public:
             }
         }
 
+        // Phase 11 Track 4 — ## Project Pitch (scribe-respects-Pitch loop)
+        //
+        // The librarian (Phase 11) curates scribe output into a project-root
+        // aspirational layer (Pitch/00 - Introduction.md + 01 - Anti-goals.md).
+        // The scribe consults that Pitch as source-of-truth when deciding
+        // keep/discard/update/restructure of its own rule-*/ref-* knowledge
+        // (pitch-protocol.md v0.1).
+        //
+        // Scope: scribe-only. The Pitch is the scribe's curation compass; other
+        // roles (doer/architect/etc.) don't make vault-curation decisions, so
+        // injecting it for them would only dilute their prompts. We gate on
+        // `agent_role == "scribe"` (same role-gate pattern as the brainstorm
+        // cross-vault inventory block above) AND on project_root being set AND
+        // on the Pitch files actually existing. Additive only: emits nothing
+        // when any gate fails (no empty "## Project Pitch" header).
+        if (agent_role == "scribe" && !project_root.empty()) {
+            auto root = std::filesystem::path(project_root);
+            auto intro = root / "Pitch" / "00 - Introduction.md";
+            auto anti = root / "Pitch" / "01 - Anti-goals.md";
+
+            auto building = extract_pitch_section(intro, "What we're building");
+            auto direction = extract_pitch_section(intro, "Current direction");
+            auto anti_goals = extract_pitch_section(anti, "Anti-goals");
+
+            if (!building.empty() || !direction.empty() || !anti_goals.empty()) {
+                prompt += "## Project Pitch\n\n";
+                prompt += "Curated source-of-truth for project direction "
+                          "(see pitch-protocol.md). Consult this before a "
+                          "VAULT_UPDATE that keeps/updates/restructures a "
+                          "rule-*/ref-*: knowledge that no longer aligns with "
+                          "this direction is a discard/flag candidate.\n\n";
+                if (!building.empty()) {
+                    prompt += "- **What we're building:** " + building + "\n";
+                }
+                if (!direction.empty()) {
+                    prompt += "- **Current direction:** " + direction + "\n";
+                }
+                if (!anti_goals.empty()) {
+                    prompt += "- **Anti-goals:** " + anti_goals + "\n";
+                }
+                prompt += "\n";
+            }
+        }
+
         // Load inbox items
         auto inbox_dir = std::filesystem::path(vault_dir) / "inbox";
         if (std::filesystem::exists(inbox_dir) && std::filesystem::is_directory(inbox_dir)) {
@@ -940,6 +984,88 @@ private:
         if (delta_hr < 24) return std::to_string(delta_hr) + "h ago";
         auto delta_day = delta_hr / 24;
         return std::to_string(delta_day) + "d ago";
+    }
+
+    // Phase 11 Track 4 — extract a named "## <section>" body from a Pitch
+    // markdown file and condense it to a single whitespace-collapsed line,
+    // capped at `max_chars` with a trailing "…" marker when truncated.
+    //
+    // Returns empty string when the file or the section is absent (caller
+    // treats empty as "nothing to inject", mirroring the inventory's
+    // emit-nothing-when-empty discipline). The section body is everything
+    // between the `## <section>` heading and the next `## ` heading or EOF.
+    [[nodiscard]] static std::string extract_pitch_section(
+        const std::filesystem::path& file,
+        const std::string& section,
+        size_t max_chars = 400) {
+        if (!std::filesystem::exists(file)) return {};
+        auto content = read_file(file);
+        if (content.empty()) return {};
+
+        const std::string heading = "## " + section;
+        // Find the heading at the start of a line.
+        size_t hpos = std::string::npos;
+        size_t scan = 0;
+        const size_t n = content.size();
+        while (scan < n) {
+            size_t line_end = content.find('\n', scan);
+            std::string line = (line_end == std::string::npos)
+                ? content.substr(scan)
+                : content.substr(scan, line_end - scan);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line == heading) {
+                hpos = (line_end == std::string::npos) ? n : line_end + 1;
+                break;
+            }
+            if (line_end == std::string::npos) break;
+            scan = line_end + 1;
+        }
+        if (hpos == std::string::npos) return {};
+
+        // Body runs until the next line that begins with "## " or EOF.
+        size_t body_end = n;
+        size_t bscan = hpos;
+        while (bscan < n) {
+            size_t line_end = content.find('\n', bscan);
+            std::string line = (line_end == std::string::npos)
+                ? content.substr(bscan)
+                : content.substr(bscan, line_end - bscan);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.rfind("## ", 0) == 0) {
+                body_end = bscan;
+                break;
+            }
+            if (line_end == std::string::npos) break;
+            bscan = line_end + 1;
+        }
+
+        std::string body = content.substr(hpos, body_end - hpos);
+
+        // Collapse all whitespace runs (incl. newlines) into single spaces.
+        std::string flat;
+        flat.reserve(body.size());
+        bool in_ws = false;
+        for (char c : body) {
+            if (c == '\n' || c == '\r' || c == '\t' || c == ' ') {
+                if (!in_ws && !flat.empty()) {
+                    flat.push_back(' ');
+                    in_ws = true;
+                }
+            } else {
+                flat.push_back(c);
+                in_ws = false;
+            }
+        }
+        while (!flat.empty() && flat.back() == ' ') flat.pop_back();
+
+        if (flat.size() > max_chars) {
+            flat.resize(max_chars);
+            // Trim a partial trailing token for cleanliness, then mark.
+            while (!flat.empty() && flat.back() != ' ') flat.pop_back();
+            while (!flat.empty() && flat.back() == ' ') flat.pop_back();
+            flat += " …";
+        }
+        return flat;
     }
 
     // List files sorted by modification time (most recent first)

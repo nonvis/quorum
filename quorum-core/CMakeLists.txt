@@ -201,6 +201,11 @@ add_executable(test_frontmatter_scoring tests/unit/test_frontmatter_scoring.cpp)
 target_include_directories(test_frontmatter_scoring PRIVATE src)
 add_test(NAME test_frontmatter_scoring COMMAND test_frontmatter_scoring)
 
+# Phase 11 Track 4 — ## Project Pitch injection (scribe-respects-Pitch loop)
+add_executable(test_assembler_pitch tests/unit/test_assembler_pitch.cpp)
+target_include_directories(test_assembler_pitch PRIVATE src)
+add_test(NAME test_assembler_pitch COMMAND test_assembler_pitch)
+
 # Phase 10 Track 3 — quorum vault dedup CLI
 add_executable(test_vault_dedup tests/unit/test_vault_dedup.cpp)
 target_include_directories(test_vault_dedup PRIVATE src)
