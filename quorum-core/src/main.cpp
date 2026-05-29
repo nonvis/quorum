@@ -134,8 +134,9 @@ static void print_conversations(sui::quorum::Database& db) {
 static void print_usage(const char* prog) {
     std::cerr << "Usage:\n"
               << "  " << prog << " init                                      Initialize .quorum/ in current directory\n"
-              << "  " << prog << " converse \"goal text\"                      Start conversation (auto-discovers .quorum/)\n"
+              << "  " << prog << " converse \"goal text\"                      Run conversation to completion, then exit (auto-discovers .quorum/)\n"
               << "  " << prog << " converse --team quick-build \"fix bug\"     Use specific team\n"
+              << "  " << prog << " converse --keep-alive \"goal text\"        Run conversation, then keep daemon running (persistent mode)\n"
               << "  " << prog << " teams                                      List available teams\n"
               << "  " << prog << " skills                                     List available Claude Code skills\n"
               << "  " << prog << " vault dedup [--vault <path>] [--dry-run] [--global] [--threshold <f>]\n"
@@ -166,6 +167,8 @@ static void print_usage(const char* prog) {
               << "  --max-rounds <n>     Max revision rounds (default: 3)\n"
               << "  --team <name>        Team preset from .quorum/teams/ (optional)\n"
               << "  --mode <generic|brainstorm>  Conversation mode (default: generic)\n"
+              << "  --keep-alive         converse only: keep the daemon running after the conversation completes (persistent mode)\n"
+              << "  --once               converse only: exit when the conversation completes (now the default; retained for back-compat)\n"
               << "  --no-vault-write     Suppress VAULT_UPDATE filesystem writes for this conversation\n"
               << "  --conversation <id>  Conversation ID for resume/close\n"
               << "  --help               Show this message\n"
@@ -463,6 +466,7 @@ int main(int argc, char* argv[]) {
     bool bench_dry_run = false;
     bool bench_keep_tempdir = false;
     bool exit_on_complete = false;
+    bool keep_alive = false;            // converse opt-out: stay persistent after completion
     bool conv_no_vault_write = false;   // Phase 10 Track 5
     sui::quorum::cli::VaultDedupOptions vault_dedup_opts;
     sui::quorum::cli::VaultAuditOptions vault_audit_opts;
@@ -489,6 +493,8 @@ int main(int argc, char* argv[]) {
                 }
             } else if (sub_args[i] == "--once") {
                 exit_on_complete = true;
+            } else if (sub_args[i] == "--keep-alive") {
+                keep_alive = true;
             } else if (sub_args[i] == "--no-vault-write") {
                 conv_no_vault_write = true;
             } else {
@@ -996,6 +1002,13 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
+    // converse: exit-on-complete is the DEFAULT (run the conversation, then exit).
+    // Operators opt out with --keep-alive for the old persistent behavior.
+    // (--once still sets exit_on_complete above; it is now the default and retained for back-compat.)
+    if (subcommand == "converse" && !keep_alive) {
+        exit_on_complete = true;
+    }
+
     // PID lock with graceful fallback for converse/resume
     bool needs_daemon = subcommand.empty() || subcommand == "converse" || subcommand == "resume";
     if (needs_daemon) {
@@ -1010,11 +1023,9 @@ int main(int argc, char* argv[]) {
                     std::cerr << "ERROR: converse requires a goal string\n";
                     return 1;
                 }
-                if (exit_on_complete) {
-                    std::cerr << "ERROR: --once requires no other daemon to be running.\n"
-                              << "Existing daemon detected via PID lock; benchmark cannot run.\n";
-                    return 1;
-                }
+                // A daemon is already running, so converse just seeds the conversation and
+                // returns; the running daemon completes it. converse runs no loop here, so
+                // exit-on-complete is moot in this branch.
                 auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, team_name, mode_name, conv_no_vault_write);
                 std::cout << "Conversation " << id << " created.\n";
                 std::cout << "Daemon already running — it will pick up the conversation.\n";

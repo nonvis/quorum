@@ -5,10 +5,12 @@
 # Run a single read-only "knower" Tier-2 LLM pass and produce its vault
 # artifact. THIS SPENDS CLAUDE TOKENS (it runs `quorum converse`).
 #
-# Workaround for a known issue: `quorum converse` does NOT self-exit cleanly —
-# it lingers after the conversation reaches `done`. So we launch it in the
-# BACKGROUND, poll for the artifact to appear/update, flush, then kill the
-# lingering process. (Follow-up: fix converse self-exit in the C++ daemon.)
+# `quorum converse` now self-exits cleanly when the conversation reaches a
+# terminal state (exit-on-complete is the default; the old persistent mode is
+# `--keep-alive`). That fix made the previous poll-for-artifact + pkill hack
+# unnecessary: we just run converse and let it exit on its own. A background
+# launch + generous wait-for-exit + last-resort kill remains only as a safety
+# net in case converse somehow fails to exit; it is NOT the primary mechanism.
 #
 # --mode brainstorm guarantees the agents are read-only (Read/Grep/Glob only —
 # no Bash, no writes), so the target repos are never mutated.
@@ -58,27 +60,20 @@ case "$KNOWER" in
         ;;
 esac
 
-# Record the artifact's pre-run mtime (or note absence).
-if [ -f "$ARTIFACT" ]; then
-    BEFORE_MTIME="$(stat -f %m "$ARTIFACT" 2>/dev/null || stat -c %Y "$ARTIFACT" 2>/dev/null || echo 0)"
-    echo "==> $KNOWER artifact exists (mtime=$BEFORE_MTIME); will wait for an update"
-else
-    BEFORE_MTIME=""
-    echo "==> $KNOWER artifact absent; will wait for it to appear"
-fi
+echo "==> running $KNOWER (read-only brainstorm pass) ..."
 echo "    artifact : $ARTIFACT"
 echo "    budget   : \$$BUDGET   mode: brainstorm (read-only)   team: knowers"
 echo ""
 
-# ── Launch converse in the BACKGROUND (it won't self-exit) ──────────────────
-echo "==> launching converse (background) ..."
+# ── Run converse (happy path: it exits on its own when the conversation is
+#    done). Background + wait-for-exit + last-resort kill is a safety net only.
 (
     cd "$PROJECT_DIR" && "$DAEMON" converse \
         --mode brainstorm \
         --team knowers \
         --budget "$BUDGET" \
         "$GOAL"
-) >/dev/null 2>&1 &
+) &
 CONVERSE_PID=$!
 echo "    converse pid: $CONVERSE_PID"
 
@@ -88,46 +83,33 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ── Poll up to ~15 min (90 × 10s) for the artifact to appear/update ─────────
-artifact_ready() {
-    [ -f "$ARTIFACT" ] || return 1
-    if [ -z "$BEFORE_MTIME" ]; then
-        return 0   # absent before, present now
-    fi
-    local now
-    now="$(stat -f %m "$ARTIFACT" 2>/dev/null || stat -c %Y "$ARTIFACT" 2>/dev/null || echo 0)"
-    [ "$now" -gt "$BEFORE_MTIME" ]
-}
-
-READY=0
+# Wait up to ~15 min (90 × 10s) for converse to self-exit.
+SELF_EXITED=0
 for i in $(seq 1 90); do
-    if artifact_ready; then
-        echo "==> artifact updated (poll #$i); flushing ..."
-        sleep 6
-        READY=1
-        break
-    fi
-    # Bail early if converse died before producing anything.
-    if ! kill -0 "$CONVERSE_PID" 2>/dev/null && ! artifact_ready; then
-        echo "==> converse process exited before producing the artifact (poll #$i)"
+    if ! kill -0 "$CONVERSE_PID" 2>/dev/null; then
+        SELF_EXITED=1
         break
     fi
     sleep 10
 done
 
-# ── Clean up the lingering converse process ─────────────────────────────────
-echo "==> stopping converse (pid $CONVERSE_PID) + any lingering daemon"
-kill "$CONVERSE_PID" >/dev/null 2>&1 || true
-pkill -f "build/quorum_daemon" >/dev/null 2>&1 || true
+if [ "$SELF_EXITED" -eq 1 ]; then
+    # Reap and capture the real exit status.
+    wait "$CONVERSE_PID" 2>/dev/null || true
+    echo "==> converse self-exited"
+else
+    # Safety net: converse did not exit on its own within ~15 min. This should
+    # not happen with the converse-self-exit fix; kill it as a last resort.
+    echo "==> WARNING: converse did not self-exit within ~15 min; killing (safety net)" >&2
+    kill "$CONVERSE_PID" >/dev/null 2>&1 || true
+    pkill -f "build/quorum_daemon" >/dev/null 2>&1 || true
+fi
 trap - EXIT
 
 # ── Report ──────────────────────────────────────────────────────────────────
 echo ""
-if [ -f "$ARTIFACT" ] && [ "$READY" -eq 1 ]; then
+if [ -f "$ARTIFACT" ]; then
     echo "RESULT: PRESENT — $ARTIFACT"
-    exit 0
-elif [ -f "$ARTIFACT" ]; then
-    echo "RESULT: PRESENT (not confirmed updated this run) — $ARTIFACT"
     exit 0
 else
     echo "RESULT: MISSING — artifact not produced: $ARTIFACT" >&2
