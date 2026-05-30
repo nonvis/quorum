@@ -59,4 +59,19 @@ done
 install_skill "move-code-quality"
 
 echo ""
+
+# Phase 13 — install the autopilot supervisor agent definition so
+# `claude --agent supervisor` works. The agent def is co-located with its SKILL.
+echo "Autopilot agent:"
+SUPERVISOR_AGENT_SRC="$SRC_DIR/quorum-roles/supervisor/agent.md"
+AGENTS_DST="$HOME/.claude/agents"
+if [ -f "$SUPERVISOR_AGENT_SRC" ]; then
+    mkdir -p "$AGENTS_DST"
+    cp "$SUPERVISOR_AGENT_SRC" "$AGENTS_DST/supervisor.md"
+    echo "    ✅ supervisor → $AGENTS_DST/supervisor.md (claude --agent supervisor)"
+else
+    echo "    ❌ supervisor agent def — MISSING at $SUPERVISOR_AGENT_SRC"
+fi
+
+echo ""
 echo "Done. All skills installed to $DST_DIR"

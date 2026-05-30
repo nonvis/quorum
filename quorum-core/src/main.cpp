@@ -33,6 +33,8 @@
 #include "cli/vault_audit.h"
 #include "cli/librarian_curate.h"
 #include "cli/ask.h"
+#include "cli/supervisor_init.h"
+#include "cli/scribe_record.h"
 #include "utils/discover.h"
 
 namespace fs = std::filesystem;
@@ -476,6 +478,10 @@ int main(int argc, char* argv[]) {
     sui::quorum::cli::LibrarianCurateOptions librarian_curate_opts;  // Phase 11
     std::string librarian_subcmd_arg;
     sui::quorum::cli::AskOptions ask_opts;  // Phase 12 — `quorum ask`
+    sui::quorum::cli::SupervisorInitOptions supervisor_init_opts;  // Phase 13
+    std::string supervisor_subcmd_arg;
+    sui::quorum::cli::ScribeRecordOptions scribe_record_opts;      // Phase 13
+    std::string scribe_subcmd_arg;
 
     if (subcommand == "converse") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
@@ -629,6 +635,39 @@ int main(int argc, char* argv[]) {
                 ask_opts.question = sub_args[i];  // last positional = question
             }
         }
+    } else if (subcommand == "supervisor") {
+        // Phase 13 — `quorum supervisor init [--project <path>] [--force]`.
+        for (size_t i = 0; i < sub_args.size(); ++i) {
+            if (supervisor_subcmd_arg.empty() && sub_args[i] == "init") {
+                supervisor_subcmd_arg = sub_args[i];
+            } else if (sub_args[i] == "--project" && i + 1 < sub_args.size()) {
+                supervisor_init_opts.project_path = sub_args[++i];
+            } else if (sub_args[i] == "--force") {
+                supervisor_init_opts.force = true;
+            }
+        }
+        if (supervisor_subcmd_arg.empty()) {
+            std::cerr << "ERROR: supervisor requires a sub-subcommand (init)\n";
+            std::cerr << "Usage: quorum supervisor init [--project <path>] [--force]\n";
+            return 1;
+        }
+    } else if (subcommand == "scribe") {
+        // Phase 13 — `quorum scribe record [--project <path>] [--block <file>]`.
+        // Applies a LEARNINGS_UPDATE block via the daemon's own write (parity).
+        for (size_t i = 0; i < sub_args.size(); ++i) {
+            if (scribe_subcmd_arg.empty() && sub_args[i] == "record") {
+                scribe_subcmd_arg = sub_args[i];
+            } else if (sub_args[i] == "--project" && i + 1 < sub_args.size()) {
+                scribe_record_opts.project_path = sub_args[++i];
+            } else if (sub_args[i] == "--block" && i + 1 < sub_args.size()) {
+                scribe_record_opts.block_file = sub_args[++i];
+            }
+        }
+        if (scribe_subcmd_arg.empty()) {
+            std::cerr << "ERROR: scribe requires a sub-subcommand (record)\n";
+            std::cerr << "Usage: quorum scribe record [--project <path>] [--block <file>]\n";
+            return 1;
+        }
     } else if (!subcommand.empty() && subcommand != "status") {
         std::cerr << "Unknown subcommand: " << subcommand << "\n";
         print_usage(argv[0]);
@@ -762,6 +801,30 @@ int main(int argc, char* argv[]) {
     // leader can read the live code.
     if (subcommand == "ask") {
         return sui::quorum::cli::run_ask(ask_opts);
+    }
+
+    // Phase 13 — `quorum supervisor init`. No --config needed: generates the
+    // autopilot SUPERVISOR.md flight plan + scaffolds .quorum/autopilot/ against
+    // the target project root (default discovered root, or --project <path>).
+    if (subcommand == "supervisor" && supervisor_subcmd_arg == "init") {
+        if (supervisor_init_opts.project_path.empty()) {
+            auto root = sui::quorum::discover_project_root();
+            if (root) supervisor_init_opts.project_path = *root;
+            // else: run_supervisor_init defaults to cwd and reports if no .quorum/.
+        }
+        return sui::quorum::cli::run_supervisor_init(supervisor_init_opts);
+    }
+
+    // Phase 13 — `quorum scribe record`. No --config needed: applies a
+    // LEARNINGS_UPDATE block through the SAME parse+write the daemon uses
+    // (output parity). Reads the block from --block <file> or stdin.
+    if (subcommand == "scribe" && scribe_subcmd_arg == "record") {
+        if (scribe_record_opts.project_path.empty()) {
+            auto root = sui::quorum::discover_project_root();
+            if (root) scribe_record_opts.project_path = *root;
+            // else: run_scribe_record defaults to cwd and reports if no .quorum/.
+        }
+        return sui::quorum::cli::run_scribe_record(scribe_record_opts);
     }
 
     // Agent list/modify/history don't need --config -- they work with .quorum/ directly

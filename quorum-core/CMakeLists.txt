@@ -242,6 +242,16 @@ add_executable(test_ask tests/unit/test_ask.cpp)
 target_include_directories(test_ask PRIVATE src)
 add_test(NAME test_ask COMMAND test_ask)
 
+# Phase 13 Track 3: quorum supervisor init — SUPERVISOR.md generator (autopilot)
+add_executable(test_supervisor_init tests/unit/test_supervisor_init.cpp)
+target_include_directories(test_supervisor_init PRIVATE src)
+add_test(NAME test_supervisor_init COMMAND test_supervisor_init)
+
+# Phase 13 Track 4: autopilot output parity — scribe record == daemon, byte-identical
+add_executable(test_autopilot_parity tests/unit/test_autopilot_parity.cpp)
+target_include_directories(test_autopilot_parity PRIVATE src)
+add_test(NAME test_autopilot_parity COMMAND test_autopilot_parity)
+
 add_executable(test_invoker_cache_fields tests/unit/test_invoker_cache_fields.cpp)
 target_include_directories(test_invoker_cache_fields PRIVATE src)
 add_test(NAME test_invoker_cache_fields COMMAND test_invoker_cache_fields)
