@@ -53,6 +53,10 @@ Role determines class: doer = executor, all others = analyst.
 # Build daemon + tests
 make build
 
+# Install the `quorum` CLI on PATH (~/.local/bin) + skills + supervisor agent.
+# Required before using the `quorum ...` commands below or `claude --agent supervisor`.
+make install
+
 # Run daemon with verbose logging
 make run-verbose
 

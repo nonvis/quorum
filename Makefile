@@ -1,7 +1,7 @@
 # Quorum — Multi-Domain Agent Orchestration Daemon
 # ============================================================
 
-.PHONY: init build clean test help web web-stop web-status
+.PHONY: init build clean test help web web-stop web-status install uninstall
 .DEFAULT_GOAL := help
 
 # ── Config ───────────────────────────────────────────────────
@@ -62,6 +62,26 @@ build: ## Build C++ daemon and CLI
 
 build-debug: ## Build with debug symbols
 	$(MAKE) build BUILD_TYPE=Debug
+
+# ── Install ──────────────────────────────────────────────────
+
+BINDIR := $(HOME)/.local/bin
+
+install: build ## Install the `quorum` CLI (-> BINDIR, default ~/.local/bin) + skills + supervisor agent
+	@mkdir -p "$(BINDIR)"
+	@ln -sfn "$(CURDIR)/$(BUILD_DIR)/quorum_daemon" "$(BINDIR)/quorum"
+	@echo "✓ quorum -> $(BINDIR)/quorum (symlink to $(BUILD_DIR)/quorum_daemon; tracks rebuilds)"
+	@command -v quorum >/dev/null 2>&1 \
+		&& echo "✓ 'quorum' resolves on PATH" \
+		|| echo "⚠ $(BINDIR) is not on PATH — add it: export PATH=\"$(BINDIR):\$$PATH\""
+	@./scripts/install-skills.sh
+	@echo ""
+	@echo "✓ Install complete. Next: cd <your-project> && quorum init && quorum supervisor init"
+
+uninstall: ## Remove the `quorum` CLI symlink from BINDIR
+	@rm -f "$(BINDIR)/quorum"
+	@echo "✓ Removed $(BINDIR)/quorum"
+	@echo "  (skills/agents left intact — remove ~/.claude/skills/quorum-roles + ~/.claude/agents/supervisor.md by hand if desired)"
 
 # ── Run ──────────────────────────────────────────────────────
 
