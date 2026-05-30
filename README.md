@@ -32,6 +32,17 @@ Selection:
 - CLI: `quorum converse --mode <generic|brainstorm> "goal"` (defaults to `generic`)
 - Web UI: mode pill on the prompt input
 
+## Engines
+
+Mode is the *write-surface* axis. Orthogonal to it is the **engine** — the execution shape:
+
+| Engine | How it runs | Dispatch | Best for |
+|--------|-------------|----------|----------|
+| **daemon** (default) | Deterministic daemon spawns one `claude -p` per HANDOFF | Sequential (one task at a time) | Interactive, observable, reproducible work |
+| **autopilot** (Phase 13) | One interactive `supervisor` agent fans out parallel subagents on a flight plan | Parallel within a task, sequential across | Overnight, hands-off batch runs |
+
+Both engines reuse the same specialties, rubrics, and scribe/librarian knowledge primitives. Autopilot writes `.quorum/` through the *same* code the daemon uses, so knowledge accumulates identically across engines. Start autopilot with `quorum supervisor init` then `claude --agent supervisor` — see `templates/specs/autopilot-protocol.md`.
+
 ## Architecture
 
 ```
@@ -76,29 +87,40 @@ quorum converse --mode brainstorm "What should our caching strategy look like?"
 # With custom budget and turn limit
 quorum converse --budget 3.0 --max-rounds 5 "goal"
 
-# Check status
-quorum status
+# Lifecycle
+quorum status                                # list conversations
+quorum respond --conversation 1 "text"       # respond when waiting_for_human
+quorum resume  --conversation 1              # resume a paused conversation
+quorum close   --conversation 1              # close a conversation
 
-# Respond to leader (when waiting for human input)
-quorum respond --conversation 1 "response text"
+# Knowledge layer
+quorum librarian curate                      # distill learnings → Pitch/Decision Log/Roadmap
+quorum ask "what did we decide about X?"     # ask the project's manager, read-only
 
-# Resume a paused conversation
-quorum resume --conversation 1
-
-# Close a conversation
-quorum close --conversation 1
+# Autopilot engine (Phase 13) — overnight, parallel
+quorum supervisor init                       # generate ./SUPERVISOR.md flight plan
+claude --agent supervisor                    # run it interactively (NOT headless claude -p)
 ```
+
+> Full setup + operation walkthrough: `01_Projects/Quorum/99 - Quorum Manual.md` in the design vault.
 
 ## Agent Archetypes
 
-| Archetype | Role | Tools |
+Seven archetypes. **Role determines tool access** — `doer` is executor (full tools); every other role is analyst (read-only). Analyst roles that "write" do so by emitting structured blocks the deterministic daemon applies — they never hold Write/Edit at runtime.
+
+| Archetype | Role | Class |
 |-----------|------|-------|
-| **leader** | Coordinator. Receives user goal, delegates to team, synthesizes results. | Limited (planning only) |
-| **thinker** | Planner. Analyzes problems, proposes approaches, produces structured plans. | Read-only |
-| **doer** | Executor. Implements changes — code, config, files. Full tool access. | Full |
-| **reviewer** | Validator. Reviews doer output for correctness. Optional in team. | Read-only |
-| **scribe** | Knowledge to vaults. In generic mode, writes notes to the project. In brainstorm mode, distributes curated `rule-*.md` / `ref-*.md` files across all agent vaults. | Write (own vault in generic; cross-vault in brainstorm) |
-| **librarian** | Knowledge to human docs. Distills the conversation transcript into documentation. | Write (docs only) |
+| **leader** | Coordinator. Receives the user goal, routes work via HANDOFF, answers read-only "ask the manager" queries. | analyst |
+| **thinker** | Planner. Analyzes problems, proposes approaches, produces structured plans. | analyst |
+| **doer** | Executor. Implements changes — code, config, files — in its `target_dir`. | executor |
+| **reviewer** | Validator. "Does this work?" Reviews doer output for correctness. Optional. | analyst |
+| **scribe** | Records outcomes. Emits a `LEARNINGS_UPDATE` block → daemon appends `.quorum/learnings.md`; in brainstorm, distributes cross-vault `rule-*.md`/`ref-*.md`. | analyst |
+| **librarian** | Periodic curator. Distills accumulated scribe learnings into the project's Pitch / Decision Log / Roadmap via `CURATION_UPDATE` / `DECISION_LOG_APPEND` blocks behind an operator diff gate (`quorum librarian curate`). | analyst |
+| **evaluator** | Scorer. "Is this *good*?" Scores work against a specialty rubric; emits an `EVALUATION` block. | analyst |
+
+**Specialties** are focused (role, domain) pairings — e.g. `move-dev` (a doer + Move craft + a measured rubric), or the read-only "knower" thinkers `cartographer` / `architect` / `historian` (where / how / why).
+
+Plus one coordination role outside the daemon: the **supervisor**, which drives the autopilot engine (see Engines).
 
 ## Multi-Domain Customization
 

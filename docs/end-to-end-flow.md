@@ -5,7 +5,8 @@ The full walkthrough (setup → conversation creation → ball-passing → done)
 **Source-of-truth notes (private vault):**
 - `00 - Quorum Dashboard.md` — top-level status, agent archetypes, current phase
 - `01 - Architecture.md` — daemon components, agent invocation flow, state machine
-- `12 - Execution Modes.md` — generic vs brainstorm flow walkthroughs
+- `12 - Execution Modes.md` — generic vs brainstorm flow walkthroughs; the engine axis
+- `99 - Quorum Manual.md` — end-to-end setup + operation guide (start here for "how do I use it")
 
 For repo-level setup (build, install, run): see `../README.md`.
 For operator-level commands (CLI cheatsheet): see `../OPERATOR.md`.

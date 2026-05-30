@@ -20,7 +20,7 @@ Ask these questions one at a time:
 1. **Project directory** — where to initialize (default: current directory)
 2. **Description** — one sentence, what does this project do?
 3. **Team composition** — which agent roles does this project need?
-   - Available roles: `leader`, `thinker`, `doer`, `reviewer`, `scribe`, `librarian`
+   - Available roles: `leader`, `thinker`, `doer`, `reviewer`, `scribe`, `librarian`, `evaluator`
    - Role determines tool access: `doer` = executor (full tools), all others = analyst (read-only)
    - Minimum viable team: `thinker` + `doer` (thinker plans, doer executes)
    - Common setups:

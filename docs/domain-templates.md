@@ -1,6 +1,6 @@
 # Quorum — Domain Team Examples
 
-Concrete team configurations for different domains. Same six archetypes, different specializations via CONTEXT.md + SKILL.md.
+Concrete team configurations for different domains. Same seven archetypes, different specializations via CONTEXT.md + SKILL.md.
 
 For the "why" (what each archetype does, why specialization works, etc.) — see the project's design vault. This file is **examples only**.
 
@@ -98,12 +98,16 @@ Any of the above teams can run in `--mode brainstorm` for read-only exploration.
 
 ---
 
+An `evaluator` (7th archetype) can join any build team to score doer output against a specialty rubric ("is it *good*?"), complementing the reviewer's "does it work?".
+
 ## Adding a domain
 
 1. Create `.quorum/teams/<name>.yaml` with `name` and `default_path`
 2. Create the agents the team references via `quorum agent create --role <r> --name <n>`
-3. Each agent's CONTEXT.md (auto-generated from role template) defines what it does
+3. Each agent's CONTEXT.md (auto-generated from role template) defines what it does — tune it via the web UI's CONTEXT.md editor
 4. Optional: assign a `skill_file` per agent for domain expertise (e.g., `~/.claude/skills/sui-dev-skills/sui-move`)
 5. Run: `quorum converse --team <name> "<goal>"`
+
+For the end-to-end setup + operation walkthrough, see the design vault's `99 - Quorum Manual.md`.
 
 The daemon, conversation engine, HANDOFF protocol, and tool sandboxing are domain-agnostic. Only the agents change.

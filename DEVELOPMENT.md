@@ -25,7 +25,7 @@ Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
 
 `quorum_daemon converse "goal"` starts a conversation. The leader agent routes work to other agents via HANDOFF blocks. Each agent responds and hands off to the next agent in the chain.
 
-6 agent archetypes: leader, thinker, doer, reviewer, scribe, librarian.
+7 agent archetypes: leader, thinker, doer, reviewer, scribe, librarian, evaluator. Plus the **supervisor** — a coordination role that drives the autopilot engine (Phase 13), started interactively via `claude --agent supervisor`, not a daemon worker.
 
 ### Modes
 
@@ -84,17 +84,27 @@ quorum converse "Analyze spread performance"
 # Brainstorm mode — read-only team, cross-vault knowledge distribution
 quorum converse --mode brainstorm "Where should we draw module boundaries?"
 
-# List conversations
-quorum status
+# Lifecycle
+quorum status                              # list conversations
+quorum respond --conversation 1 "text"     # human input
+quorum resume  --conversation 1            # resume a paused conversation
+quorum close   --conversation 1            # close a conversation
 
-# Respond to a conversation (human input)
-quorum respond --conversation 1 "text"
+# Project setup
+quorum init                                # scaffold .quorum/ in the cwd
+quorum agent create --role <r> --name <n> [--target-dir <p>] [--no-ai]
+quorum agent list | modify | history
 
-# Resume a paused conversation
-quorum resume --conversation 1
+# Knowledge layer
+quorum librarian curate [--dry-run|--apply]   # distill learnings → Pitch/Decision Log/Roadmap
+quorum ask "<question>" [--project <p>] [--agent <name>]
+quorum vault dedup [--dry-run] | vault audit [--days N]
+quorum benchmark --role <r> [--task <name>]
 
-# Close a conversation
-quorum close --conversation 1
+# Autopilot engine (Phase 13) — second execution engine
+quorum supervisor init [--force]           # generate ./SUPERVISOR.md + checkpoint
+claude --agent supervisor                  # run the flight plan INTERACTIVELY (not claude -p)
+quorum scribe record [--block <file>]      # apply a LEARNINGS_UPDATE block (output parity)
 ```
 
 ## Source Layout
@@ -117,25 +127,35 @@ quorum close --conversation 1
 | api.ts | Fetch wrappers for all REST endpoints |
 | types.ts | Conversation, Task, Stats interfaces |
 | hooks/useSSE.ts | EventSource hook for real-time conversation updates |
+| components/ProjectSelector.tsx | Multi-project switcher |
 | components/StatsBanner.tsx | Top bar — total cost, conversation counts |
-| components/PromptInput.tsx | Goal input with auto-approve checkbox |
+| components/PromptInput.tsx | Goal input + mode pill (generic/brainstorm) |
 | components/ConversationCard.tsx | Expandable card — goal, state, tasks, cost |
 | components/StateBadge.tsx | Color-coded state label |
 | components/TaskTimeline.tsx | Task progression with status icons |
-| components/GateControls.tsx | Approve/reject buttons for human gate |
+| components/RespondControls.tsx | Human-input box for `waiting_for_human` conversations |
+| components/AgentRoster.tsx | Agent badges; click to open the CONTEXT.md editor |
+| components/AgentCreateForm.tsx | Create a new agent from the browser |
+| components/AgentContextEditor.tsx | Edit an agent's CONTEXT.md |
+| components/TeamCreateForm.tsx | Build a team preset (default_path) |
+| components/ConfigPanel.tsx / BudgetPanel.tsx | Adjust config + budget window |
 
 ### Core Headers (quorum-core/src/)
 
 | File | Purpose |
 |------|---------|
-| main.cpp | Entry point, CLI subcommands, dispatch loop |
-| daemon/conversation.h | Conversation engine — team mode ball-passing (currently stub, being rewritten in task #3) |
+| main.cpp | Entry point, CLI subcommand parse + dispatch, daemon task-dispatch loop |
+| daemon/conversation.h | Conversation engine — team-mode ball-passing |
 | daemon/scheduler.h | Periodic task scheduling |
-| agent/invoker.h | claude -p subprocess, session resume, agent-class tool policy. Mode-aware: brainstorm mode forces analyst tools regardless of role. |
-| agent/output_parser.h | HANDOFF/VAULT_UPDATE/SUMMARY blocks |
-| agent/context_assembler.h | Prompt builder from vault files |
-| storage/database.h | SQLite wrapper (WAL, mutex, RAII). `ConversationRecord` carries the `mode` field. |
-| vault/vault_manager.h | Per-agent vault filesystem. Mode-aware: `apply_all_updates_with_context` permits scribe cross-vault writes only in brainstorm mode. |
+| agent/invoker.h | claude -p subprocess, session resume, agent-class tool policy. Mode-aware: brainstorm forces analyst tools regardless of role. |
+| agent/output_parser.h | HANDOFF / VAULT_UPDATE / SUMMARY / LEARNINGS_UPDATE / CURATION_UPDATE / DECISION_LOG_APPEND / EVALUATION blocks |
+| agent/context_assembler.h | Prompt builder from vault files (`assemble_split` → system + user message) |
+| agent/rubric.h | Rubric parser (Phase 8 quality framework) |
+| vault/scribe_writer.h | `apply_scribe_learnings_update` — the canonical `.quorum/learnings.md` write (reused by autopilot for parity) |
+| vault/librarian_curator.h | `apply_curation_update` / `apply_decision_log_append` — the curated-layer write |
+| storage/database.h | SQLite wrapper (WAL, mutex, RAII). `ConversationRecord` carries `mode` + `no_vault_write`. |
+| vault/vault_manager.h | Per-agent vault filesystem. Mode-aware cross-vault scribe writes in brainstorm. |
+| cli/init.h, agent_create.h, librarian_curate.h, ask.h, supervisor_init.h, scribe_record.h, benchmark.h, vault_dedup.h, vault_audit.h | One header per `quorum <subcommand>` |
 | utils/config.h | YAML config parser, AgentMetadata, load_agent_config() |
 | utils/uuid.h | UUID v4 generation for session IDs |
 
@@ -148,8 +168,13 @@ quorum close --conversation 1
 | unit/test_session_resume.cpp | UUID format, uniqueness, -r flag |
 | unit/test_invoker_mode.cpp | Mode-aware tool policy (5 cases) — analyst stays analyst, executor stays executor in generic; both clamped to analyst in brainstorm. |
 | integration/test_team_pipeline.cpp | Team-mode pipeline + brainstorm e2e (#19 cross-vault scribe distribution, #20 read-only doer in brainstorm). |
+| unit/test_scribe_write_discipline.cpp | `.quorum/learnings.md` bootstrap / append-only / canonical headers |
+| unit/test_librarian_curate.cpp, test_librarian_pipeline.cpp | Curation parse → validate → diff → apply |
+| unit/test_ask.cpp | `quorum ask` pure helpers (project resolve, manager-prompt assembly) |
+| unit/test_supervisor_init.cpp | Autopilot `SUPERVISOR.md` generator + checkpoint skeleton (Phase 13) |
+| unit/test_autopilot_parity.cpp | Output parity — autopilot scribe record == daemon, byte-identical `.quorum/learnings.md` (Phase 13 Sub-gate D) |
 
-26 ctest targets currently passing.
+47 ctest targets currently passing (`cd build && ctest`).
 
 ## Design Notes
 
@@ -157,5 +182,8 @@ Detailed design lives in the second-brain vault:
 
 - 01_Projects/Quorum/00 - Quorum Dashboard.md — project index
 - 01_Projects/Quorum/01 - Architecture.md — architecture overview
-- 01_Projects/Quorum/11 - Conversation Mode.md — state machine design
-- 01_Projects/Quorum/Phase 2/ — Phase 2 task notes and thinker prompts
+- 01_Projects/Quorum/12 - Execution Modes.md — generic vs brainstorm; the engine axis
+- 01_Projects/Quorum/99 - Quorum Manual.md — end-to-end setup + operation guide
+- 01_Projects/Quorum/06 - Decision Log.md — every architectural decision
+
+In-repo specs: `templates/specs/handoff-protocol.md` (scribe learnings), `pitch-protocol.md` (librarian curation), `autopilot-protocol.md` (Phase 13 supervisor + flight plan + checkpoint).
