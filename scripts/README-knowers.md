@@ -153,6 +153,28 @@ are captured / out-of-window excluded / mechanical facts correct) — pins the
 windowing behavior; run `python3 scripts/recap_mine_test.py` (exit 0 = pass).
 recap ships **SKILL + this Tier-1 check, no scored rubric/evaluator** by design.
 
+### `recap_messages_import.py`
+
+The deterministic Slack-paste → `messages-dump.md` formatter (read-only, no LLM).
+The operator **curates** which messages are relevant (recap is condensed — don't
+hand it the whole channel); this tool only **formats + dates** them, the same way
+every run (no model in the loop, so no run-to-run drift). Dating is deterministic:
+it reads Slack's **day-divider** lines (`Monday, May 25th` / `May 25th` /
+`2026-05-25` / `Today`+`--today`) and carries the date down to each message;
+clock times come from the `Author  [H:MM AM]` stamp.
+
+```
+python3 scripts/recap_messages_import.py --in paste.txt \
+    --out .quorum/recap/messages-dump.md --channel <name> [--year YYYY]
+```
+
+**Input caveat (the copy-paste trap):** a raw Slack copy DROPS the day dividers,
+leaving only clock times across a multi-week thread — undatable. Re-select so the
+dividers come along, or use a Slack JSON export. Messages before the first divider
+are skipped with a warning (no anchor) unless `--start-date` is given. Appends with
+dedup (skips a block whose stamp line already exists). `--selftest` runs the
+built-in fixture (exit 0 = pass).
+
 ## Typical flow
 
 ```sh
