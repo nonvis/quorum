@@ -11,7 +11,8 @@
 //           Flight plan headings present
 //       (b) seeded agents foo/bar appear as roster rows, with foo's role
 //           (thinker) and skill_file rendered
-//       (c) the two parity CLI commands (scribe record / librarian curate) appear
+//       (c) the scribe parity CLI command appears; the generated md does NOT
+//           contain `quorum librarian curate` (curation is manual, not autopilot)
 //       (d) the Flight plan placeholder task (### Task 1) appears
 //   (B) generate_supervisor_md (EMPTY roster): the "(no agents configured ...)"
 //       line appears and NO agent rows are emitted
@@ -91,14 +92,14 @@ static void test_A_generate_with_roster(const fs::path& tdir) {
           "A(a): frontmatter title present");
     check(contains(md, "generated_by: quorum supervisor init"),
           "A(a): frontmatter generated_by present");
-    check(contains(md, "spec_version: 0.1"),
+    check(contains(md, "spec_version: 0.2"),
           "A(a): frontmatter spec_version present");
     check(contains(md, "## Project"), "A(a): Project heading present");
     check(contains(md, "- name: A_roster"),
           "A(a): project name = basename of root");
     check(contains(md, "## Roster (subagent workers)"),
           "A(a): Roster heading present");
-    check(contains(md, "## Record-keeping (OUTPUT PARITY — do not bypass)"),
+    check(contains(md, "## Record-keeping (scribe — OUTPUT PARITY, do not bypass)"),
           "A(a): Record-keeping heading present");
     check(contains(md, "## Stop conditions"),
           "A(a): Stop conditions heading present");
@@ -118,13 +119,14 @@ static void test_A_generate_with_roster(const fs::path& tdir) {
     check(contains(md, "| bar | doer | \xe2\x80\x94 |"),
           "A(b): bar's empty skill rendered as em-dash");
 
-    // (c) parity CLI commands.
+    // (c) scribe parity command present; librarian curate is NOT emitted
+    //     (curation is a manual operator action, never run by autopilot).
     check(contains(md, "quorum scribe record --project " + proj.string()),
           "A(c): scribe record parity command present");
-    check(contains(md,
-                   "quorum librarian curate --project " + proj.string() +
-                       " --apply"),
-          "A(c): librarian curate parity command present");
+    check(!contains(md, "quorum librarian curate"),
+          "A(c): autopilot does NOT auto-run librarian curate (manual only)");
+    check(contains(md, "Curation is NOT run by autopilot"),
+          "A(c): generated md states curation is manual/out-of-band");
 
     // (d) flight-plan placeholder.
     check(contains(md, "### Task 1: <replace with your first major task>"),
@@ -171,7 +173,7 @@ static void test_C_checkpoint_skeleton() {
           "C: Created at: stamped with utc");
     check(contains(cp, "Updated at: 2026-05-30T00:00:00Z"),
           "C: Updated at: stamped with utc");
-    check(contains(cp, "Flight spec: 0.1"), "C: Flight spec present");
+    check(contains(cp, "Flight spec: 0.2"), "C: Flight spec present");
     check(contains(cp, "## Major tasks"), "C: Major tasks heading present");
     check(contains(cp, "## Condensed outcomes"),
           "C: Condensed outcomes heading present");

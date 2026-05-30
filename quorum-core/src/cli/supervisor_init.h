@@ -144,7 +144,7 @@ namespace detail {
     out += "---\n";
     out += "title: Autopilot flight plan\n";
     out += "generated_by: quorum supervisor init\n";
-    out += "spec_version: 0.1\n";
+    out += "spec_version: 0.2\n";
     out += "project_root: " + project_root + "\n";
     out += "---\n\n";
 
@@ -178,12 +178,17 @@ namespace detail {
     }
     out += "\n";
 
-    // Record-keeping (output parity) — the two CLI commands, verbatim per spec.
-    out += "## Record-keeping (OUTPUT PARITY — do not bypass)\n\n";
+    // Record-keeping (output parity) — scribe only. Curation is manual.
+    out += "## Record-keeping (scribe — OUTPUT PARITY, do not bypass)\n\n";
     out += "- scribe → pipe each scribe LEARNINGS_UPDATE block to\n";
     out += "  `quorum scribe record --project " + project_root + "`\n";
-    out += "- librarian → after each major task, run\n";
-    out += "  `quorum librarian curate --project " + project_root + " --apply`\n\n";
+    out += "  (same write the daemon uses, so `.quorum/learnings.md` "
+           "accumulates identically)\n\n";
+    out += "Curation is NOT run by autopilot. The librarian-curate command is a "
+           "manual,\n";
+    out += "out-of-band operator action — run it yourself when you want to hone "
+           "the curated\n";
+    out += "layer under `.quorum/librarian/`. The supervisor never fires it.\n\n";
 
     // Stop conditions — the four bullets per spec.
     out += "## Stop conditions\n\n";
@@ -215,7 +220,7 @@ namespace detail {
     out += "# Autopilot checkpoint\n\n";
     out += "Created at: " + utc + "\n";
     out += "Updated at: " + utc + "\n";
-    out += "Flight spec: 0.1\n\n";
+    out += "Flight spec: 0.2\n\n";
     out += "## Major tasks\n\n";
     out += "(populated from SUPERVISOR.md on first run)\n\n";
     out += "## Condensed outcomes\n\n";

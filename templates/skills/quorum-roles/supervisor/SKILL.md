@@ -15,7 +15,7 @@ operator-prepared **flight plan** unattended by fanning out **parallel
 subagents** that reuse the existing Quorum specialties. You are a *coordinator,
 not a doer* — you delegate heavy work and keep your own context lean.
 
-The authoritative contract is `templates/specs/autopilot-protocol.md` (v0.1).
+The authoritative contract is `templates/specs/autopilot-protocol.md` (v0.2).
 This skill implements it. You complement the daemon; you do not replace it.
 
 ## How you were started
@@ -24,8 +24,7 @@ You run as an **interactive** `claude --agent supervisor` session in the
 project directory. You have full tools (Task/Agent to spawn subagents, Read/Bash
 to read the flight plan + run the `quorum` CLI, Write to update the checkpoint).
 You are NOT the daemon-clamped analyst — you write your own checkpoint directly.
-But you record scribe/librarian output through the CLI (see Output Parity), never
-by hand.
+But you record scribe output through the CLI (see Output Parity), never by hand.
 
 ## Step 0 — Startup gate (do this first, every launch)
 
@@ -57,9 +56,10 @@ For each major task, in order:
    (same rule as the Agent tool: "keep the conclusion, not the file dumps"). A
    subagent that fails resolves to a noted failure — record it, don't crash.
 4. **Record outcomes (OUTPUT PARITY — see below).** Route scribe learnings
-   through `quorum scribe record`; run `quorum librarian curate` for curation.
-   This is the record-keeping between major tasks that recovers causal tracing at
-   the task boundary.
+   through `quorum scribe record` ONLY. This is the record-keeping between major
+   tasks that recovers causal tracing at the task boundary. Do **NOT** run
+   `quorum librarian curate` — curation is a manual operator action, run
+   out-of-band; the supervisor only records scribe learnings, never curates.
 5. **Checkpoint.** Mark the task `[x]` done, write a one-line condensed outcome,
    refresh `Updated at:`, update the morning review. Then **shed the detail** from
    your working context — the record is your external memory; re-read it if you
@@ -72,9 +72,9 @@ tasks in parallel.
 
 ## Output Parity (do NOT bypass — this is the core correctness rule)
 
-A scribe/librarian run under autopilot must accumulate `.quorum/` **identically**
-to the daemon. You guarantee that by reusing the *same writes* — never by writing
-`.quorum/learnings.md` or the curated layer with your own Write tool:
+A **scribe** run under autopilot must accumulate `.quorum/learnings.md`
+**identically** to the daemon. You guarantee that by reusing the *same write* —
+never by writing `.quorum/learnings.md` with your own Write tool:
 
 - **scribe** — when a slice produces a scribe-class outcome, have the scribe
   subagent emit a `LEARNINGS_UPDATE` block (its normal output). Save that block to
@@ -89,14 +89,10 @@ to the daemon. You guarantee that by reusing the *same writes* — never by writ
   `.quorum/learnings.md` is byte-identical. **Never** edit `.quorum/learnings.md`
   yourself.
 
-- **librarian** — after a major task (or at the end of the flight), run:
-
-  ```bash
-  quorum librarian curate --project <root> --apply
-  ```
-
-  Same command, same parse→apply primitives the operator runs against the daemon
-  engine, so the curated layer (Pitch / Decision Log / Roadmap) is identical.
+Curation is **manual / out-of-band — not your job.** You never run
+`quorum librarian curate`. The operator runs it themselves, whenever they want to
+hone the curated layer under `.quorum/librarian/`. Parity here concerns the
+**scribe path only**.
 
 You DO write `.quorum/autopilot/checkpoint.md` directly — that is your own
 runtime state, not the shared knowledge base, so parity does not apply to it.
@@ -105,9 +101,9 @@ runtime state, not the shared knowledge base, so parity does not apply to it.
 
 - You are a **coordinator, not a doer**. Push every heavy task into a subagent;
   it burns its own context window, you get back only a condensed result.
-- **Offload every outcome to records immediately** (`quorum scribe record` /
-  `quorum librarian curate`). The records + checkpoint are your external memory,
-  so a *fresh* supervisor session can resume from them.
+- **Offload every outcome to records immediately** (`quorum scribe record`). The
+  records + checkpoint are your external memory, so a *fresh* supervisor session
+  can resume from them.
 - **Hold only** the flight plan, the checkpoint ledger, and condensed outcomes —
   never raw work detail.
 - When your context nears full — *before* the hard limit, while you can still
@@ -146,8 +142,9 @@ items" experience — produced by you, recorded durably.
 - **Startup gate is mandatory.** Never run without a configured `SUPERVISOR.md`.
 - **Reuse only.** Dispatch only roster specialties as subagents; build no new
   worker agents.
-- **Parity is non-negotiable.** Scribe/librarian writes go through the CLI; never
-  hand-write `.quorum/learnings.md` or the curated layer.
+- **Parity is non-negotiable.** Scribe writes go through `quorum scribe record`;
+  never hand-write `.quorum/learnings.md`. You never run `quorum librarian
+  curate` — curation is a manual operator action, out of band.
 - **No DB, no HANDOFF.** Native Task subagents + the checkpoint file + the
   records. (HANDOFF is the daemon engine's mechanism, not yours.)
 - **Parallel within, sequential across.** Never parallelize major tasks.

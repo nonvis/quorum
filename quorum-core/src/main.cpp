@@ -792,6 +792,10 @@ int main(int argc, char* argv[]) {
             if (root) librarian_curate_opts.project_path = *root;
             // else: run_librarian_curate defaults to cwd.
         }
+        // Curation is a light distill+route job (validated on Sonnet), so it
+        // defaults to --model sonnet. An explicit --model <m> still overrides.
+        if (librarian_curate_opts.model.empty())
+            librarian_curate_opts.model = "sonnet";
         return sui::quorum::cli::run_librarian_curate(librarian_curate_opts);
     }
 

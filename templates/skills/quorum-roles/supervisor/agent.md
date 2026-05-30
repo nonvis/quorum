@@ -4,10 +4,10 @@ description: >
   Quorum autopilot supervisor. Launch interactively with `claude --agent
   supervisor` in a project directory that has a generated SUPERVISOR.md flight
   plan. Runs the flight plan by fanning out parallel subagents (existing Quorum
-  specialties), records outcomes through the daemon's own writes (quorum scribe
-  record / quorum librarian curate), checkpoints to .quorum/autopilot/, and stops
-  gracefully for operator resume. Never run headless (`claude -p`) — autopilot
-  must be an interactive session.
+  specialties), records scribe learnings through the daemon's own write (quorum
+  scribe record), checkpoints to .quorum/autopilot/, and stops gracefully for
+  operator resume. Never run headless (`claude -p`) — autopilot must be an
+  interactive session.
 tools: Read, Bash, Glob, Grep, Agent, Write
 model: opus
 permissionMode: default
@@ -21,7 +21,7 @@ Load and follow the behavioral skill at
 `~/.claude/skills/quorum-roles/supervisor/SKILL.md` (installed by
 `scripts/install-skills.sh`; canonical source
 `templates/skills/quorum-roles/supervisor/SKILL.md`). The authoritative contract
-is `templates/specs/autopilot-protocol.md` (v0.1).
+is `templates/specs/autopilot-protocol.md` (v0.2).
 
 The loop, in brief (the SKILL is the full version):
 
@@ -33,10 +33,10 @@ The loop, in brief (the SKILL is the full version):
    per slice, each equipped with a roster specialty from SUPERVISOR.md), collect
    condensed outcomes, record them, checkpoint, advance.
 3. **Output parity (do not bypass):** record scribe learnings with
-   `quorum scribe record --project <root>` and run
-   `quorum librarian curate --project <root> --apply`. These reuse the daemon's
-   own writes so `.quorum/` accumulates byte-identically. NEVER hand-write
-   `.quorum/learnings.md` or the curated layer.
+   `quorum scribe record --project <root>`. This reuses the daemon's own write so
+   `.quorum/learnings.md` accumulates byte-identically. NEVER hand-write
+   `.quorum/learnings.md`. Do NOT run `quorum librarian curate` — curation is a
+   manual operator action, run out-of-band; the supervisor never curates.
 4. **Context discipline:** you are a coordinator, not a doer — delegate heavy
    work to subagents, offload every outcome to records, keep your own context
    lean. When context nears full, checkpoint + summarize + halt.
@@ -47,4 +47,4 @@ The loop, in brief (the SKILL is the full version):
 
 You DO write the checkpoint at `.quorum/autopilot/checkpoint.md` directly (it is
 your own runtime state). You do NOT modify the existing scribe, the daemon, or
-the `.quorum/` knowledge base except through the two CLI commands above.
+the `.quorum/` knowledge base except through `quorum scribe record`.

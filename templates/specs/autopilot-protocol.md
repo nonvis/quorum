@@ -5,7 +5,7 @@
 > output-parity discipline. Skill authors and the `quorum supervisor init`
 > generator both implement this spec. Read it before changing either.
 
-Spec version: 0.1
+Spec version: 0.2
 Last updated: 2026-05-30
 Lineage: Research/04 - Autopilot Engine (Phase 13 design source-of-truth);
 companion to `handoff-protocol.md` (scribe) and `pitch-protocol.md` (librarian).
@@ -27,9 +27,10 @@ safe:
   startup (the startup gate).
 - **`.quorum/autopilot/checkpoint.md`** — the resume + morning-review state the
   supervisor writes after each major task.
-- **Output parity** — the rule that scribe/librarian writes go through the
-  *same* code the daemon uses, so `.quorum/` accumulates byte-identically across
-  engines.
+- **Output parity** — the rule that the supervisor's **scribe** writes go through
+  the *same* code the daemon uses, so `.quorum/learnings.md` accumulates
+  byte-identically across engines. Curation (`quorum librarian curate`) is **not**
+  part of the autopilot path — it is a manual, out-of-band operator action.
 
 ## The supervisor agent
 
@@ -50,7 +51,8 @@ The supervisor is a **full-tool interactive session** (Task/Agent to fan out
 subagents, Read/Bash to read the flight plan and run the `quorum` CLI, Write to
 update the checkpoint). It is NOT daemon-clamped — so unlike the analyst scribe/
 librarian, the supervisor writes its own checkpoint directly. It must still
-route *scribe/librarian* output through the shared CLI (see Output parity).
+route *scribe* output through the shared CLI (see Output parity). It does **not**
+run `quorum librarian curate` — curation is manual/out-of-band.
 
 ### Startup gate
 
@@ -76,12 +78,14 @@ from `SUPERVISOR.md`. Configuration is three layers, two of them automatic:
    specialty (e.g. `recap`) available: install it as a specialty, create the agent
    so it lands in `.quorum/agents/`, then **re-run `quorum supervisor init`** so it
    appears in the roster.
-2. **scribe + librarian — auto-configured, but NOT via the roster.** These are the
-   record-keepers, used *between* tasks (run-loop step 4), not as flight-plan
-   workers. Every generated `SUPERVISOR.md` carries the fixed `## Record-keeping`
-   section naming `quorum scribe record` + `quorum librarian curate`, and the
-   scribe/librarian SKILLs resolve from `~/.claude/skills/quorum-roles/`. So they
-   need **zero per-project setup** — the supervisor always has them.
+2. **scribe — auto-configured, but NOT via the roster.** This is the
+   record-keeper, used *between* tasks (run-loop step 4), not as a flight-plan
+   worker. Every generated `SUPERVISOR.md` carries the fixed `## Record-keeping`
+   section naming `quorum scribe record`, and the scribe SKILL resolves from
+   `~/.claude/skills/quorum-roles/`. So it needs **zero per-project setup** — the
+   supervisor always has it. The **librarian is not part of the autopilot path**:
+   `quorum librarian curate` is a manual, out-of-band operator action (run it
+   yourself to hone `.quorum/librarian/`); the supervisor never fires it.
 3. **The flight plan — operator-configured.** The one hand-authored layer: which
    roster agent runs which slice (the `agent:` field per task). The generator ships
    a placeholder; the startup gate refuses to run until it is filled.
@@ -89,7 +93,8 @@ from `SUPERVISOR.md`. Configuration is three layers, two of them automatic:
 So "how does the supervisor use scribe, or recap?" — **scribe** is always wired in
 (layer 2, automatic); **recap** must first exist as an agent in `.quorum/agents/`
 and be picked up into the roster by re-running `init` (layer 1), then named in a
-flight-plan slice (layer 3).
+flight-plan slice (layer 3). The **librarian** is none of these — it is never run
+by the supervisor; curation is a manual operator action.
 
 **Model A caveat:** these are *instructions the supervisor (an LLM) follows* from
 `SUPERVISOR.md` + its SKILL — not constraints the daemon enforces at runtime
@@ -127,12 +132,15 @@ project_root: <abs path>
 |-------|------|-------|
 | <name> | <role> | <skill_file or —> |
 
-## Record-keeping (OUTPUT PARITY — do not bypass)
+## Record-keeping (scribe — OUTPUT PARITY, do not bypass)
 
 - scribe → pipe each scribe LEARNINGS_UPDATE block to
   `quorum scribe record --project <root>`
-- librarian → after each major task, run
-  `quorum librarian curate --project <root> --apply`
+  (same write the daemon uses, so `.quorum/learnings.md` accumulates identically)
+
+Curation is NOT run by autopilot. The librarian-curate command is a manual,
+out-of-band operator action — run it yourself when you want to hone the curated
+layer under `.quorum/librarian/`. The supervisor never fires it.
 
 ## Stop conditions
 
@@ -157,8 +165,10 @@ Schema rules:
   specialty — no new worker agents). If empty, the generator emits
   `(no agents configured — run quorum agent create first)` and the flight plan
   is a placeholder, so the startup gate stops.
-- **Record-keeping** is the parity lever (see below). It names the two CLI
-  commands; the supervisor must use them rather than writing `.quorum/` itself.
+- **Record-keeping** is the parity lever (see below). It names the scribe CLI
+  command, which the supervisor must use rather than writing
+  `.quorum/learnings.md` itself, and notes that curation is a manual,
+  out-of-band operator action the supervisor never runs.
 - **Stop conditions** map to the checkpoint-and-halt routes.
 - **Flight plan** is the operator's input: major tasks run **sequentially**;
   within a task, slices fan out as **parallel** subagents. The generator emits
@@ -204,35 +214,37 @@ Field rules:
 
 ## Output parity (the core correctness rule)
 
-A scribe or librarian run under autopilot MUST accumulate `.quorum/` (and the
-curated aspirational layer) **byte-identically** to the daemon — or the two
-engines silently drift the knowledge base. Parity is achieved by **reusing the
-same write**, NOT by re-implementing it and NOT by changing the scribe:
+A **scribe** run under autopilot MUST accumulate `.quorum/learnings.md`
+**byte-identically** to the daemon — or the two engines silently drift the
+knowledge base. Parity is achieved by **reusing the same write**, NOT by
+re-implementing it and NOT by changing the scribe:
 
 - **scribe** — the supervisor pipes each scribe subagent's `LEARNINGS_UPDATE`
   block to `quorum scribe record --project <root>`. That CLI runs the *same*
   `parse_learnings_update()` + `apply_scribe_learnings_update()` the daemon runs
   in its task-dispatch loop (`main.cpp`), so `.quorum/learnings.md` is identical.
   The supervisor NEVER writes `.quorum/learnings.md` with its own Write tool.
-- **librarian** — the supervisor runs `quorum librarian curate --project <root>
-  --apply`. That is the *same* command (and the same parse→apply primitives) the
-  operator runs against the daemon engine, so the curated layer
-  (`.quorum/librarian/Pitch/…`, `.quorum/librarian/00 - Decision Log.md`,
-  `.quorum/librarian/01 - Roadmap.md`) is identical.
+
+**Curation is NOT part of the autopilot path.** The supervisor never runs
+`quorum librarian curate`. Curation is a manual, out-of-band operator action: the
+operator runs `quorum librarian curate` themselves, whenever they want to hone
+the curated layer (`.quorum/librarian/Pitch/…`, `.quorum/librarian/00 - Decision
+Log.md`, `.quorum/librarian/01 - Roadmap.md`). Because the supervisor never
+curates, parity concerns the **scribe path only**.
 
 The existing scribe (its SKILL, `scribe_writer.h`, the daemon path) is
 **unchanged**. Phase 13 ships a parity test (`test_autopilot_parity.cpp`,
-Manual-Acceptance Sub-gate D) asserting the autopilot route produces
-byte-identical `.quorum/learnings.md` + curated layer to the daemon route on the
-same input.
+Manual-Acceptance Sub-gate D) asserting the autopilot scribe route produces a
+byte-identical `.quorum/learnings.md` to the daemon route on the same input.
 
 ## Two-level concurrency
 
 - **Parallel *within* a major task** — the supervisor fans out the task's slices
   as parallel subagents (each equipped with a roster specialty's skill).
-- **Sequential *across* major tasks** — record-keeping (scribe + librarian) runs
+- **Sequential *across* major tasks** — record-keeping (scribe record) runs
   between tasks, then the next task starts. This recovers Decision #13's causal
   tracing at the major-task boundary (only the intra-task fan-out is parallel).
+  Curation is not run here — it is a manual operator action, out of band.
 
 ## Context discipline
 
@@ -265,6 +277,11 @@ and the `quorum supervisor init` generator; add a changelog entry.
 
 ## Changelog
 
+- **0.2** (2026-05-30): Curation removed from autopilot — `quorum librarian
+  curate` is a manual, out-of-band operator action; the supervisor records scribe
+  learnings only. Parity now concerns the scribe path only. The curated layer
+  lives under `.quorum/librarian/` (Pitch / Decision Log / Roadmap), honed
+  out-of-band whenever the operator chooses.
 - **0.1** (2026-05-30): Initial spec. Phase 13 autopilot engine. `SUPERVISOR.md`
   at project root + `.quorum/autopilot/checkpoint.md`; supervisor agent started
   `claude --agent supervisor` (interactive); output parity via
