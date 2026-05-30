@@ -38,6 +38,9 @@ struct LibrarianCurateOptions {
     std::string project_path;   // resolved target project root (sibling of .quorum/)
     bool dry_run = false;       // --dry-run: preview only, no writes
     bool apply_all = false;     // --apply: write all proposals without prompting
+    std::string model;          // --model <m>: claude model for the librarian
+                                // invoke (empty = claude default). Curation is a
+                                // light distill+route job, so sonnet is apt.
 };
 
 // How the pipeline treats each validated proposal.
@@ -456,9 +459,11 @@ inline void print_proposal(std::ostream& os, size_t idx,
         std::ofstream f(temp_path, std::ios::trunc);
         f << prompt;
     }
-    std::cout << "Invoking librarian (claude -p, analyst/read-only)...\n";
+    std::string model_flag = opts.model.empty() ? "" : " --model " + opts.model;
+    std::cout << "Invoking librarian (claude -p, analyst/read-only"
+              << (opts.model.empty() ? "" : ", model=" + opts.model) << ")...\n";
     auto cmd = "env -u CLAUDECODE cat " + temp_path +
-               " | claude -p --dangerously-skip-permissions" +
+               " | claude -p --dangerously-skip-permissions" + model_flag +
                " --disallowedTools \"Write,Edit,NotebookEdit\"" +
                " --output-format json 2>&1";
     auto result = sui::quorum::run_command(cmd);

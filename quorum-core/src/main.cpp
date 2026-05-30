@@ -145,7 +145,7 @@ static void print_usage(const char* prog) {
               << "                                          Cluster near-duplicate rule-*.md/ref-*.md files\n"
               << "  " << prog << " vault audit [--vault <path>] [--days N] [--global]\n"
               << "                                          List stale (last_reviewed > N days) and expired rule/ref files\n"
-              << "  " << prog << " librarian curate [--project <path>] [--dry-run] [--apply]\n"
+              << "  " << prog << " librarian curate [--project <path>] [--dry-run] [--apply] [--model <m>]\n"
               << "                                          Curate scribe output into .quorum/librarian/ (Pitch / Decision Log / Roadmap)\n"
               << "  " << prog << " ask \"<question>\" [--project <path|name>] [--agent <name>]\n"
               << "                                          Ask a project's manager (or a specific --agent) a question, read-only\n"
@@ -610,11 +610,13 @@ int main(int argc, char* argv[]) {
                 librarian_curate_opts.dry_run = true;
             } else if (sub_args[i] == "--apply") {
                 librarian_curate_opts.apply_all = true;
+            } else if (sub_args[i] == "--model" && i + 1 < sub_args.size()) {
+                librarian_curate_opts.model = sub_args[++i];
             }
         }
         if (librarian_subcmd_arg.empty()) {
             std::cerr << "ERROR: librarian requires a sub-subcommand (curate)\n";
-            std::cerr << "Usage: quorum librarian curate [--project <path>] [--dry-run] [--apply]\n";
+            std::cerr << "Usage: quorum librarian curate [--project <path>] [--dry-run] [--apply] [--model <m>]\n";
             return 1;
         }
         if (librarian_curate_opts.dry_run && librarian_curate_opts.apply_all) {
