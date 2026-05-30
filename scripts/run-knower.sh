@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# run-knower.sh <project-dir> <cartographer|architect|historian>
+# run-knower.sh <project-dir> <cartographer|architect|historian|recap>
 #
 # Run a single read-only "knower" Tier-2 LLM pass and produce its vault
 # artifact. THIS SPENDS CLAUDE TOKENS (it runs `quorum converse`).
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
-    echo "ERROR: usage: $0 <project-dir> <cartographer|architect|historian>" >&2
+    echo "ERROR: usage: $0 <project-dir> <cartographer|architect|historian|recap>" >&2
     exit 1
 fi
 
@@ -59,8 +59,13 @@ case "$KNOWER" in
         BUDGET="2.5"
         GOAL="Produce the decision history per your historian SKILL: read .quorum/historian/decisions-raw.json + CLAUDE.md (honor it), recognize significant decisions (merged-to-main PRs first-class), track pivots/supersession with PR/commit provenance, surface open PRs as in-flight, emit knowledge/ref-decisions.md, HANDOFF done."
         ;;
+    recap)
+        ARTIFACT="$PROJECT_DIR/.quorum/vaults/recap/knowledge/ref-recap.md"
+        BUDGET="2.5"
+        GOAL="Produce/refresh the recap per your recap SKILL: read .quorum/recap/timeline-raw.json + .quorum/recap/messages-dump.md + .quorum/recap/linear-dump.md (if present) + CLAUDE.md (honor it); weave git commits + merged-in-window PRs + timestamped messages into ONE condensed dated component-grouped timeline; draft the where-i-left-off section (operator owns the next-step line); keep the Linear status overlay SEPARATE and only if the query/goal names Linear; never fabricate (git is the check); emit knowledge/ref-recap.md, HANDOFF done."
+        ;;
     *)
-        echo "ERROR: unknown knower '$KNOWER' (expected: cartographer | architect | historian)" >&2
+        echo "ERROR: unknown knower '$KNOWER' (expected: cartographer | architect | historian | recap)" >&2
         exit 1
         ;;
 esac
