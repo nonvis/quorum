@@ -77,8 +77,12 @@ echo ""
 
 # ── Run converse (happy path: it exits on its own when the conversation is
 #    done). Background + wait-for-exit + last-resort kill is a safety net only.
+#    `exec` so the backgrounded PID ($CONVERSE_PID) IS this run's daemon (the
+#    subshell is replaced in place). That lets cleanup target ONLY the daemon we
+#    started — never other projects' quorum daemons running concurrently on the
+#    same machine (a blanket `pkill -f quorum_daemon` would kill those too).
 (
-    cd "$PROJECT_DIR" && "$DAEMON" converse \
+    cd "$PROJECT_DIR" && exec "$DAEMON" converse \
         --mode brainstorm \
         --team knowers \
         --budget "$BUDGET" \
@@ -88,8 +92,13 @@ CONVERSE_PID=$!
 echo "    converse pid: $CONVERSE_PID"
 
 cleanup() {
+    # Kill ONLY this run's daemon ($CONVERSE_PID, the daemon itself via exec
+    # above) and its children (the `claude -p` subprocess) — children first so
+    # the PPID match still resolves while the daemon is alive. Deliberately NOT a
+    # machine-wide `pkill -f quorum_daemon`, which would abort other projects'
+    # concurrent knower runs (and any other live quorum conversation).
+    pkill -P "$CONVERSE_PID" >/dev/null 2>&1 || true
     kill "$CONVERSE_PID" >/dev/null 2>&1 || true
-    pkill -f "build/quorum_daemon" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -111,8 +120,8 @@ else
     # Safety net: converse did not exit on its own within ~15 min. This should
     # not happen with the converse-self-exit fix; kill it as a last resort.
     echo "==> WARNING: converse did not self-exit within ~15 min; killing (safety net)" >&2
+    pkill -P "$CONVERSE_PID" >/dev/null 2>&1 || true
     kill "$CONVERSE_PID" >/dev/null 2>&1 || true
-    pkill -f "build/quorum_daemon" >/dev/null 2>&1 || true
 fi
 trap - EXIT
 
