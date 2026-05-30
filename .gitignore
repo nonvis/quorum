@@ -1,30 +1,52 @@
 # Build artifacts
 build/
 quorum-core/build/
+.cache/
+.ccache/
 
 # Dependencies
 node_modules/
 
-# Quorum data (project-local)
-.quorum/
-
-# Quorum web state + data + runtime
-quorum-web/data/
-quorum-web/.web/
-quorum-web/.quorum-web-state.json
-
-# C++ build
+# C++ artifacts
 *.o
 *.a
 *.so
 *.dylib
+*.dSYM/
+compile_commands.json
 CMakeCache.txt
 CMakeFiles/
 
-# Editor / OS
+# Web
+quorum-web/node_modules/
+quorum-web/client/node_modules/
+quorum-web/client/dist/
+quorum-web/data/
+quorum-web/.web/
+quorum-web/.quorum-web-state.json
+
+# Sample/test projects (local only)
+sample/
+
+# Move build artifacts
+templates/benchmarks/**/Move.lock
+templates/benchmarks/**/build/
+
+# Runtime data
+quorum-core/data/
+data/
+
+# OS
 .DS_Store
 *.swp
-.idea/
+*.swo
 
-# Logs
-*.log
+# IDE
+.idea/
+.vscode/
+
+# Quorum runtime (in project dirs)
+.quorum/quorum.db
+.quorum/quorum.db-*
+.quorum/*.log
+*.pid
