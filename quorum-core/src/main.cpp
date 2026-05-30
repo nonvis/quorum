@@ -145,7 +145,8 @@ static void print_usage(const char* prog) {
               << "                                          List stale (last_reviewed > N days) and expired rule/ref files\n"
               << "  " << prog << " librarian curate [--project <path>] [--dry-run] [--apply]\n"
               << "                                          Curate scribe output into the project's Pitch/Decision-Log/Roadmap\n"
-              << "  " << prog << " ask \"<question>\" [--project <path|name>]   Ask a project's manager (leader) a question, read-only\n"
+              << "  " << prog << " ask \"<question>\" [--project <path|name>] [--agent <name>]\n"
+              << "                                          Ask a project's manager (or a specific --agent) a question, read-only\n"
               << "  " << prog << " benchmark --role <r> --task <name>          Run one synthetic benchmark for a role-specialty\n"
               << "  " << prog << " benchmark --role <r>                        Run all benchmarks for a role-specialty (aggregate)\n"
               << "  " << prog << " benchmark --role <r> --dry-run              Smoke-test setup; skip the daemon spawn\n"
@@ -615,12 +616,15 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     } else if (subcommand == "ask") {
-        // Phase 12 — `quorum ask "<question>" [--project <path|name>]`.
+        // Phase 12 — `quorum ask "<question>" [--project <path|name>]
+        //             [--agent <name>]`.
         // The question is positional (everything that isn't a flag);
-        // --project takes the next arg.
+        // --project and --agent each take the next arg.
         for (size_t i = 0; i < sub_args.size(); ++i) {
             if (sub_args[i] == "--project" && i + 1 < sub_args.size()) {
                 ask_opts.project = sub_args[++i];
+            } else if (sub_args[i] == "--agent" && i + 1 < sub_args.size()) {
+                ask_opts.agent = sub_args[++i];
             } else {
                 ask_opts.question = sub_args[i];  // last positional = question
             }

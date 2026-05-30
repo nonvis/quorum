@@ -18,12 +18,15 @@
 //
 // Header-only, matches the cli/librarian_curate.h / cli/agent_create.h convention.
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
+#include <vector>
 
 #include <unistd.h>
 
@@ -37,6 +40,7 @@ namespace sui::quorum::cli {
 struct AskOptions {
     std::string project;    // path OR project name; defaults to cwd ("." )
     std::string question;   // the question to ask the manager
+    std::string agent;      // optional --agent <name>; empty = manager default
 };
 
 // Resolve an --project argument to an absolute project root containing .quorum/.
@@ -177,6 +181,149 @@ struct AskOptions {
     return p;
 }
 
+// ---- Agent path (optional --agent <name>) ---------------------------------
+//
+// An agent is configured at <project_root>/.quorum/agents/<name>.yaml as a FLAT
+// `key: value` file (some values quoted). `--agent <name>` targets that agent
+// directly instead of the generic manager. The helpers below are PURE.
+
+namespace detail {
+
+// List the available agent name stems (filename without ".yaml") under
+// <project_root>/.quorum/agents/, sorted ascending. PURE: filesystem only.
+[[nodiscard]] inline std::vector<std::string> list_agent_names(
+    const std::string& project_root) {
+    namespace fs = std::filesystem;
+    std::vector<std::string> names;
+    auto dir = fs::path(project_root) / ".quorum" / "agents";
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) return names;
+    for (const auto& e : fs::directory_iterator(dir, ec)) {
+        if (!e.is_regular_file()) continue;
+        if (e.path().extension() != ".yaml") continue;
+        names.push_back(e.path().stem().string());
+    }
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
+// Strip a single pair of surrounding double-quotes (and trim outer whitespace)
+// from a flat-YAML scalar value. PURE.
+[[nodiscard]] inline std::string unquote_yaml_value(std::string v) {
+    auto l = v.find_first_not_of(" \t");
+    auto r = v.find_last_not_of(" \t\r\n");
+    if (l == std::string::npos) return {};
+    v = v.substr(l, r - l + 1);
+    if (v.size() >= 2 && v.front() == '"' && v.back() == '"') {
+        v = v.substr(1, v.size() - 2);
+    }
+    return v;
+}
+
+// Parse a single top-level `key: value` field from a flat-YAML agent config.
+// Returns the unquoted value, or "" if the key is absent. PURE.
+[[nodiscard]] inline std::string parse_agent_field(const std::string& yaml_text,
+                                                   const std::string& key) {
+    std::istringstream in(yaml_text);
+    std::string line;
+    while (std::getline(in, line)) {
+        auto colon = line.find(':');
+        if (colon == std::string::npos) continue;
+        // Key is everything before the first colon, trimmed; require an exact
+        // match so e.g. "skill_file" doesn't shadow a hypothetical "skill".
+        std::string k = line.substr(0, colon);
+        auto kl = k.find_first_not_of(" \t");
+        auto kr = k.find_last_not_of(" \t");
+        if (kl == std::string::npos) continue;
+        k = k.substr(kl, kr - kl + 1);
+        if (k != key) continue;
+        return unquote_yaml_value(line.substr(colon + 1));
+    }
+    return {};
+}
+
+}  // namespace detail
+
+// Resolve a skill_file reference relative to the project root, mirroring
+// context_assembler.h:417-435: expand a leading "~/", then treat a relative
+// path as project-rooted; absolute paths are used as-is. PURE.
+[[nodiscard]] inline std::string resolve_skill_path(
+    const std::string& project_root, const std::string& skill_file) {
+    namespace fs = std::filesystem;
+    if (skill_file.empty()) return {};
+    std::string spath = skill_file;
+    if (spath.starts_with("~/")) {
+        const char* home = std::getenv("HOME");
+        if (home) spath = std::string(home) + spath.substr(1);
+    }
+    fs::path skill_path(spath);
+    if (skill_path.is_relative() && !project_root.empty()) {
+        auto rooted = fs::path(project_root) / skill_path;
+        return rooted.string();
+    }
+    return skill_path.string();
+}
+
+// Compose the agent-persona prompt fed to a configured agent. Mirrors
+// assemble_manager_prompt's structure + graceful-degrade-on-missing-file style:
+//   - persona naming the agent + its role, scoped to read-only colleague Q&A
+//   - the question
+//   - the agent's skill file (resolved relative→project-rooted), embedded
+//   - the agent's recorded knowledge (scribe_vault_digest of its vault's
+//     knowledge/ dir), or "(no recorded knowledge)" if vault_path is empty
+//   - an answer instruction
+// Never errors on a missing file. PURE: filesystem reads only, no claude.
+[[nodiscard]] inline std::string assemble_agent_prompt(
+    const std::string& project_root, const std::string& agent_name,
+    const std::string& role, const std::string& skill_file,
+    const std::string& vault_path, const std::string& question) {
+    namespace fs = std::filesystem;
+    fs::path root(project_root);
+
+    std::string p;
+    p += "You are the **" + agent_name + "** (" + role +
+         ") of this project. A colleague is asking you a question from outside "
+         "the project. Answer from your skill and your recorded knowledge "
+         "below; you MAY also read the live project (Read/Grep/Glob, cwd = "
+         "project root) to fill gaps. Be concise and direct, and cite which "
+         "source(s) you drew on. If your knowledge and the code genuinely "
+         "don't cover it, say so.\n\n";
+
+    p += "## Question\n\n";
+    p += question;
+    if (p.empty() || p.back() != '\n') p += "\n";
+    p += "\n";
+
+    // Skill file — resolve relative→project-rooted (context_assembler.h:417-435).
+    auto resolved_skill = resolve_skill_path(project_root, skill_file);
+    p += "## Your skill (" + skill_file + ")\n\n";
+    {
+        std::error_code ec;
+        if (!resolved_skill.empty() && fs::exists(resolved_skill, ec)) {
+            auto body = sui::quorum::detail::read_file_text(resolved_skill);
+            p += "```\n" + body;
+            if (body.empty() || body.back() != '\n') p += "\n";
+            p += "```\n\n";
+        } else {
+            p += "(skill file not found: " + skill_file + ")\n\n";
+        }
+    }
+
+    // Recorded knowledge — the agent's own vault knowledge dir.
+    p += "## Your recorded knowledge\n\n";
+    if (vault_path.empty()) {
+        p += "(no recorded knowledge)\n\n";
+    } else {
+        p += sui::quorum::cli::detail::scribe_vault_digest(
+                 root / vault_path / "knowledge");
+        p += "\n";
+    }
+
+    p += "## Answer\n\n";
+    p += "Answer the colleague's question now. Cite your source(s).\n";
+    return p;
+}
+
 // Top-level entrypoint for `quorum ask`. Resolves the project root, assembles
 // the manager prompt, then runs ONE live read-only `claude -p` invocation with
 // cwd = project root so the leader can read the live code. Prints a one-line
@@ -200,8 +347,37 @@ struct AskOptions {
         return 1;
     }
 
-    // 2. Assemble the manager prompt.
-    auto prompt = assemble_manager_prompt(project_root, opts.question);
+    // 2. Assemble the prompt. Default = generic manager. With --agent <name>,
+    //    target that configured agent instead (resolve + parse its yaml first;
+    //    a missing agent prints the available-agents list and exits 1 BEFORE
+    //    any claude call).
+    std::string prompt;
+    std::string header_role = "manager";
+    if (opts.agent.empty()) {
+        prompt = assemble_manager_prompt(project_root, opts.question);
+    } else {
+        auto yaml_path = fs::path(project_root) / ".quorum" / "agents" /
+                         (opts.agent + ".yaml");
+        std::error_code ec;
+        if (!fs::exists(yaml_path, ec)) {
+            auto names = detail::list_agent_names(project_root);
+            std::string available;
+            for (size_t i = 0; i < names.size(); ++i) {
+                if (i) available += ", ";
+                available += names[i];
+            }
+            std::cerr << "ERROR: no agent '" << opts.agent << "' in "
+                      << project_root << " — available: " << available << "\n";
+            return 1;
+        }
+        auto yaml_text = sui::quorum::detail::read_file_text(yaml_path);
+        auto role = detail::parse_agent_field(yaml_text, "role");
+        auto skill_file = detail::parse_agent_field(yaml_text, "skill_file");
+        auto vault_path = detail::parse_agent_field(yaml_text, "vault_path");
+        prompt = assemble_agent_prompt(project_root, opts.agent, role,
+                                       skill_file, vault_path, opts.question);
+        header_role = opts.agent;
+    }
 
     // 3. Write the prompt to a temp file (ABSOLUTE path so the cd below doesn't
     //    break the `cat`).
@@ -215,7 +391,8 @@ struct AskOptions {
     // 4. Live claude -p invocation — read-only (Write/Edit/NotebookEdit
     //    disallowed), cwd = project root so the leader can Read/Grep/Glob the
     //    live code. Modelled on cli/agent_create.h's synchronous pattern.
-    std::cerr << "Asking the manager (claude -p, read-only)...\n";
+    std::cerr << "Asking the " << header_role
+              << " (claude -p, read-only)...\n";
     auto cmd = "cd \"" + project_root + "\" && env -u CLAUDECODE cat " +
                temp_path +
                " | claude -p --dangerously-skip-permissions"
@@ -254,7 +431,7 @@ struct AskOptions {
         // Trailing slash: take the parent's filename.
         project_name = fs::path(project_root).parent_path().filename().string();
     }
-    std::cout << "=== " << project_name << " manager ===\n\n";
+    std::cout << "=== " << project_name << " " << header_role << " ===\n\n";
     std::cout << answer;
     if (answer.empty() || answer.back() != '\n') std::cout << "\n";
     return 0;

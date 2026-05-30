@@ -14,6 +14,12 @@
 //           appears in the prompt
 //       (c) with NO curated files present it still returns a non-empty prompt
 //           containing the question (graceful degrade), no crash
+//   (C) agent path (PURE):
+//       (a) assemble_agent_prompt embeds the skill sentinel + the knowledge
+//           sentinel + the question + the agent/role persona
+//       (b) list_agent_names returns the seeded agent stem(s), sorted
+//       (c) resolving a non-existent agent yaml fails, and the available-agents
+//           list is populated with the seeded names
 //
 // Run:  cd build && ctest -R test_ask --output-on-failure
 
@@ -155,6 +161,98 @@ static void test_B_assemble(const fs::path& tdir) {
     }
 }
 
+// ---- Case C: agent path ----------------------------------------------------
+static void test_C_agent(const fs::path& tdir) {
+    std::cout << "\n=== Case C: agent path ===\n\n";
+
+    const std::string question =
+        "Where does this project's component boundary live?";
+
+    auto proj = tdir / "C_agent";
+    fs::create_directories(proj / ".quorum");
+
+    // Seed a skill file (relative, project-rooted) with a sentinel.
+    const std::string skill_rel = ".quorum/skills/architect/SKILL.md";
+    write_file(proj / skill_rel,
+               "# Architect skill\n\n"
+               "SKILL_SENTINEL: I map how the system is put together.\n");
+
+    // Seed the agent's recorded knowledge with a sentinel.
+    const std::string vault_rel = ".quorum/vaults/architect";
+    write_file(proj / vault_rel / "knowledge" / "ref-architecture-map.md",
+               "# Architecture map\n\n"
+               "KNOWLEDGE_SENTINEL: boundary at the SAL/Walrus seam.\n");
+
+    // Seed the agent yaml (flat key: value, some values quoted).
+    write_file(proj / ".quorum" / "agents" / "architect.yaml",
+               "id: architect\n"
+               "name: \"architect\"\n"
+               "role: thinker\n"
+               "description: \"the how\"\n"
+               "vault_path: " + vault_rel + "\n"
+               "context_file: " + vault_rel + "/CONTEXT.md\n"
+               "skill_file: " + skill_rel + "\n");
+
+    // (a) assemble_agent_prompt embeds both sentinels + the question + persona.
+    {
+        auto prompt = sui::quorum::cli::assemble_agent_prompt(
+            proj.string(), "architect", "thinker", skill_rel, vault_rel,
+            question);
+        check(!prompt.empty(), "C(a): agent prompt non-empty");
+        check(prompt.find(question) != std::string::npos,
+              "C(a): agent prompt contains the question");
+        check(prompt.find("SKILL_SENTINEL: I map how the system is put together.")
+                  != std::string::npos,
+              "C(a): skill sentinel appears in prompt");
+        check(prompt.find("KNOWLEDGE_SENTINEL: boundary at the SAL/Walrus seam.")
+                  != std::string::npos,
+              "C(a): knowledge sentinel appears in prompt");
+        check(prompt.find("You are the **architect** (thinker)")
+                  != std::string::npos,
+              "C(a): agent/role persona present");
+    }
+
+    // (b) list_agent_names returns the seeded stem(s), sorted.
+    {
+        // Add a second agent so we can verify sorted order.
+        write_file(proj / ".quorum" / "agents" / "cartographer.yaml",
+                   "id: cartographer\nrole: thinker\n");
+        auto names =
+            sui::quorum::cli::detail::list_agent_names(proj.string());
+        check(names.size() == 2, "C(b): two agent stems listed");
+        check(!names.empty() && names[0] == "architect",
+              "C(b): first stem sorted == architect");
+        check(names.size() > 1 && names[1] == "cartographer",
+              "C(b): second stem sorted == cartographer");
+    }
+
+    // (c) a non-existent agent yaml is absent; available list is populated.
+    {
+        auto missing = proj / ".quorum" / "agents" / "nonexistent.yaml";
+        check(!fs::exists(missing),
+              "C(c): non-existent agent yaml does not exist");
+        auto names =
+            sui::quorum::cli::detail::list_agent_names(proj.string());
+        check(!names.empty(),
+              "C(c): available-agents list populated for the error message");
+    }
+
+    // (d) parse_agent_field unquotes values + exact-key match.
+    {
+        auto yaml = sui::quorum::detail::read_file_text(
+            proj / ".quorum" / "agents" / "architect.yaml");
+        check(sui::quorum::cli::detail::parse_agent_field(yaml, "role")
+                  == "thinker",
+              "C(d): parse role == thinker");
+        check(sui::quorum::cli::detail::parse_agent_field(yaml, "name")
+                  == "architect",
+              "C(d): parse name strips surrounding quotes");
+        check(sui::quorum::cli::detail::parse_agent_field(yaml, "skill_file")
+                  == skill_rel,
+              "C(d): parse skill_file == seeded relative path");
+    }
+}
+
 // ---- main ------------------------------------------------------------------
 int main() {
     auto tdir = fs::temp_directory_path() /
@@ -163,6 +261,7 @@ int main() {
 
     test_A_resolve(tdir);
     test_B_assemble(tdir);
+    test_C_agent(tdir);
 
     std::error_code ec;
     fs::remove_all(tdir, ec);
