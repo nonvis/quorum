@@ -10,16 +10,21 @@
 // behind an operator-approval diff gate. This mirrors the scribe path:
 //   LEARNINGS_UPDATE block -> apply_scribe_learnings_update().
 //
-// The four curation output files live at the TARGET PROJECT ROOT (sibling of
-// .quorum/), mirroring the operator's PARA layout. They are human-facing
-// project docs, NOT agent-loop audit files:
+// The four curation output files live UNDER <project_root>/.quorum/librarian/,
+// keeping the whole curated layer self-contained inside .quorum/ (mirroring the
+// knower dirs like .quorum/historian/). They are human-facing project docs, NOT
+// agent-loop audit files:
 //
-//   <project_root>/
+//   <project_root>/.quorum/librarian/
 //   ├── Pitch/
 //   │   ├── 00 - Introduction.md
 //   │   └── 01 - Anti-goals.md
 //   ├── 00 - Decision Log.md
 //   └── 01 - Roadmap.md
+//
+// The CURATION_UPDATE / DECISION_LOG_APPEND block `file:` fields stay RELATIVE
+// (e.g. "Pitch/00 - Introduction.md", "00 - Decision Log.md") — only the on-disk
+// base directory moved. See detail::curated_base().
 //
 // Header-only, matches the vault/scribe_writer.h convention. Reuses
 // scribe_writer.h's detail::atomic_write_text + detail::read_file_text rather
@@ -67,11 +72,21 @@ struct CurationResult {
 
 namespace detail {
 
-// The four canonical output file paths, relative to the project root.
+// The four canonical output file paths, relative to the curated base (NOT the
+// project root). These stay the block `file:` identifiers; only their on-disk
+// base directory moved — see curated_base().
 inline const std::string kPitchIntro    = "Pitch/00 - Introduction.md";
 inline const std::string kPitchAntiGoals = "Pitch/01 - Anti-goals.md";
 inline const std::string kDecisionLog   = "00 - Decision Log.md";
 inline const std::string kRoadmap       = "01 - Roadmap.md";
+
+// The curated layer lives under <project_root>/.quorum/librarian/ (self-contained
+// in .quorum/, like the knower dirs). The CURATION_UPDATE/DECISION_LOG_APPEND
+// block `file:` fields stay relative (e.g. "Pitch/00 - Introduction.md"); they
+// resolve under this base.
+inline std::filesystem::path curated_base(std::string_view project_root) {
+    return std::filesystem::path(project_root) / ".quorum" / "librarian";
+}
 
 inline const std::vector<std::string>& canonical_files() {
     static const std::vector<std::string> kFiles{
@@ -343,13 +358,13 @@ inline std::string render_section_diff(std::string_view file,
 [[nodiscard]] inline CurationResult ensure_curation_skeleton(
     std::string_view project_root) {
     CurationResult result;
-    std::filesystem::path root(project_root);
+    std::filesystem::path root = detail::curated_base(project_root);
 
     std::error_code ec;
     std::filesystem::create_directories(root, ec);
     if (ec) {
         result.ok = false;
-        result.reason = "librarian_curator: failed to create project root: " +
+        result.reason = "librarian_curator: failed to create curated base: " +
                         ec.message();
         return result;
     }
@@ -403,8 +418,7 @@ inline std::string render_section_diff(std::string_view file,
         return result;
     }
 
-    std::filesystem::path root(project_root);
-    auto target = root / update.file;
+    auto target = detail::curated_base(project_root) / update.file;
 
     std::error_code ec;
     bool exists = std::filesystem::exists(target, ec);
@@ -465,8 +479,7 @@ inline std::string render_section_diff(std::string_view file,
         return result;
     }
 
-    std::filesystem::path root(project_root);
-    auto target = root / detail::kDecisionLog;
+    auto target = detail::curated_base(project_root) / detail::kDecisionLog;
 
     std::error_code ec;
     bool exists = std::filesystem::exists(target, ec);

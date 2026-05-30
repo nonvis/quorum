@@ -146,7 +146,7 @@ static void print_usage(const char* prog) {
               << "  " << prog << " vault audit [--vault <path>] [--days N] [--global]\n"
               << "                                          List stale (last_reviewed > N days) and expired rule/ref files\n"
               << "  " << prog << " librarian curate [--project <path>] [--dry-run] [--apply]\n"
-              << "                                          Curate scribe output into the project's Pitch/Decision-Log/Roadmap\n"
+              << "                                          Curate scribe output into .quorum/librarian/ (Pitch / Decision Log / Roadmap)\n"
               << "  " << prog << " ask \"<question>\" [--project <path|name>] [--agent <name>]\n"
               << "                                          Ask a project's manager (or a specific --agent) a question, read-only\n"
               << "  " << prog << " benchmark --role <r> --task <name>          Run one synthetic benchmark for a role-specialty\n"

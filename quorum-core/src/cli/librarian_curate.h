@@ -179,20 +179,22 @@ inline void append_file_section(std::string& out, const std::string& label,
     p += "You are the Quorum librarian, running as a periodic CURATOR "
          "(analyst-class, read-only).\n\n";
     p += "Your job: distill the scribe's recorded learnings into this project's "
-         "aspirational layer (Pitch / Decision Log / Roadmap at the project "
-         "root). You do NOT write files. You emit structured blocks; the daemon "
-         "applies them behind an operator-approval diff gate.\n\n";
+         "aspirational layer (Pitch / Decision Log / Roadmap, stored under "
+         ".quorum/librarian/). You do NOT write files. You emit structured "
+         "blocks; the daemon applies them behind an operator-approval diff "
+         "gate.\n\n";
 
     p += "## Current aspirational layer (propose DELTAS against this — Rule 6 "
          "idempotency)\n\n";
+    auto curated = sui::quorum::detail::curated_base(project_root);
     detail::append_file_section(p, "Pitch / Introduction",
-                                root / "Pitch" / "00 - Introduction.md");
+                                curated / "Pitch" / "00 - Introduction.md");
     detail::append_file_section(p, "Pitch / Anti-goals",
-                                root / "Pitch" / "01 - Anti-goals.md");
+                                curated / "Pitch" / "01 - Anti-goals.md");
     detail::append_file_section(p, "Decision Log",
-                                root / "00 - Decision Log.md");
+                                curated / "00 - Decision Log.md");
     detail::append_file_section(p, "Roadmap",
-                                root / "01 - Roadmap.md");
+                                curated / "01 - Roadmap.md");
 
     p += "## Scribe input\n\n";
     p += "### .quorum/learnings.md\n\n";
@@ -312,7 +314,7 @@ inline void append_file_section(std::string& out, const std::string& label,
             // file body WITHOUT writing. Bootstrap a missing file's skeleton in
             // memory only.
             std::filesystem::path target =
-                std::filesystem::path(project_root) / cu.file;
+                sui::quorum::detail::curated_base(project_root) / cu.file;
             std::string content;
             std::error_code ec;
             if (std::filesystem::exists(target, ec)) {

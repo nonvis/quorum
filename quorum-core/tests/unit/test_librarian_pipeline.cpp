@@ -109,9 +109,11 @@ static void test_A_preview(const fs::path& tdir) {
     auto seed = ensure_curation_skeleton(proj.string());
     check(seed.ok, "A: skeleton seeded");
 
-    auto intro     = proj / "Pitch" / "00 - Introduction.md";
-    auto antigoals = proj / "Pitch" / "01 - Anti-goals.md";
-    auto declog    = proj / "00 - Decision Log.md";
+    // Curated layer lives under <proj>/.quorum/librarian/ (curated_base).
+    auto curated   = proj / ".quorum" / "librarian";
+    auto intro     = curated / "Pitch" / "00 - Introduction.md";
+    auto antigoals = curated / "Pitch" / "01 - Anti-goals.md";
+    auto declog    = curated / "00 - Decision Log.md";
 
     auto before_intro     = read_file(intro);
     auto before_antigoals = read_file(antigoals);
@@ -146,9 +148,10 @@ static void test_B_apply_all(const fs::path& tdir) {
     auto seed = ensure_curation_skeleton(proj.string());
     check(seed.ok, "B: skeleton seeded");
 
-    auto intro     = proj / "Pitch" / "00 - Introduction.md";
-    auto antigoals = proj / "Pitch" / "01 - Anti-goals.md";
-    auto declog    = proj / "00 - Decision Log.md";
+    auto curated   = proj / ".quorum" / "librarian";
+    auto intro     = curated / "Pitch" / "00 - Introduction.md";
+    auto antigoals = curated / "Pitch" / "01 - Anti-goals.md";
+    auto declog    = curated / "00 - Decision Log.md";
 
     auto plan = run_curation_pipeline(proj.string(), kCannedOutput,
                                       ApplyMode::ApplyAll);
@@ -192,9 +195,10 @@ static void test_C_invalid_section(const fs::path& tdir) {
     auto seed = ensure_curation_skeleton(proj.string());
     check(seed.ok, "C: skeleton seeded");
 
-    auto intro     = proj / "Pitch" / "00 - Introduction.md";
-    auto antigoals = proj / "Pitch" / "01 - Anti-goals.md";
-    auto declog    = proj / "00 - Decision Log.md";
+    auto curated   = proj / ".quorum" / "librarian";
+    auto intro     = curated / "Pitch" / "00 - Introduction.md";
+    auto antigoals = curated / "Pitch" / "01 - Anti-goals.md";
+    auto declog    = curated / "00 - Decision Log.md";
 
     auto plan = run_curation_pipeline(proj.string(), kCannedWithBad,
                                       ApplyMode::ApplyAll);

@@ -217,7 +217,8 @@ same write**, NOT by re-implementing it and NOT by changing the scribe:
 - **librarian** — the supervisor runs `quorum librarian curate --project <root>
   --apply`. That is the *same* command (and the same parse→apply primitives) the
   operator runs against the daemon engine, so the curated layer
-  (`Pitch/…`, `00 - Decision Log.md`, `01 - Roadmap.md`) is identical.
+  (`.quorum/librarian/Pitch/…`, `.quorum/librarian/00 - Decision Log.md`,
+  `.quorum/librarian/01 - Roadmap.md`) is identical.
 
 The existing scribe (its SKILL, `scribe_writer.h`, the daemon path) is
 **unchanged**. Phase 13 ships a parity test (`test_autopilot_parity.cpp`,

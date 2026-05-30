@@ -16,6 +16,7 @@
 
 #include "utils/config.h"
 #include "utils/frontmatter.h"
+#include "vault/librarian_curator.h"  // detail::curated_base (curated layer location)
 
 namespace sui::quorum {
 
@@ -796,8 +797,9 @@ public:
 
         // Phase 11 Track 4 — ## Project Pitch (scribe-respects-Pitch loop)
         //
-        // The librarian (Phase 11) curates scribe output into a project-root
-        // aspirational layer (Pitch/00 - Introduction.md + 01 - Anti-goals.md).
+        // The librarian (Phase 11) curates scribe output into the curated
+        // aspirational layer under .quorum/librarian/ (Pitch/00 -
+        // Introduction.md + 01 - Anti-goals.md).
         // The scribe consults that Pitch as source-of-truth when deciding
         // keep/discard/update/restructure of its own rule-*/ref-* knowledge
         // (pitch-protocol.md v0.1).
@@ -810,9 +812,9 @@ public:
         // on the Pitch files actually existing. Additive only: emits nothing
         // when any gate fails (no empty "## Project Pitch" header).
         if (agent_role == "scribe" && !project_root.empty()) {
-            auto root = std::filesystem::path(project_root);
-            auto intro = root / "Pitch" / "00 - Introduction.md";
-            auto anti = root / "Pitch" / "01 - Anti-goals.md";
+            auto curated = sui::quorum::detail::curated_base(project_root);
+            auto intro = curated / "Pitch" / "00 - Introduction.md";
+            auto anti = curated / "Pitch" / "01 - Anti-goals.md";
 
             auto building = extract_pitch_section(intro, "What we're building");
             auto direction = extract_pitch_section(intro, "Current direction");

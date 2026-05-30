@@ -112,8 +112,9 @@ struct AskOptions {
     fs::path root(project_root);
 
     // Read a curated-layer file via scribe_writer's helper; empty if absent.
+    // The curated layer lives under <root>/.quorum/librarian/ (curated_base).
     auto read_rel = [&](const std::string& rel) -> std::string {
-        auto p = root / rel;
+        auto p = sui::quorum::detail::curated_base(project_root) / rel;
         std::error_code ec;
         if (!fs::exists(p, ec)) return {};
         return sui::quorum::detail::read_file_text(p);

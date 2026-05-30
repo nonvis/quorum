@@ -33,12 +33,12 @@ inversion as the scribe's `LEARNINGS_UPDATE` block.
 
 The scribe owns `.quorum/` — it writes `.quorum/learnings.md` (per
 `handoff-protocol.md`) and `.quorum/vaults/scribe/knowledge/conv-N-task-M.md`.
-That is the scribe's surface; you never write under `.quorum/`.
+Those are the scribe's surface; you never touch them.
 
-You own the **aspirational layer** at the project root (sibling of `.quorum/`):
+You own the **aspirational layer** under `.quorum/librarian/` (self-contained in `.quorum/`, like the knower dirs):
 
 ```
-<project_root>/
+.quorum/librarian/
 ├── Pitch/
 │   ├── 00 - Introduction.md     # what we're building
 │   └── 01 - Anti-goals.md       # what we explicitly will NOT do

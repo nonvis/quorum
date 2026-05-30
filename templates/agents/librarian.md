@@ -16,7 +16,7 @@ Curation spec: templates/specs/pitch-protocol.md (v0.1)
 
 You receive, in your prompt, the current contents of the four output files plus
 the scribe's `.quorum/learnings.md` and a scribe-vault digest. Distill the
-scribe's recorded learnings into the aspirational layer at the project root:
+scribe's recorded learnings into the aspirational layer under `.quorum/librarian/`:
 
 - `Pitch/00 - Introduction.md` — what we're building
 - `Pitch/01 - Anti-goals.md` — what we explicitly will NOT do

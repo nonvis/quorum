@@ -119,10 +119,12 @@ static void test_B_assemble(const fs::path& tdir) {
     {
         auto proj = tdir / "B_seeded";
         fs::create_directories(proj / ".quorum");
-        write_file(proj / "Pitch" / "00 - Introduction.md",
+        // Curated layer lives under <proj>/.quorum/librarian/ (curated_base).
+        auto curated = proj / ".quorum" / "librarian";
+        write_file(curated / "Pitch" / "00 - Introduction.md",
                    "# Pitch\n\n## What we're building\n\n"
                    "PITCH_INTRO_MARKER: provenance-on-Sui protocol.\n");
-        write_file(proj / "00 - Decision Log.md",
+        write_file(curated / "00 - Decision Log.md",
                    "# Decision Log\n\n### 2026-05-19 — Provenance is the moat\n\n"
                    "DECISION_LOG_MARKER: durable-storage claim dropped.\n");
 

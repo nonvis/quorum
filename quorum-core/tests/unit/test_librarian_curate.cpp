@@ -74,12 +74,14 @@ static void test_A_skeleton(const fs::path& tdir) {
     check(r1.ok, "A: first ensure ok");
     check(r1.bootstrapped, "A: first ensure created files (bootstrapped)");
 
-    auto intro     = proj / "Pitch" / "00 - Introduction.md";
-    auto antigoals = proj / "Pitch" / "01 - Anti-goals.md";
-    auto declog    = proj / "00 - Decision Log.md";
-    auto roadmap   = proj / "01 - Roadmap.md";
+    // Curated layer lives under <proj>/.quorum/librarian/ (curated_base).
+    auto curated   = proj / ".quorum" / "librarian";
+    auto intro     = curated / "Pitch" / "00 - Introduction.md";
+    auto antigoals = curated / "Pitch" / "01 - Anti-goals.md";
+    auto declog    = curated / "00 - Decision Log.md";
+    auto roadmap   = curated / "01 - Roadmap.md";
 
-    check(fs::exists(proj / "Pitch"), "A: Pitch/ subdir created");
+    check(fs::exists(curated / "Pitch"), "A: Pitch/ subdir created");
     check(fs::exists(intro), "A: Pitch/00 - Introduction.md exists");
     check(fs::exists(antigoals), "A: Pitch/01 - Anti-goals.md exists");
     check(fs::exists(declog), "A: 00 - Decision Log.md exists");
@@ -130,7 +132,7 @@ static void test_B_curation_update(const fs::path& tdir) {
     auto seed = sui::quorum::ensure_curation_skeleton(proj.string());
     check(seed.ok, "B: skeleton seeded");
 
-    auto intro = proj / "Pitch" / "00 - Introduction.md";
+    auto intro = proj / ".quorum" / "librarian" / "Pitch" / "00 - Introduction.md";
 
     sui::quorum::CurationUpdate cu;
     cu.file    = "Pitch/00 - Introduction.md";
@@ -205,7 +207,8 @@ static void test_C_invalid_target(const fs::path& tdir) {
     auto seed = sui::quorum::ensure_curation_skeleton(proj.string());
     check(seed.ok, "C: skeleton seeded");
 
-    auto intro = proj / "Pitch" / "00 - Introduction.md";
+    auto curated = proj / ".quorum" / "librarian";
+    auto intro = curated / "Pitch" / "00 - Introduction.md";
     auto before = read_file(intro);
 
     // Non-canonical section for a canonical file.
@@ -225,7 +228,7 @@ static void test_C_invalid_target(const fs::path& tdir) {
     bad_file.content = "should not be written";
     auto rf = sui::quorum::apply_curation_update(proj.string(), bad_file);
     check(!rf.ok, "C: non-canonical file rejected");
-    check(!fs::exists(proj / "README.md"), "C: rejected file not created");
+    check(!fs::exists(curated / "README.md"), "C: rejected file not created");
 
     // Decision Log is NOT a CURATION_UPDATE target.
     sui::quorum::CurationUpdate declog_target;
@@ -244,7 +247,7 @@ static void test_D_decision_log(const fs::path& tdir) {
     fs::create_directories(proj);
     // No skeleton seed - exercise bootstrap-on-append.
 
-    auto declog = proj / "00 - Decision Log.md";
+    auto declog = proj / ".quorum" / "librarian" / "00 - Decision Log.md";
 
     sui::quorum::DecisionLogAppend e1;
     e1.utc       = "2026-05-27T10:00:00Z";

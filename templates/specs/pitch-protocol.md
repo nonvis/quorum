@@ -1,6 +1,6 @@
 # Quorum pitch-curation protocol spec
 
-Version: **v0.1** (Phase 11 — Librarian as Curator)
+Version: **v0.2** (Phase 11 — Librarian as Curator)
 
 Status: authoritative contract for the librarian curation cycle. The C++
 daemon and the librarian SKILL.md both implement this document. Mirrors the
@@ -11,7 +11,7 @@ shape of `handoff-protocol.md` (scribe write-discipline).
 The librarian is being redefined from a one-shot, per-conversation external-docs
 writer into a **periodic curator**: it reads accumulated scribe output and
 distills it into a structured *aspirational layer* (Pitch / Decision Log /
-Roadmap) at the project root. The scribe then consults the Pitch as
+Roadmap) under `.quorum/librarian/`. The scribe then consults the Pitch as
 source-of-truth when deciding what to keep / discard / update / restructure in
 its own vault — closing a feedback loop.
 
@@ -24,26 +24,32 @@ never writes files itself; do not grant it `Edit`/`Write`.
 
 ## File locations
 
-All curation outputs live at the **target project root** (sibling of `.quorum/`),
-mirroring the operator's own PARA layout. They are human-facing project docs,
-NOT agent-loop audit files.
+All curation outputs live under **`<project_root>/.quorum/librarian/`**, keeping
+the whole curated layer self-contained inside `.quorum/` (mirroring the knower
+namespacing, e.g. `.quorum/historian/`). They are human-facing project docs, NOT
+agent-loop audit files.
 
 ```
 <project_root>/
-├── Pitch/
-│   ├── 00 - Introduction.md     # aspirational state — what we're building
-│   └── 01 - Anti-goals.md       # what we explicitly will NOT do
-├── 00 - Decision Log.md         # append-only, one entry per scribe decision
-├── 01 - Roadmap.md              # phase / open-item tracker
 └── .quorum/
-    ├── learnings.md             # scribe input (handoff-protocol v0.2)
-    └── vaults/scribe/knowledge/ # scribe input (per-conv notes, rule-*/ref-*)
+    ├── librarian/                   # the curated aspirational layer (v0.2)
+    │   ├── Pitch/
+    │   │   ├── 00 - Introduction.md # aspirational state — what we're building
+    │   │   └── 01 - Anti-goals.md   # what we explicitly will NOT do
+    │   ├── 00 - Decision Log.md     # append-only, one entry per scribe decision
+    │   └── 01 - Roadmap.md          # phase / open-item tracker
+    ├── learnings.md                 # scribe input (handoff-protocol v0.2)
+    └── vaults/scribe/knowledge/     # scribe input (per-conv notes, rule-*/ref-*)
 ```
 
+The block `file:` fields stay **relative** (`Pitch/00 - Introduction.md`,
+`00 - Decision Log.md`, …) — they resolve under `.quorum/librarian/`. Only the
+on-disk base directory moved in v0.2; the wire format is unchanged (see
+Changelog).
+
 The four output files are the **only** write surface for curation. The librarian
-never writes under `.quorum/` (that is the scribe's surface) and never writes
-external docs (README/CHANGELOG — that was the *old* librarian role, retired in
-Phase 11).
+never writes external docs (README/CHANGELOG — that was the *old* librarian role,
+retired in Phase 11).
 
 ## The rules
 
@@ -123,8 +129,9 @@ source: learnings.md 2026-05-28T14:32:11Z, 2026-05-29T09:10:00Z
 ```
 
 Fields:
-- `file:` (required) — path relative to project root. MUST be one of the four
-  canonical output files. Any other path → block dropped with stderr diagnostic.
+- `file:` (required) — relative identifier, resolved under
+  `<project_root>/.quorum/librarian/`. MUST be one of the four canonical output
+  files. Any other path → block dropped with stderr diagnostic.
 - `section:` (required) — canonical section heading text, WITHOUT the leading
   `## `. MUST be a canonical section for that file (see schema below). Unknown
   section → block dropped.
@@ -265,7 +272,7 @@ Input — three `learnings.md` entries:
 ### What worked
 - Section-scoped diff gate kept operator edits intact across 3 re-runs
 ### Decisions
-- Curation outputs live at project root, not under .quorum/
+- Curation outputs live under .quorum/librarian/ (self-contained curated layer)
 ## Learnings, 2026-05-28T14:00:00Z
 ### What did not work
 - Granting the librarian executor tools — daemon clamps non-doer roles read-only
@@ -303,10 +310,10 @@ source: learnings.md 2026-05-28T14:00:00Z
 ```DECISION_LOG_APPEND
 utc: 2026-05-27T10:00:00Z
 decision: |
-  Curation outputs live at the project root, not under .quorum/.
+  Curation outputs live under .quorum/librarian/ (self-contained curated layer).
 rationale: |
-  Aspirational layer is human-facing project docs; .quorum/ stays the
-  agent-loop audit surface.
+  Keeping the curated layer inside .quorum/ makes the whole Quorum surface
+  self-contained, mirroring the knower dirs (e.g. .quorum/historian/).
 source: learnings.md 2026-05-27T10:00:00Z
 ```
 ```DECISION_LOG_APPEND
@@ -324,15 +331,32 @@ five proposals land in four files (two appends to the Decision Log).
 
 ## Migration policy
 
-v0.1 is the first version. Projects with a hand-authored Pitch/Decision-Log/
-Roadmap predating Phase 11: `ensure_curation_skeleton` only creates *missing*
-files, so existing operator docs are adopted as-is. If their section headings
-differ from the canonical schema, `CURATION_UPDATE` targeting a non-present
-section is dropped (operator sees the diagnostic and can rename or add the
-canonical heading). No automatic migration of legacy heading names in v0.1.
+`ensure_curation_skeleton` only creates *missing* files (under
+`.quorum/librarian/` as of v0.2), so existing operator docs are adopted as-is. If
+their section headings differ from the canonical schema, `CURATION_UPDATE`
+targeting a non-present section is dropped (operator sees the diagnostic and can
+rename or add the canonical heading). No automatic migration of legacy heading
+names.
+
+**v0.1 → v0.2 location move:** any pre-existing **hand-authored** root-level
+`Pitch/`, `00 - Decision Log.md`, or `01 - Roadmap.md` from a v0.1 project are
+**unaffected** — curate now reads and writes exclusively under
+`.quorum/librarian/`. There is no automatic relocation; the operator may move or
+copy a legacy root-level curated layer into `.quorum/librarian/` if they want
+curate to continue maintaining it. The block wire format (`file:` identifiers) is
+unchanged across the move.
 
 ## Changelog
 
+- **v0.2** (Phase 11, 2026-05-30) — moved the curated layer's on-disk location
+  from the **project root** to **`<project_root>/.quorum/librarian/`**.
+  Rationale: keep the whole Quorum surface self-contained inside `.quorum/`,
+  mirroring the knower namespacing (e.g. `.quorum/historian/`). The block **wire
+  format is unchanged** — `CURATION_UPDATE` / `DECISION_LOG_APPEND` `file:`
+  fields stay relative (`Pitch/00 - Introduction.md`, `00 - Decision Log.md`, …)
+  and now resolve under `.quorum/librarian/`. Pre-existing hand-authored
+  root-level curated docs are unaffected (no auto-migration; see Migration
+  policy).
 - **v0.1** (Phase 11, 2026-05-29) — initial spec. Two block types
   (`CURATION_UPDATE`, `DECISION_LOG_APPEND`), four output files, field-mapping
   table, daemon-applies write mechanism, operator-gated diff, bootstrap +

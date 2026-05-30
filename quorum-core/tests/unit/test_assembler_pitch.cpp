@@ -67,7 +67,9 @@ static PitchLayout make_layout(const std::string& agent, bool with_pitch) {
     fs::create_directories(fs::path(l.vault_dir) / "inbox");
 
     if (with_pitch) {
-        write_file(root / "Pitch" / "00 - Introduction.md",
+        // Curated layer lives under <root>/.quorum/librarian/ (curated_base).
+        auto curated = root / ".quorum" / "librarian";
+        write_file(curated / "Pitch" / "00 - Introduction.md",
                    "---\n"
                    "title: Demo — Pitch\n"
                    "updated: 2026-05-29\n"
@@ -79,7 +81,7 @@ static PitchLayout make_layout(const std::string& agent, bool with_pitch) {
                    "- Closes the feedback loop.\n\n"
                    "## Current direction\n\n"
                    "- Provenance-on-Sui is the moat.\n");
-        write_file(root / "Pitch" / "01 - Anti-goals.md",
+        write_file(curated / "Pitch" / "01 - Anti-goals.md",
                    "---\n"
                    "title: Anti-goals\n"
                    "updated: 2026-05-29\n"
@@ -190,7 +192,7 @@ static void test_p4_long_section_truncated() {
     // ~1200 chars of body in "What we're building" — well over the ~400 cap.
     std::string big;
     for (int i = 0; i < 120; ++i) big += "alpha bravo charlie delta ";
-    write_file(root / "Pitch" / "00 - Introduction.md",
+    write_file(root / ".quorum" / "librarian" / "Pitch" / "00 - Introduction.md",
                "# Demo\n\n## What we're building\n\n" + big + "\n");
 
     sui::quorum::ContextAssembler assembler;
