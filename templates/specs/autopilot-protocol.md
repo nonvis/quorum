@@ -63,6 +63,40 @@ On launch the supervisor:
 3. Otherwise reads `.quorum/autopilot/checkpoint.md` if present (resume), then
    flies the plan.
 
+## How the supervisor is configured (three layers)
+
+The supervisor is **not** hand-wired to specific workers — it reads its capabilities
+from `SUPERVISOR.md`. Configuration is three layers, two of them automatic:
+
+1. **The roster — auto-configured.** `quorum supervisor init` reads
+   `.quorum/agents/*.yaml` and fills the `## Roster` table. Whatever agents the
+   project has (created via `quorum agent create` or the web form) become
+   dispatchable, for free. The supervisor equips each fanned-out subagent with
+   that row's `skill` file, and dispatches **only** roster agents. To make a new
+   specialty (e.g. `recap`) available: install it as a specialty, create the agent
+   so it lands in `.quorum/agents/`, then **re-run `quorum supervisor init`** so it
+   appears in the roster.
+2. **scribe + librarian — auto-configured, but NOT via the roster.** These are the
+   record-keepers, used *between* tasks (run-loop step 4), not as flight-plan
+   workers. Every generated `SUPERVISOR.md` carries the fixed `## Record-keeping`
+   section naming `quorum scribe record` + `quorum librarian curate`, and the
+   scribe/librarian SKILLs resolve from `~/.claude/skills/quorum-roles/`. So they
+   need **zero per-project setup** — the supervisor always has them.
+3. **The flight plan — operator-configured.** The one hand-authored layer: which
+   roster agent runs which slice (the `agent:` field per task). The generator ships
+   a placeholder; the startup gate refuses to run until it is filled.
+
+So "how does the supervisor use scribe, or recap?" — **scribe** is always wired in
+(layer 2, automatic); **recap** must first exist as an agent in `.quorum/agents/`
+and be picked up into the roster by re-running `init` (layer 1), then named in a
+flight-plan slice (layer 3).
+
+**Model A caveat:** these are *instructions the supervisor (an LLM) follows* from
+`SUPERVISOR.md` + its SKILL — not constraints the daemon enforces at runtime
+(Decision #40: determinism front-loaded into the generated config + startup gate +
+checkpoint, LLM-in-the-loop accepted). The generated rails are what keep it on
+track, not a wrapper.
+
 ## `SUPERVISOR.md` — file location + schema
 
 **Location:** the **project root** (sibling of `.quorum/`), like `CLAUDE.md` /
