@@ -49,16 +49,27 @@ start_one() {
   echo "  $label started (pid $(cat "$pidf")) — logs: ${logf#"$REPO_ROOT"/}"
 }
 
-# stop_one <label> <pidfile> — kill the process and its child tree (bun -> vite/tsc)
+# Recursively print a pid and ALL its descendants (root printed last). Snapshots
+# the tree in one pass so reparenting on kill can't strand a grandchild — the UI
+# is a 3-level tree (bun run dev:client -> bun run dev -> node/vite) and a
+# single-level `pkill -P` would orphan the vite node still holding port 3101.
+collect_tree() {
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    collect_tree "$child"
+  done
+  echo "$pid"
+}
+
+# stop_one <label> <pidfile> — TERM then KILL the whole descendant tree.
 stop_one() {
-  local label="$1" pidf="$2" p
+  local label="$1" pidf="$2" p q tree
   if pid_alive "$pidf"; then
     p="$(cat "$pidf")"
-    pkill -P "$p" 2>/dev/null || true
-    kill "$p" 2>/dev/null || true
+    tree="$(collect_tree "$p")"                       # full snapshot before any kill
+    for q in $tree; do kill "$q" 2>/dev/null || true; done
     sleep 1
-    pkill -9 -P "$p" 2>/dev/null || true
-    kill -9 "$p" 2>/dev/null || true
+    for q in $tree; do kill -9 "$q" 2>/dev/null || true; done
     echo "  $label stopped (was pid $p)"
   else
     echo "  $label not running"
