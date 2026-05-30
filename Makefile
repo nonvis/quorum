@@ -1,7 +1,7 @@
 # Quorum — Multi-Domain Agent Orchestration Daemon
 # ============================================================
 
-.PHONY: init build clean test help
+.PHONY: init build clean test help web web-stop web-status
 .DEFAULT_GOAL := help
 
 # ── Config ───────────────────────────────────────────────────
@@ -97,6 +97,15 @@ web-dev: ## Start web API server (dev mode with watch, :3100)
 
 web-client: ## Start React frontend (dev mode, :3101 → proxy :3100)
 	cd quorum-web && bun run dev:client
+
+web: ## Start the web dashboard (API :3100 + UI :3101) in the background
+	./scripts/web.sh start
+
+web-stop: ## Stop the background web dashboard
+	./scripts/web.sh stop
+
+web-status: ## Show web dashboard status
+	./scripts/web.sh status
 
 web-build: ## Build React frontend for production
 	cd quorum-web && bun run build:client

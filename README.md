@@ -137,11 +137,12 @@ Same daemon, different agent teams. Each domain defines agent YAML configs, CONT
 API server (Hono + Bun) and React frontend (Vite + Tailwind). Real-time updates via SSE.
 
 ```bash
-# Terminal 1 — API server
-cd quorum-web && bun install && bun run dev          # http://localhost:3100
+# One command — runs both (API + UI) in the background, installs deps if needed
+./scripts/web.sh start        # → dashboard at http://localhost:3101  (stop: ./scripts/web.sh stop)
 
-# Terminal 2 — React frontend
-cd quorum-web/client && bun install && bun run dev   # http://localhost:3101
+# Or foreground dev in two terminals:
+cd quorum-web && bun run dev          # Terminal 1 — API (http://localhost:3100)
+cd quorum-web && bun run dev:client   # Terminal 2 — UI  (http://localhost:3101)
 ```
 
 **API endpoints:**

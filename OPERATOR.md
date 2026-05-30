@@ -113,14 +113,23 @@ Run without a conversation subcommand (processes existing queue):
 
 ## Web Dashboard
 
-API server (Hono + Bun, port 3100) and React frontend (Vite + Tailwind, port 3101).
+API server (Hono + Bun, port 3100) + React frontend (Vite + Tailwind, port 3101).
+
+**One command (recommended)** — runs both in the background, installs deps if needed:
 
 ```bash
-# Terminal 1 — API server
-cd quorum-web && bun install && bun run dev          # http://localhost:3100
+./scripts/web.sh start      # → dashboard at http://localhost:3101
+./scripts/web.sh status     # running state
+./scripts/web.sh stop       # stop both
+./scripts/web.sh logs       # tail both logs
+# (or: make web / make web-status / make web-stop)
+```
 
-# Terminal 2 — React frontend
-cd quorum-web/client && bun install && bun run dev   # http://localhost:3101
+**Foreground dev (two terminals)** — when you want live-reload output in view:
+
+```bash
+cd quorum-web && bun run dev          # Terminal 1 — API (http://localhost:3100)
+cd quorum-web && bun run dev:client   # Terminal 2 — UI  (http://localhost:3101)
 ```
 
 **API endpoints:**

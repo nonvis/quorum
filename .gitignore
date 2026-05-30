@@ -1,60 +1,30 @@
-# Build
+# Build artifacts
 build/
-cmake-build-*/
+quorum-core/build/
+
+# Dependencies
+node_modules/
+
+# Quorum data (project-local)
+.quorum/
+
+# Quorum web state + data + runtime
+quorum-web/data/
+quorum-web/.web/
+quorum-web/.quorum-web-state.json
+
+# C++ build
 *.o
 *.a
 *.so
 *.dylib
+CMakeCache.txt
+CMakeFiles/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# Editor / OS
 .DS_Store
+*.swp
+.idea/
 
-# C++ artifacts
-compile_commands.json
-.cache/
-.ccache/
-
-# Sui / Move
-quorum-contracts/build/
-quorum-contracts/.aptos/
-# Benchmark fixtures regenerate Move.lock on `sui move build`; not part of the
-# expected/ fixture surface (sibling fixtures don't track it either).
-templates/benchmarks/**/Move.lock
-
-# TypeScript / Node
-node_modules/
-dist/
-.turbo/
-*.tsbuildinfo
-.env
-.env.local
-.env.*.local
-.quorum-web-state.json
-
-# Data (runtime)
-data/
-data-e2e/
-*.db
-*.db-wal
-*.db-shm
-/tmp/quorum.*
-
-# Secrets
-*.key
-*.pem
-*.p12
-wallet.yaml
-keystore/
-
-# OS
-Thumbs.db
-.Spotlight-V100
-.Trashes
-
-# Manual-test sandbox (Phase 6 Track 9 — keep local-only)
-sample/
+# Logs
+*.log
