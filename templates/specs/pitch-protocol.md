@@ -1,6 +1,6 @@
 # Quorum pitch-curation protocol spec
 
-Version: **v0.2** (Phase 11 — Librarian as Curator)
+Version: **v0.3** (Phase 11 — Librarian as Curator)
 
 Status: authoritative contract for the librarian curation cycle. The C++
 daemon and the librarian SKILL.md both implement this document. Mirrors the
@@ -99,6 +99,31 @@ not already reflected in the aspirational layer.
 Every proposal cites the `learnings.md` entry (or scribe note) it derives from,
 via the block `source:` field. The librarian distills existing recorded content;
 it does not author new claims the scribe never recorded.
+
+### Rule 8: Operator-owned section lock (hard, apply-time)
+
+A curated section whose **current body** contains the literal marker
+`<!-- operator-owned -->` is **never overwritten** by curation. This is the
+operator's hard lock: drop the marker anywhere inside a section (e.g. under
+`## Current direction`) and `CURATION_UPDATE` will leave that section untouched.
+
+The lock is enforced as a HARD, apply-time check in the write primitive
+(`apply_curation_update`), so it protects **both** the CLI (`quorum librarian
+curate`) and the daemon (which applies `CURATION_UPDATE` blocks) — there is no way
+to route around it. A `CURATION_UPDATE` targeting an operator-owned section is a
+**no-op**: the apply returns `ok=true, skipped=true` (deliberately not written),
+and the CLI reports it as `skipped (operator-owned)` rather than `applied`.
+
+Scope:
+- **Section-scoped.** The lock applies only to the section whose body holds the
+  marker; sibling sections in the same file remain curatable.
+- **`CURATION_UPDATE` only.** `DECISION_LOG_APPEND` is append-only and never
+  overwrites prior content, so it needs no guard and is unaffected.
+- **No effect on bootstrap.** A freshly bootstrapped file's skeleton bodies never
+  contain the marker, so first creation is never skipped.
+
+The librarian (analyst-class) should not propose changes to a section it sees
+carrying the marker; even if it does, the daemon's apply skips the block.
 
 ## Input → output field mapping
 
@@ -348,6 +373,15 @@ unchanged across the move.
 
 ## Changelog
 
+- **v0.3** (Phase 11, 2026-05-30) — added the **operator-owned section lock**
+  (Rule 8). A curated section whose current body contains the literal marker
+  `<!-- operator-owned -->` is never overwritten by curation. The guard is a HARD,
+  apply-time check in the write primitive (`apply_curation_update`), so it
+  protects both the CLI (`quorum librarian curate`) and the daemon
+  (`CURATION_UPDATE` apply) paths. An operator-owned `CURATION_UPDATE` is a no-op:
+  apply returns `ok=true, skipped=true`; the CLI reports `skipped
+  (operator-owned)`. `DECISION_LOG_APPEND` (append-only) is unaffected; bootstrap
+  is unaffected (skeleton bodies carry no marker). Wire format unchanged.
 - **v0.2** (Phase 11, 2026-05-30) — moved the curated layer's on-disk location
   from the **project root** to **`<project_root>/.quorum/librarian/`**.
   Rationale: keep the whole Quorum surface self-contained inside `.quorum/`,

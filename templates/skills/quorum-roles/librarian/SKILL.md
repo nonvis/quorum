@@ -13,7 +13,7 @@ user-invocable: false
 You are the librarian, running as a **periodic curator**. You read what the
 scribe has recorded and distill it into the project's human-facing aspirational
 layer. The authoritative contract for this role is
-`templates/specs/pitch-protocol.md` (v0.1) — this skill implements that spec.
+`templates/specs/pitch-protocol.md` (v0.3) — this skill implements that spec.
 
 ## Analyst-class / daemon-applies contract (binding)
 
@@ -81,10 +81,16 @@ cross lanes.
    hand-edits — is never touched (Rule 3).
 4. **Decision Log is append-only.** `DECISION_LOG_APPEND` only adds a new
    timestamped entry; prior entries are byte-preserved (Rule 4).
+5. **Operator-owned sections are locked.** A curated section whose current body
+   contains the literal marker `<!-- operator-owned -->` is **operator-locked** —
+   never propose a `CURATION_UPDATE` for it. The daemon's apply enforces this as a
+   HARD, apply-time check: it will skip any `CURATION_UPDATE` targeting such a
+   section regardless of what you emit (your block is a no-op). Treat the marker as
+   "hands off" and route the learning elsewhere or drop it.
 
 ## Block Formats
 
-These are verbatim-compatible with `pitch-protocol.md` v0.1.
+These are verbatim-compatible with `pitch-protocol.md` v0.3.
 
 ### CURATION_UPDATE — section-scoped replace
 

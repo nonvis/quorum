@@ -79,6 +79,10 @@ struct CurationPlan {
         return std::count_if(proposals.begin(), proposals.end(),
             [](const CurationProposal& p) { return p.status == "rejected"; });
     }
+    [[nodiscard]] size_t skipped_count() const {
+        return std::count_if(proposals.begin(), proposals.end(),
+            [](const CurationProposal& p) { return p.status == "skipped"; });
+    }
 };
 
 namespace detail {
@@ -305,7 +309,12 @@ inline void append_file_section(std::string& out, const std::string& label,
 
         if (mode == ApplyMode::ApplyAll) {
             auto r = sui::quorum::apply_curation_update(project_root, cu);
-            if (r.ok) {
+            // Check skipped FIRST: an operator-owned section returns ok=true +
+            // skipped=true (deliberately NOT written), distinct from applied.
+            if (r.skipped) {
+                prop.status = "skipped";
+                prop.reason = r.reason;
+            } else if (r.ok) {
                 prop.status = "applied";
                 prop.diff = r.diff;
             } else {
@@ -328,9 +337,19 @@ inline void append_file_section(std::string& out, const std::string& label,
             std::string rewritten, old_body;
             if (sui::quorum::detail::replace_section_body(
                     content, cu.section, cu.content, rewritten, old_body)) {
-                prop.diff = sui::quorum::detail::render_section_diff(
-                    cu.file, cu.section, old_body, cu.content);
-                prop.status = "previewed";
+                // Operator-owned section lock: mirror the apply-time guard so the
+                // preview reports a skip the apply would honour, not a phantom diff.
+                if (old_body.find(sui::quorum::detail::kOperatorOwnedMarker) !=
+                    std::string::npos) {
+                    prop.status = "skipped";
+                    prop.reason = "section is operator-owned (" +
+                                  sui::quorum::detail::kOperatorOwnedMarker +
+                                  " marker) — would not be overwritten";
+                } else {
+                    prop.diff = sui::quorum::detail::render_section_diff(
+                        cu.file, cu.section, old_body, cu.content);
+                    prop.status = "previewed";
+                }
             } else {
                 prop.status = "rejected";
                 prop.reason = "section heading '## " + cu.section +
@@ -507,8 +526,17 @@ inline void print_proposal(std::ostream& os, size_t idx,
 
     if (opts.apply_all) {
         // ApplyAll already wrote during the pipeline.
+        // Surface operator-owned skips explicitly: those sections were locked and
+        // deliberately NOT overwritten.
+        for (const auto& p : plan.proposals) {
+            if (p.status == "skipped") {
+                std::cout << "[" << plan.skipped_count()
+                          << "] skipped (operator-owned) -> " << p.target << "\n";
+            }
+        }
         std::cout << "Summary: " << plan.proposals.size() << " proposal(s), "
                   << plan.applied_count() << " applied, "
+                  << plan.skipped_count() << " skipped (operator-owned), "
                   << plan.rejected_count() << " rejected.\n";
         return 0;
     }
@@ -518,6 +546,14 @@ inline void print_proposal(std::ostream& os, size_t idx,
     for (auto& p : plan.proposals) {
         if (p.status == "rejected") {
             ++rejected;
+            continue;
+        }
+        // Operator-owned sections are locked by the pipeline (status "skipped"):
+        // never prompt, never apply — surface and move on.
+        if (p.status == "skipped") {
+            ++skipped;
+            std::cout << "[" << p.target << "]\n"
+                      << "  -> skipped (operator-owned)\n";
             continue;
         }
         std::cout << "[" << p.target << "]\n";
@@ -535,7 +571,14 @@ inline void print_proposal(std::ostream& os, size_t idx,
             r = sui::quorum::apply_decision_log_append(project_root,
                                                        p.decision_append);
         }
-        if (r.ok) {
+        if (r.skipped) {
+            // Section became operator-owned between preview and apply — honour
+            // the lock even after operator approval.
+            p.status = "skipped";
+            p.reason = r.reason;
+            ++skipped;
+            std::cout << "  -> skipped (operator-owned)\n";
+        } else if (r.ok) {
             p.status = "applied";
             ++applied;
             std::cout << "  -> applied\n";

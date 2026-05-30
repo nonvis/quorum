@@ -68,6 +68,7 @@ struct CurationResult {
     std::string reason;
     bool bootstrapped{false};
     std::string diff;
+    bool skipped{false};  // section was operator-owned (marker present) — deliberately NOT written
 };
 
 namespace detail {
@@ -79,6 +80,15 @@ inline const std::string kPitchIntro    = "Pitch/00 - Introduction.md";
 inline const std::string kPitchAntiGoals = "Pitch/01 - Anti-goals.md";
 inline const std::string kDecisionLog   = "00 - Decision Log.md";
 inline const std::string kRoadmap       = "01 - Roadmap.md";
+
+// Operator-owned section lock. If a curated section's CURRENT body contains this
+// literal HTML-comment marker, CURATION_UPDATE never overwrites it — the
+// operator's hard, section-scoped lock. Enforced at apply time in the write
+// primitive (apply_curation_update), so it protects both the CLI and the daemon
+// paths. DECISION_LOG_APPEND is append-only and never overwrites, so it is
+// exempt. The marker has no effect on first creation (bootstrap skeleton bodies
+// never contain it).
+inline const std::string kOperatorOwnedMarker = "<!-- operator-owned -->";
 
 // The curated layer lives under <project_root>/.quorum/librarian/ (self-contained
 // in .quorum/, like the knower dirs). The CURATION_UPDATE/DECISION_LOG_APPEND
@@ -445,6 +455,20 @@ inline std::string render_section_diff(std::string_view file,
                         update.section + "' not found in '" + update.file +
                         "' (no write)";
         return result;
+    }
+
+    // Operator-owned section lock (HARD, apply-time). If the CURRENT section body
+    // carries the operator-owned marker, the librarian must NEVER overwrite it.
+    // This protects both the CLI and the daemon (both route through this
+    // primitive). On the bootstrap-the-file path the body is the skeleton
+    // placeholder, which has no marker, so this never fires on first creation.
+    if (old_body.find(detail::kOperatorOwnedMarker) != std::string::npos) {
+        result.ok = true;
+        result.skipped = true;
+        result.reason = "section '## " + update.section + "' in '" + update.file +
+                        "' is operator-owned (" + detail::kOperatorOwnedMarker +
+                        " marker present) — not overwritten";
+        return result;  // NO write
     }
 
     std::string err;

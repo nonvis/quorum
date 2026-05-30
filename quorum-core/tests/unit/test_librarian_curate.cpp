@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 #include "vault/librarian_curator.h"
+#include "cli/librarian_curate.h"
 
 namespace fs = std::filesystem;
 
@@ -312,6 +313,81 @@ static void test_D_decision_log(const fs::path& tdir) {
           "D: file unchanged after missing decision");
 }
 
+// ---- Case E: operator-owned section is never overwritten -------------------
+static void test_E_operator_owned(const fs::path& tdir) {
+    std::cout << "\n=== Case E: operator-owned section is never overwritten ===\n\n";
+
+    auto proj = tdir / "E";
+    fs::create_directories(proj);
+    auto seed = sui::quorum::ensure_curation_skeleton(proj.string());
+    check(seed.ok, "E: skeleton seeded");
+
+    auto intro = proj / ".quorum" / "librarian" / "Pitch" / "00 - Introduction.md";
+
+    // Seed the "What we're building" section with an operator-owned marker plus a
+    // distinctive operator sentence the librarian must never clobber.
+    const std::string kOperatorSentence =
+        "MY HAND-WRITTEN PITCH that the librarian must never overwrite.";
+    {
+        sui::quorum::CurationUpdate seed_cu;
+        seed_cu.file    = "Pitch/00 - Introduction.md";
+        seed_cu.section = "What we're building";
+        seed_cu.content = kOperatorSentence + " <!-- operator-owned -->";
+        auto sr = sui::quorum::apply_curation_update(proj.string(), seed_cu);
+        check(sr.ok && !sr.skipped, "E: seed (no marker yet on skeleton) applied");
+    }
+    auto before = read_file(intro);
+    check(before.find(kOperatorSentence) != std::string::npos,
+          "E: operator sentence present after seeding");
+    check(before.find("<!-- operator-owned -->") != std::string::npos,
+          "E: operator-owned marker present after seeding");
+
+    // Librarian targets the SAME section with new content.
+    sui::quorum::CurationUpdate cu;
+    cu.file    = "Pitch/00 - Introduction.md";
+    cu.section = "What we're building";
+    cu.content = "- Robot-generated replacement that should NOT land.";
+    cu.source  = "learnings.md 2026-05-30T00:00:00Z";
+
+    auto r = sui::quorum::apply_curation_update(proj.string(), cu);
+    check(r.skipped, "E: apply result skipped == true (operator-owned)");
+    check(r.ok, "E: apply result ok == true (skip is not an error)");
+    check(!r.reason.empty(), "E: skip reason populated");
+
+    // File on disk is UNCHANGED.
+    auto after = read_file(intro);
+    check(after == before, "E: file byte-identical after skipped apply");
+    check(after.find(kOperatorSentence) != std::string::npos,
+          "E: operator sentence still present (not overwritten)");
+    check(after.find("<!-- operator-owned -->") != std::string::npos,
+          "E: operator-owned marker still present");
+    check(after.find("Robot-generated replacement that should NOT land.")
+              == std::string::npos,
+          "E: librarian content ABSENT (never written)");
+
+    // Bonus: run it through the pipeline in ApplyAll mode; assert "skipped".
+    std::string raw =
+        "```CURATION_UPDATE\n"
+        "file: Pitch/00 - Introduction.md\n"
+        "section: What we're building\n"
+        "content: |\n"
+        "  Pipeline robot content that should NOT land either.\n"
+        "source: test\n"
+        "```\n";
+    auto plan = sui::quorum::cli::run_curation_pipeline(
+        proj.string(), raw, sui::quorum::cli::ApplyMode::ApplyAll);
+    check(plan.proposals.size() == 1, "E: pipeline parsed one proposal");
+    check(!plan.proposals.empty() && plan.proposals[0].status == "skipped",
+          "E: pipeline ApplyAll marks operator-owned proposal 'skipped'");
+    check(plan.skipped_count() == 1, "E: pipeline skipped_count() == 1");
+
+    auto after_pipeline = read_file(intro);
+    check(after_pipeline == before,
+          "E: file still byte-identical after pipeline ApplyAll");
+    check(after_pipeline.find("Pipeline robot content") == std::string::npos,
+          "E: pipeline robot content ABSENT (never written)");
+}
+
 // ---- main ------------------------------------------------------------------
 int main() {
     auto tdir = fs::temp_directory_path() /
@@ -322,6 +398,7 @@ int main() {
     test_B_curation_update(tdir);
     test_C_invalid_target(tdir);
     test_D_decision_log(tdir);
+    test_E_operator_owned(tdir);
 
     std::error_code ec;
     fs::remove_all(tdir, ec);
