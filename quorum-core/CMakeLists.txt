@@ -13,6 +13,20 @@ add_compile_options(
 )
 
 # ── Dependencies ──
+# macOS: Homebrew's OpenSSL is keg-only, so CMake's FindOpenSSL can't locate it
+# without a hint. Query Homebrew for the prefix when OPENSSL_ROOT_DIR isn't set.
+if(APPLE AND NOT DEFINED OPENSSL_ROOT_DIR)
+    find_program(BREW_EXECUTABLE brew)
+    if(BREW_EXECUTABLE)
+        execute_process(
+            COMMAND ${BREW_EXECUTABLE} --prefix openssl@3
+            OUTPUT_VARIABLE OPENSSL_ROOT_DIR
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+    endif()
+endif()
+
 find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(SQLite3 REQUIRED)

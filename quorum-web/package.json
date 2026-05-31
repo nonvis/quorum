@@ -5,9 +5,9 @@
   "private": true,
   "scripts": {
     "dev": "bun run --watch server/index.ts",
-    "dev:client": "cd client && bun run dev",
+    "dev:client": "cd client && bun --bun run dev",
     "start": "bun run server/index.ts",
-    "build:client": "cd client && bun run build"
+    "build:client": "cd client && bun --bun run build"
   },
   "devDependencies": {
     "@types/bun": "latest"

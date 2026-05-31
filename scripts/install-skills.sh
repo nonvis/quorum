@@ -19,6 +19,8 @@ install_skill() {
         return 1
     fi
 
+    mkdir -p "$DST_DIR"
+
     if [ "$MODE" = "--link" ]; then
         ln -sfn "$src" "$dst"
         echo "  🔗 $name (symlinked)"
