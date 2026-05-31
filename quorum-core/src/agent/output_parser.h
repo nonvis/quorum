@@ -136,6 +136,8 @@ public:
         bool in_block = false;
         std::string block_type;
         std::vector<std::string> block_lines;
+        size_t block_indent = 0;   // indent of the opening fence; the closing
+                                   // fence must match it (see is_block_close)
         std::string pending_type;
         std::string pending_path;
 
@@ -144,12 +146,14 @@ public:
                 auto btype = detect_block_open(line);
                 if (!btype.empty()) {
                     in_block = true;
+                    block_indent = leading_ws(line);
                     block_type = btype;
                     block_lines.clear();
                     pending_type.clear();
                     pending_path.clear();
                 } else if (is_plain_fence(line)) {
                     in_block = true;
+                    block_indent = leading_ws(line);
                     block_type = pending_type; // may be empty (tentative)
                     block_lines.clear();
                     if (!pending_path.empty() && block_type == "VAULT_UPDATE") {
@@ -159,6 +163,7 @@ public:
                     // Language-tagged fence (```markdown, ```sql, etc.)
                     // Only triggers when a type header was already seen above.
                     in_block = true;
+                    block_indent = leading_ws(line);
                     block_type = pending_type;
                     block_lines.clear();
                     if (!pending_path.empty() && block_type == "VAULT_UPDATE") {
@@ -179,11 +184,12 @@ public:
                     result.free_text += line;
                 }
             } else {
-                if (is_block_close(line)) {
+                if (is_block_close(line) && leading_ws(line) == block_indent) {
                     if (!block_type.empty()) {
                         dispatch_block(block_type, block_lines, result);
                     }
                     in_block = false;
+                    block_indent = 0;
                     block_type.clear();
                     block_lines.clear();
                     pending_type.clear();
@@ -342,6 +348,16 @@ private:
             return type;
         }
         return {};
+    }
+
+    // Count leading whitespace (spaces/tabs). Used to indent-match a block's
+    // closing fence to its opening fence, so an embedded code fence inside the
+    // block content — more deeply indented under a `content: |` literal — does
+    // not prematurely close the structured block.
+    static size_t leading_ws(std::string_view line) {
+        size_t n = 0;
+        while (n < line.size() && (line[n] == ' ' || line[n] == '\t')) ++n;
+        return n;
     }
 
     // Returns true for a closing fence: optional whitespace + "```" + only whitespace.

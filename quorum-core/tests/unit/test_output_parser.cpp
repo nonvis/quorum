@@ -897,6 +897,61 @@ static void test_curation_malformed_dropped() {
 
 // ─── main ────────────────────────────────────────────────────────────────────
 
+// ─── Regression: nested code fence inside content must NOT close the block ────
+//
+// Repro of the thinker broker-note truncation. A VAULT_UPDATE whose `content: |`
+// literal embeds a fenced code block (an ASCII diagram). The inner ``` fences
+// are indented two spaces under the literal; the parser must indent-match the
+// CLOSING fence to the opening fence (column 0) so the inner fences are kept as
+// content — and the trailing OBSERVATION block is parsed separately instead of
+// being swallowed. Before the fix, the first inner ``` closed the block and
+// everything after it was lost.
+static void test_nested_code_fence_in_content() {
+    sui::quorum::OutputParser parser;
+    std::string input = R"DOC(```VAULT_UPDATE
+path: knowledge/broker.md
+content: |
+  # Section 2 before the diagram
+
+  ## 3. End-to-end path
+
+  ```
+  Broker -> HTTP POST /order
+    -> verify -> engine
+  ```
+
+  ## 4. After the diagram
+  This text comes AFTER the inner fence.
+```
+
+```OBSERVATION
+title: Trailing observation
+tags: [drift]
+content: |
+  This observation must be parsed separately.
+```
+)DOC";
+    auto r = parser.parse(input);
+
+    check(r.vault_updates.size() == 1, "nested-fence: exactly one vault update");
+    const auto& c = r.vault_updates[0].content;
+    check(c.find("Section 2 before the diagram") != std::string::npos,
+          "nested-fence: content kept text BEFORE the inner fence");
+    check(c.find("Broker -> HTTP POST /order") != std::string::npos,
+          "nested-fence: content kept the inner code-block body");
+    check(c.find("After the diagram") != std::string::npos,
+          "nested-fence: content kept text AFTER the inner fence (no early close)");
+    check(c.find("This text comes AFTER the inner fence") != std::string::npos,
+          "nested-fence: full post-diagram prose preserved");
+    check(c.find("```") != std::string::npos,
+          "nested-fence: inner fence markers preserved in content");
+    check(r.observations.size() == 1,
+          "nested-fence: trailing OBSERVATION parsed separately (not swallowed)");
+    check(r.observations.size() == 1 &&
+          r.observations[0].title == "Trailing observation",
+          "nested-fence: trailing observation title correct");
+}
+
 int main() {
     std::cout << "=== test_output_parser ===\n\n";
 
@@ -950,6 +1005,9 @@ int main() {
     test_curation_update_well_formed();
     test_decision_log_append_well_formed();
     test_curation_malformed_dropped();
+
+    // Regression: nested code fence inside VAULT_UPDATE content (truncation bug)
+    test_nested_code_fence_in_content();
 
     std::cout << "\nAll tests passed.\n";
     return 0;
