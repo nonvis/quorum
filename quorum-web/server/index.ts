@@ -3,7 +3,7 @@ import { cors } from "hono/cors";
 import { config, repoRoot, getState, setCurrentProject, getProjectConfig } from "../config";
 import { join, resolve } from "path";
 import { homedir } from "os";
-import { readFileSync, writeFileSync, readdirSync, existsSync, unlinkSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, readdirSync, existsSync, unlinkSync, mkdirSync, copyFileSync, chmodSync } from "fs";
 
 // Expand a leading `~` to the user's home directory and resolve to an
 // absolute path. Plain `existsSync(join(p, ".quorum"))` does NOT do shell
@@ -185,25 +185,146 @@ app.get("/api/agents", (c) => {
   return c.json(agents);
 });
 
+// Knower "specialties" — read-only `thinker` agents pointed at a knower SKILL,
+// meant to run in `--mode brainstorm` (clamped to Read/Grep/Glob). These are NOT
+// distinct roles, so the daemon has no `--role cartographer`; the web UI offers
+// them as a separate "specialty" path that resolves to thinker + the canonical
+// SKILL + description, then runs the deterministic Tier-1 scan.
+//
+// This mirrors scripts/setup-knowers.sh, which is the sibling source of truth for
+// the descriptions and the per-knower Tier-1 wiring. Skill paths + Tier-1 tool
+// scripts are resolved against the quorum repo root (repoRoot). Keep in sync.
+const KNOWERS: Record<string, {
+  skill: string;        // SKILL.md, relative to repoRoot
+  description: string;  // canonical agent description (matches setup-knowers.sh)
+  tier1?: { tool: string; gate: "always" | "gh" }; // deterministic, zero-token scan
+}> = {
+  cartographer: {
+    skill: "templates/skills/cartographer/SKILL.md",
+    description: "Cartographer: knows the project layout. Reads the Tier-1 index (.quorum/cartographer/layout.json) + honors the root CLAUDE.md; produces a fast-lookup project index. Read-only.",
+    tier1: { tool: "scripts/cartographer_index.py", gate: "always" },
+  },
+  architect: {
+    skill: "templates/skills/architect/SKILL.md",
+    description: "Architect: maps component interconnections (imports, cross-repo calls, event flows) with file evidence; traces the primary flow; flags coupling/invariants. Read-only.",
+  },
+  historian: {
+    skill: "templates/skills/historian/SKILL.md",
+    description: "Historian: knows the project's decisions + pivots. Reads the Tier-1 record (.quorum/historian/decisions-raw.json) + the Decision Log; tracks status/supersession with PR/commit provenance. Read-only.",
+    tier1: { tool: "scripts/historian_mine.py", gate: "gh" },
+  },
+  recap: {
+    skill: "templates/skills/recap/SKILL.md",
+    description: "Recap: knows what changed recently + where you left off (WHAT/WHEN). Reads the Tier-1 windowed timeline (.quorum/recap/timeline-raw.json) + operator-dumped timestamped messages, weaves one dated component-grouped timeline, drafts where-i-left-off, with a by-intent read-only Linear status overlay. Read-only; never queries Linear/Slack/Telegram.",
+    tier1: { tool: "scripts/recap_mine.py", gate: "always" },
+  },
+};
+
+// Is `gh` installed AND authenticated? (historian's Tier-1 mine shells out to it.)
+async function ghAuthed(): Promise<boolean> {
+  try {
+    const proc = Bun.spawn(["gh", "auth", "token"], { stdout: "pipe", stderr: "pipe" });
+    const out = (await new Response(proc.stdout).text()).trim();
+    const code = await proc.exited;
+    return code === 0 && out.length > 0;
+  } catch {
+    return false; // gh not on PATH
+  }
+}
+
+// Install a knower's deterministic Tier-1 tool into <project>/.quorum/tools/ and
+// run its scan (read-only, zero tokens) so the knower has its index to read.
+// Mirrors setup-knowers.sh: cartographer/recap run unconditionally; historian's
+// mine is gh-gated and skipped (with a note) when gh is missing/unauthenticated.
+async function runKnowerTier1(projectPath: string, tier1: { tool: string; gate: "always" | "gh" }): Promise<string> {
+  const src = resolve(repoRoot, tier1.tool);
+  const base = tier1.tool.split("/").pop()!;
+  if (!existsSync(src)) return `Tier-1 tool missing in repo: ${tier1.tool} (skipped)`;
+
+  const toolsDir = join(projectPath, ".quorum", "tools");
+  mkdirSync(toolsDir, { recursive: true });
+  const dest = join(toolsDir, base);
+  copyFileSync(src, dest);
+  try { chmodSync(dest, 0o755); } catch {}
+
+  if (tier1.gate === "gh" && !(await ghAuthed())) {
+    return `Installed ${base}; skipped its mine (gh not authenticated). Run later: python3 .quorum/tools/${base} --root .`;
+  }
+
+  const proc = Bun.spawn(["python3", dest, "--root", projectPath], {
+    cwd: projectPath, stdout: "pipe", stderr: "pipe",
+  });
+  const stderr = (await new Response(proc.stderr).text()).trim();
+  const code = await proc.exited;
+  if (code !== 0) return `Installed ${base}; Tier-1 scan exited ${code}${stderr ? ": " + stderr.split("\n").pop() : ""}`;
+  return `Ran deterministic Tier-1 scan (${base}).`;
+}
+
 app.post("/api/agents", async (c) => {
   const body = await c.req.json<{
-    role: string;
-    name: string;
+    role?: string;
+    specialty?: string;
+    name?: string;
     description?: string;
     targetDir?: string;
     skill?: string;
   }>();
-  if (!body.role || !body.name) {
-    return c.json({ error: "role and name are required" }, 400);
+  if (!body.name) {
+    return c.json({ error: "name is required" }, 400);
   }
-  const args = ["agent", "create", "--role", body.role, "--name", body.name, "--no-ai"];
-  if (body.description) args.push("--description", body.description);
-  if (body.targetDir) args.push("--target-dir", body.targetDir);
-  if (body.skill) args.push("--skill", body.skill);
+
+  // Knower-specialty path: resolve to thinker + canonical SKILL + description.
+  const knower = body.specialty ? KNOWERS[body.specialty] : undefined;
+  if (body.specialty && !knower) {
+    return c.json({ error: `Unknown specialty: ${body.specialty}` }, 400);
+  }
+
+  let projectPath: string | null = null;
+  let role = body.role;
+  let description = body.description;
+  let skillFileAbs: string | undefined;
+
+  if (knower) {
+    const state = getState();
+    if (!state.currentProject) {
+      return c.json({ error: "Select a project before adding a knower specialty" }, 400);
+    }
+    projectPath = getProjectConfig(state.currentProject).projectPath;
+    role = "thinker";
+    skillFileAbs = resolve(repoRoot, knower.skill);
+    if (!existsSync(skillFileAbs)) {
+      return c.json({ error: `Knower skill not found: ${skillFileAbs}` }, 500);
+    }
+    if (!description) description = knower.description;
+  }
+
+  if (!role) {
+    return c.json({ error: "role (or specialty) is required" }, 400);
+  }
+
+  const args = ["agent", "create", "--role", role, "--name", body.name, "--no-ai"];
+  if (description) args.push("--description", description);
+  if (skillFileAbs) {
+    // Knower: absolute SKILL path + project as target-dir (parity w/ setup-knowers.sh)
+    args.push("--skill-file", skillFileAbs);
+    if (projectPath) args.push("--target-dir", projectPath);
+  } else {
+    if (body.targetDir) args.push("--target-dir", body.targetDir);
+    if (body.skill) args.push("--skill", body.skill);
+  }
+
   const result = await execDaemon(...args);
+
+  // For knowers with a deterministic Tier-1 tool, install + run it after the
+  // agent yaml is written, so the knower is immediately usable.
+  let tier1Note: string | undefined;
+  if (result.success && knower?.tier1 && projectPath) {
+    tier1Note = await runKnowerTier1(projectPath, knower.tier1);
+  }
+
   return c.json({
     success: result.success,
-    output: result.stdout,
+    output: [result.stdout, tier1Note].filter(Boolean).join("\n"),
     error: result.stderr || undefined,
   });
 });

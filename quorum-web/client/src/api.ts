@@ -126,7 +126,8 @@ export async function fetchAgents(): Promise<Agent[]> {
 }
 
 export async function createAgent(params: {
-  role: string;
+  role?: string;
+  specialty?: string;
   name: string;
   description?: string;
   targetDir?: string;
