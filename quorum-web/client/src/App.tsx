@@ -11,6 +11,7 @@ import { ConversationCard } from "./components/ConversationCard";
 import { ConfigPanel } from "./components/ConfigPanel";
 import { BudgetPanel } from "./components/BudgetPanel";
 import { AgentCreateForm } from "./components/AgentCreateForm";
+import { BootstrapPanel } from "./components/BootstrapPanel";
 import { TeamCreateForm } from "./components/TeamCreateForm";
 import { AgentContextEditor } from "./components/AgentContextEditor";
 
@@ -80,6 +81,10 @@ export default function App() {
   const ACTIVE_STATES = new Set(["active", "waiting_for_human"]);
   const busy = conversations.some((c) => ACTIVE_STATES.has(c.state));
 
+  // Freshly initialized: only the auto-created leader, no conversations yet.
+  const isFreshInit =
+    agents.length === 1 && agents[0]?.role === "leader" && conversations.length === 0;
+
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
       <StatsBanner
@@ -127,6 +132,20 @@ export default function App() {
               agents={agents}
               teamPath={teams.find((t) => t.id === selectedTeam)?.default_path ?? []}
               onAgentClick={setEditingAgent}
+            />
+          )}
+          {project.current && (
+            <BootstrapPanel
+              isFresh={isFreshInit}
+              projectPath={project.current}
+              onCreated={() => {
+                fetchAgents().then(setAgents);
+                fetchTeams().then((t) => {
+                  setTeams(t);
+                  const stillValid = selectedTeam != null && t.some((tm) => tm.id === selectedTeam);
+                  if (!stillValid) setSelectedTeam(t.length > 0 ? t[0].id : null);
+                });
+              }}
             />
           )}
           {project.current && (
