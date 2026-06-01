@@ -149,7 +149,11 @@ inline int init_project() {
         }
     }
 
-    // 6b. Write default team preset
+    // 6b. Write the single default team preset.
+    // default_path entries are agent IDs (not role names); at init time only
+    // `leader` exists, so ship a leader-only default with an inline comment
+    // showing the intended shape once agents exist. Editing this file — or
+    // dropping more team YAMLs alongside it — composes your real team(s).
     {
         std::ofstream out(".quorum/teams/default.yaml", std::ios::trunc);
         if (!out.is_open()) {
@@ -157,29 +161,13 @@ inline int init_project() {
             return 1;
         }
         out << "name: Default\n"
-            << "default_path: [leader]\n";
-    }
-    std::cout << "  Created: .quorum/teams/default.yaml\n";
-
-    // 6c. Write full-roster example team (Phase 7 Track 7).
-    // Path entries must be agent IDs, not role names — and we don't know
-    // what agent IDs the user will pick at init time. Ship a leader-only
-    // starter with a comment showing the intended shape after agents exist.
-    {
-        std::ofstream out(".quorum/teams/full-roster.yaml", std::ios::trunc);
-        if (!out.is_open()) {
-            std::cerr << "ERROR: cannot write .quorum/teams/full-roster.yaml\n";
-            return 1;
-        }
-        out << "name: Full-Roster\n"
-            << "# Edit default_path with your actual agent IDs (not role names).\n"
-            << "# Example after creating agents named architect, move-dev,\n"
-            << "# security-reviewer, scribe:\n"
+            << "# default_path lists agent IDs (not role names), in routing order.\n"
+            << "# Only `leader` exists at init; extend it once you add agents, e.g.:\n"
             << "#   default_path: [leader, architect, move-dev, security-reviewer, scribe]\n"
             << "default_path: [leader]\n";
     }
-    std::cout << "  Created: .quorum/teams/full-roster.yaml  "
-              << "(starter; edit default_path with your agent IDs once agents exist)\n";
+    std::cout << "  Created: .quorum/teams/default.yaml  "
+              << "(starter; extend default_path with your agent IDs once agents exist)\n";
 
     // 7. Print next steps
     std::cout << "  Created: .quorum/vaults/leader/knowledge/\n";
