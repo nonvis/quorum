@@ -55,6 +55,25 @@ See `scribe/SKILL.md` § "Consult Vault Inventory Before VAULT_UPDATE"
 for the canonical treatment, including the narrative-note exception
 (which does not apply to your role).
 
+## Author a `summary:` line for rule-*/ref-*
+
+When you emit a `VAULT_UPDATE` writing a `rule-*.md` or `ref-*.md`, open
+its frontmatter with a single-line `summary:` field — ONE sentence
+stating what question the file answers / what it's for. The daemon shows
+`summary:` verbatim as the search-result preview when the file later
+surfaces in another agent's reference search; without it the daemon
+scrapes the first ~200 chars of the body (a useless fragment for anything
+that leads with a heading or table). Single-line scalar form only (same
+fail-closed rule as `tags:`); a missing/malformed value just falls back
+to the body scrape.
+
+```
+---
+tags: [topic, keywords]
+summary: <one sentence — what this file answers / when to reach for it>
+---
+```
+
 ## Block Formats
 
 ### HANDOFF — route based on verdict
