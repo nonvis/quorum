@@ -84,6 +84,7 @@ struct RefEntry {
     std::string content;
     std::filesystem::file_time_type mtime{};
     std::vector<std::string> tags;  // Phase 9 Track 2: cached frontmatter tags
+    std::string summary;  // write-for-retrieval — frontmatter `summary:` preview; empty when absent
 };
 
 namespace detail {
@@ -279,7 +280,9 @@ namespace detail {
         s.path = r.path;
         s.scope_rank = r.scope_rank;
         s.scope_label = r.scope_label;
-        s.excerpt = detail::make_excerpt(r.content);
+        s.excerpt = r.summary.empty()
+                        ? detail::make_excerpt(r.content)
+                        : detail::make_excerpt(r.summary, 280);
         s.score = score;
         s.mtime = r.mtime;
         scored.push_back(std::move(s));
@@ -510,6 +513,9 @@ public:
                     // Phase 9 Track 2 — parse frontmatter tags once at walk
                     // time so search_references doesn't re-parse per query.
                     r.tags = parse_frontmatter_tags(raw);
+                    // Parse `summary:` from the RAW file (frontmatter is stripped off
+                    // r.content just below, so it must be read here). Fail-closed → "".
+                    r.summary = parse_frontmatter_field(raw, "summary");
                     // Phase 9 finding #27d — store body without frontmatter so
                     // tag words don't score as both tag-hits (×5) and content-hits.
                     r.content = strip_frontmatter(raw);

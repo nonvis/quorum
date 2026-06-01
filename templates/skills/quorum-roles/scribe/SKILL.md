@@ -224,6 +224,21 @@ For each finding, decide which agents benefit and target only those. Skip
 cross-writes to agents whose work didn't touch the topic. A scribe that
 emits five tight notes beats one that emits twenty noisy ones.
 
+**Granularity — one ref = one retrieval handle = one question.** A file is
+the atomic search-and-Read unit: the daemon scores and surfaces whole
+files, and an agent Reads a whole file. So split on **topic**, not on byte
+size. Each `ref-*.md` should answer one question; the test is "would a
+future agent ever want topic A *without* topic B?" — if yes, they're two
+refs; if no, keep them in one. Do NOT fragment a coherent topic into
+`part-1` / `part-2` (it splits one retrieval handle into two weaker ones
+and forces a second Read for the same answer). Condense for information
+density — cut filler, not substance — never for arbitrary brevity.
+
+EXCEPTION: the knower index/map refs `ref-project-index.md`,
+`ref-architecture-map.md`, `ref-decisions.md`, and `ref-recap.md` are
+intentionally single monolithic surveys spanning the whole workspace — do
+NOT split those on topic.
+
 ### Filename Convention (Track 8 seed)
 
 Use these prefixes so future Quorum versions can load and search the
@@ -242,6 +257,12 @@ right notes:
 In this phase, `context_assembler` doesn't yet distinguish these — but
 adopting the convention now means Phase 7 starts with sorted vaults
 rather than needing a mass rename.
+
+**Per-type condensation pressure.** `rule-*.md` are preloaded in full at
+conversation start and compete for the 10-rule cap — keep them tightest,
+every line earns its slot. `ref-*.md` are NOT preloaded; their cost is paid
+only when an agent Reads one, so a single-topic ref may run longer when the
+extra length buys real information density.
 
 **Filename convention reminder:** when curating brainstorm output,
 prefer `ref-*.md` for things future runs may search for on-demand
@@ -327,6 +348,7 @@ retrieval handles — the words a future agent would actually query.
 ```markdown
 ---
 tags: [coin, balance, sui-framework]
+summary: How to choose between Coin<T> and Balance<T> for SIP-58 — both required, when to use each.
 ---
 
 # Note body starts here.
@@ -355,6 +377,31 @@ Tag-authoring guidance:
 When updating an existing `rule-*.md` / `ref-*.md` in place, preserve
 its frontmatter tags (add to them if the update broadens the topic; do
 not silently drop them).
+
+### Author a `summary:` line for rule-*/ref-*
+
+Every new `rule-*.md` and `ref-*.md` MUST also open its frontmatter with
+a single-line `summary:` field — ONE sentence (≤~2 lines) stating what
+question the file answers / what it's for. Write it for a future agent
+skimming five search hits and deciding which one to open, not as a title.
+
+Why: the daemon shows `summary:` **verbatim** as the search preview. When
+`summary:` is absent it falls back to scraping the first ~200 chars of the
+body (frontmatter + leading H1 stripped, whitespace collapsed) — a useless
+fragment for any file that leads with a heading or a table. A good summary
+is the difference between a hit a future agent opens and one it skips.
+
+Summary-authoring guidance:
+
+- **Single-line scalar form only**: `summary: <one sentence>`. Like
+  `tags:`, the daemon parses frontmatter fail-closed — no multi-line
+  strings, no quoted/nested keys, no YAML block scalars. A multi-line or
+  malformed value is ignored (the daemon falls back to the body scrape).
+- **State the question, not the title**: what does this file answer / when
+  would I reach for it (`How to choose between Coin<T> and Balance<T> …`),
+  not a restatement of the slug.
+- **Conv-narrative notes** (`conv-{N}-task-{M}.md`) do NOT need a summary —
+  they're append-only audit logs, never surfaced as search previews.
 
 ## Block Formats
 

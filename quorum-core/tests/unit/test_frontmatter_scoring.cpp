@@ -196,6 +196,113 @@ static void test_t8_frontmatter_no_double_count() {
 }
 
 // ---------------------------------------------------------------------------
+// T9: frontmatter `summary:` becomes the excerpt verbatim (write-for-retrieval)
+// ---------------------------------------------------------------------------
+
+static void test_t9_summary_becomes_excerpt() {
+    std::cout << "\n=== T9. frontmatter summary: overrides body-scrape excerpt ===\n\n";
+
+    auto vault = make_temp_vault();
+
+    // ref-walrus-guide.md: body LEADS with a heading + table (the body-scrape
+    // path would surface "Heading"). Frontmatter carries a distinctive summary
+    // sentence + a query-matching tag. The summary must win the preview.
+    write_knowledge(vault, "ref-walrus-guide.md",
+        "---\ntags: [walrus]\nsummary: WHENTOCHOOSE walrus blob lifecycle decision guide.\n---\n"
+        "# Heading\n\n| col | col |\n|---|---|\n| a | b |\n");
+
+    sui::quorum::ContextAssembler assembler;
+    auto split = assembler.assemble_split(
+        "agent-t9", vault, "turn", "walrus");
+
+    auto pos_section = split.user_message.find("## Searched References");
+    check(pos_section != std::string::npos,
+          "T9: '## Searched References' section present");
+    auto refs = split.user_message.substr(pos_section);
+
+    check(refs.find("ref-walrus-guide.md") != std::string::npos,
+          "T9: ref-walrus-guide.md surfaced");
+    check(refs.find("WHENTOCHOOSE") != std::string::npos,
+          "T9: summary sentence shown verbatim as excerpt");
+    check(refs.find("Heading") == std::string::npos,
+          "T9: body heading NOT scraped (summary overrode body-scrape)");
+
+    cleanup(vault);
+}
+
+// ---------------------------------------------------------------------------
+// T10: no summary → body-scrape fallback (make_excerpt(body)) still fires
+// ---------------------------------------------------------------------------
+
+static void test_t10_no_summary_body_fallback() {
+    std::cout << "\n=== T10. no summary: → make_excerpt(body) fallback ===\n\n";
+
+    auto vault = make_temp_vault();
+
+    // ref-walrus-body.md: tagged for the query but NO summary field. The body's
+    // first words are distinctive — the body-scrape path must surface them.
+    write_knowledge(vault, "ref-walrus-body.md",
+        "---\ntags: [walrus]\n---\n# Title\n\nBODYFIRSTWORDS describe walrus storage here.\n");
+
+    sui::quorum::ContextAssembler assembler;
+    auto split = assembler.assemble_split(
+        "agent-t10", vault, "turn", "walrus");
+
+    auto pos_section = split.user_message.find("## Searched References");
+    check(pos_section != std::string::npos,
+          "T10: '## Searched References' section present");
+    auto refs = split.user_message.substr(pos_section);
+
+    check(refs.find("ref-walrus-body.md") != std::string::npos,
+          "T10: ref-walrus-body.md surfaced");
+    check(refs.find("BODYFIRSTWORDS") != std::string::npos,
+          "T10: body-scrape excerpt fired (no summary present)");
+
+    cleanup(vault);
+}
+
+// ---------------------------------------------------------------------------
+// T11: malformed frontmatter → fail-closed, no crash, summary not leaked
+// ---------------------------------------------------------------------------
+
+static void test_t11_malformed_summary_fail_closed() {
+    std::cout << "\n=== T11. malformed summary → fail-closed fallback (no crash) ===\n\n";
+
+    auto vault = make_temp_vault();
+
+    // ref-walrus-fallback.md: frontmatter fence is well-formed but carries only
+    // tags — the `summary:` key sits OUTSIDE the fence (down in the body), so
+    // parse_frontmatter_field() returns "" (fail-closed) and the body-scrape
+    // fallback fires. The query token lives in the FILENAME so the ref still
+    // surfaces (filename match, score > 0). The stray BROKENSUMMARY token is
+    // pushed past the 200-char excerpt cap by leading filler, so it must NOT
+    // appear in the rendered preview.
+    write_knowledge(vault, "ref-walrus-fallback.md",
+        "---\ntags: [unrelated]\n---\n"
+        "LEADFILLER lorem ipsum dolor sit amet consectetur adipiscing elit sed do "
+        "eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim ad minim "
+        "veniam quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo "
+        "consequat duis aute irure dolor in reprehenderit.\n"
+        "summary: BROKENSUMMARY this value is outside the fence and must be ignored.\n");
+
+    sui::quorum::ContextAssembler assembler;
+    auto split = assembler.assemble_split(
+        "agent-t11", vault, "turn", "walrus");
+
+    auto pos_section = split.user_message.find("## Searched References");
+    check(pos_section != std::string::npos,
+          "T11: '## Searched References' section present (no crash)");
+    auto refs = split.user_message.substr(pos_section);
+
+    check(refs.find("ref-walrus-fallback.md") != std::string::npos,
+          "T11: ref-walrus-fallback.md surfaced via filename match");
+    check(refs.find("BROKENSUMMARY") == std::string::npos,
+          "T11: malformed/out-of-fence summary value NOT shown as excerpt");
+
+    cleanup(vault);
+}
+
+// ---------------------------------------------------------------------------
 // T7: untagged backwards-compat — Phase 8 ranking unchanged (covers plan #10)
 // ---------------------------------------------------------------------------
 
@@ -262,6 +369,9 @@ int main() {
     test_t6_tag_outranks_filename();
     test_t7_untagged_backcompat();
     test_t8_frontmatter_no_double_count();
+    test_t9_summary_becomes_excerpt();
+    test_t10_no_summary_body_fallback();
+    test_t11_malformed_summary_fail_closed();
 
     std::cout << "\n---------------------------------------------------\n";
     std::cout << "  passed: " << g_passed << "  failed: " << g_failed << "\n";

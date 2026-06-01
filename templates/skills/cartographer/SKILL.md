@@ -49,6 +49,7 @@ path: knowledge/ref-project-index.md
 content: |
   ---
   tags: [layout, index, navigation]
+  summary: Where is X in this workspace — top-level component map and quick file lookup.
   ---
   # Project Index — <workspace name>
 

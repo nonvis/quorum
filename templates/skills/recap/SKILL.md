@@ -72,6 +72,7 @@ path: knowledge/ref-recap.md
 content: |
   ---
   tags: [recap, activity, timeline]
+  summary: What changed recently and where I left off — dated timeline by component plus parked-branch state.
   ---
   # Recap — <workspace> (window: <since> → <mined date>)
 

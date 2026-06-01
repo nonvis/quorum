@@ -59,6 +59,7 @@ path: knowledge/ref-architecture-map.md
 content: |
   ---
   tags: [architecture, components, map]
+  summary: How the components fit together — interconnections, primary flow, coupling/invariants.
   ---
   # Architecture Map — <workspace name>
 

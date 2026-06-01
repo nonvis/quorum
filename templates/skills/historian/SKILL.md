@@ -47,6 +47,7 @@ path: knowledge/ref-decisions.md
 content: |
   ---
   tags: [decisions, history, prs]
+  summary: Why decisions were made — merged-PR/commit-traced decision history, supersessions, in-flight.
   ---
   # Decision History — <workspace>
 
