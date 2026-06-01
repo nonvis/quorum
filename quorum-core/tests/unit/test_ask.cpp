@@ -106,6 +106,48 @@ static void test_A_resolve(const fs::path& tdir) {
         check(resolved == expected,
               "A(c): resolved path == <HOME>/nonvis/foo");
     }
+
+    // (d) projects root: <HOME>/projects/bar/.quorum present resolves "bar".
+    {
+        auto fake_home = tdir / "A_home_projects";
+        fs::create_directories(fake_home / "projects" / "bar" / ".quorum");
+
+        const char* saved_home = std::getenv("HOME");
+        std::string saved = saved_home ? saved_home : "";
+        setenv("HOME", fake_home.string().c_str(), 1);
+
+        std::string err;
+        auto resolved = sui::quorum::cli::resolve_project_path("bar", err);
+
+        if (saved_home) setenv("HOME", saved.c_str(), 1);
+        else unsetenv("HOME");
+
+        check(err.empty(), "A(d): no error resolving via <HOME>/projects");
+        auto expected = (fake_home / "projects" / "bar").string();
+        check(resolved == expected,
+              "A(d): name 'bar' resolves via <HOME>/projects/bar");
+    }
+
+    // (e) precedence: projects/ wins over nonvis/ when both hold the name.
+    {
+        auto fake_home = tdir / "A_home_both";
+        fs::create_directories(fake_home / "projects" / "baz" / ".quorum");
+        fs::create_directories(fake_home / "nonvis" / "baz" / ".quorum");
+
+        const char* saved_home = std::getenv("HOME");
+        std::string saved = saved_home ? saved_home : "";
+        setenv("HOME", fake_home.string().c_str(), 1);
+
+        std::string err;
+        auto resolved = sui::quorum::cli::resolve_project_path("baz", err);
+
+        if (saved_home) setenv("HOME", saved.c_str(), 1);
+        else unsetenv("HOME");
+
+        auto expected = (fake_home / "projects" / "baz").string();
+        check(resolved == expected,
+              "A(e): 'baz' in both roots resolves to <HOME>/projects (first root)");
+    }
 }
 
 // ---- Case B: assemble_manager_prompt --------------------------------------

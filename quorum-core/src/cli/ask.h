@@ -46,8 +46,9 @@ struct AskOptions {
 // Resolve an --project argument to an absolute project root containing .quorum/.
 //
 //   1. If `arg` is an existing directory, use it as-is.
-//   2. Otherwise treat `arg` as a project NAME and resolve <HOME>/nonvis/<name>/
-//      (HOME via getenv; a literal "~" prefix is expanded too).
+//   2. Otherwise treat `arg` as a project NAME, searching known roots in order —
+//      <HOME>/projects/<name> then <HOME>/nonvis/<name> — for one containing
+//      .quorum/ (HOME via getenv; a literal "~" prefix is expanded too).
 //
 // In both cases <resolved>/.quorum must exist. On failure `err` is set to a
 // clear message and "" is returned. On success the absolute path is returned.
@@ -78,14 +79,25 @@ struct AskOptions {
         candidate = fs::absolute(given, ec);
         if (ec) candidate = given;
     } else {
-        // Case 2: treat arg as a project NAME under <HOME>/nonvis/<name>/.
+        // Case 2: treat arg as a project NAME and search known roots in order.
+        // Projects are not all under one parent (e.g. ~/projects/bastion,
+        // ~/nonvis/permafrost) — the first root with a .quorum/ wins.
         auto home = home_env();
         if (home.empty()) {
             err = "cannot resolve project name '" + arg +
                   "': HOME is unset";
             return "";
         }
-        candidate = fs::path(home) / "nonvis" / arg;
+        std::string tried;
+        for (const char* root : {"projects", "nonvis"}) {
+            fs::path c = fs::path(home) / root / arg;
+            std::error_code rec;
+            if (fs::exists(c / ".quorum", rec)) return c.string();
+            tried += (tried.empty() ? "" : ", ") + c.string();
+        }
+        err = "no Quorum-managed project named '" + arg +
+              "' found (tried: " + tried + ")";
+        return "";
     }
 
     auto quorum_dir = candidate / ".quorum";
