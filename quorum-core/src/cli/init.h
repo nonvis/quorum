@@ -4,13 +4,40 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include "storage/schema.h"
+#include "cli/agent_create.h"
 
 namespace fs = std::filesystem;
 namespace sui::quorum::cli {
 
-inline int init_project() {
+// Resolve the shipped SKILL.md for a knower specialty. First hit wins:
+//   (a) <quorum_root>/templates/skills/<knower>/SKILL.md  (when known)
+//   (b) $HOME/.claude/skills/<knower>/SKILL.md            (installed skills)
+//   (c) CWD ladder: templates/.. then ../templates/..     (mirrors rubric.h)
+// Returns an empty string if none resolve (init must NOT fail on this).
+inline std::string resolve_knower_skill(const std::string& quorum_root,
+                                        const std::string& knower) {
+    if (!quorum_root.empty()) {
+        auto p = fs::path(quorum_root) / "templates" / "skills" / knower / "SKILL.md";
+        if (fs::exists(p) && fs::is_regular_file(p)) return p.string();
+    }
+    if (const char* home = std::getenv("HOME")) {
+        auto p = fs::path(home) / ".claude" / "skills" / knower / "SKILL.md";
+        if (fs::exists(p) && fs::is_regular_file(p)) return p.string();
+    }
+    const std::vector<fs::path> candidates = {
+        fs::path("templates") / "skills" / knower / "SKILL.md",
+        fs::path("..") / "templates" / "skills" / knower / "SKILL.md",
+    };
+    for (const auto& c : candidates) {
+        if (fs::exists(c) && fs::is_regular_file(c)) return c.string();
+    }
+    return "";
+}
+
+inline int init_project(const std::string& quorum_root = "") {
     // 1. Check .quorum/ doesn't already exist
     if (fs::exists(".quorum")) {
         std::cerr << "ERROR: already initialized (.quorum/ exists)\n";
@@ -150,10 +177,10 @@ inline int init_project() {
     }
 
     // 6b. Write the single default team preset.
-    // default_path entries are agent IDs (not role names); at init time only
-    // `leader` exists, so ship a leader-only default with an inline comment
-    // showing the intended shape once agents exist. Editing this file — or
-    // dropping more team YAMLs alongside it — composes your real team(s).
+    // default_path entries are agent IDs (not role names), in routing order.
+    // init now scaffolds leader + thinker + scribe, so the default routes
+    // through all three. Editing this file — or dropping more team YAMLs
+    // alongside it — composes your real team(s).
     {
         std::ofstream out(".quorum/teams/default.yaml", std::ios::trunc);
         if (!out.is_open()) {
@@ -164,10 +191,78 @@ inline int init_project() {
             << "# default_path lists agent IDs (not role names), in routing order.\n"
             << "# Only `leader` exists at init; extend it once you add agents, e.g.:\n"
             << "#   default_path: [leader, architect, move-dev, security-reviewer, scribe]\n"
-            << "default_path: [leader]\n";
+            << "default_path: [leader, thinker, scribe]\n";
     }
     std::cout << "  Created: .quorum/teams/default.yaml  "
-              << "(starter; extend default_path with your agent IDs once agents exist)\n";
+              << "(default_path: [leader, thinker, scribe])\n";
+
+    // 6c. Scaffold the rest of the default roster (definitions only — no
+    // Tier-1 scans, no Python tool copies, no recap dump seeding; those stay
+    // in scripts/setup-knowers.sh). Every agent is created with no_ai = true
+    // so init spends ZERO tokens. CWD is the fresh project, so create_agent
+    // discovers THIS .quorum/ via discover_project_root().
+    //
+    // Generic roles: thinker + scribe rely on skill auto-detect (OK if it
+    // falls back to a generic CONTEXT.md template).
+    {
+        sui::quorum::cli::AgentCreateParams p;
+        p.role = "thinker";
+        p.name = "thinker";
+        p.no_ai = true;
+        sui::quorum::cli::create_agent(p);
+    }
+    {
+        sui::quorum::cli::AgentCreateParams p;
+        p.role = "scribe";
+        p.name = "scribe";
+        p.no_ai = true;
+        sui::quorum::cli::create_agent(p);
+    }
+
+    // Knowers: role `thinker` + a specialty SKILL file. Descriptions are
+    // byte-identical to scripts/setup-knowers.sh (the source of truth). If a
+    // SKILL doesn't resolve, the agent is still created WITHOUT a skill_file
+    // and a warning is printed — init must NOT fail on a missing SKILL.
+    struct Knower { const char* name; const char* description; };
+    static const Knower kKnowers[] = {
+        {"cartographer",
+         "Cartographer: knows the project layout. Reads the Tier-1 index (.quorum/cartographer/layout.json) + honors the root CLAUDE.md; produces a fast-lookup project index. Read-only."},
+        {"architect",
+         "Architect: maps component interconnections (imports, cross-repo calls, event flows) with file evidence; traces the primary flow; flags coupling/invariants. Read-only."},
+        {"historian",
+         "Historian: knows the project's decisions + pivots. Reads the Tier-1 record (.quorum/historian/decisions-raw.json) + the Decision Log; tracks status/supersession with PR/commit provenance. Read-only."},
+        {"recap",
+         "Recap: knows what changed recently + where you left off (WHAT/WHEN). Reads the Tier-1 windowed timeline (.quorum/recap/timeline-raw.json) + operator-dumped timestamped messages, weaves one dated component-grouped timeline, drafts where-i-left-off, with a by-intent read-only Linear status overlay. Read-only; never queries Linear/Slack/Telegram."},
+    };
+    for (const auto& k : kKnowers) {
+        sui::quorum::cli::AgentCreateParams p;
+        p.role = "thinker";
+        p.name = k.name;
+        p.description = k.description;
+        p.no_ai = true;
+        p.skill_file = resolve_knower_skill(quorum_root, k.name);
+        if (p.skill_file.empty()) {
+            std::cout << "  WARNING: " << k.name << " SKILL not found; run "
+                      << "scripts/setup-knowers.sh to attach the specialty skill.\n";
+        }
+        sui::quorum::cli::create_agent(p);
+    }
+
+    // 6d. Write the knowers team preset (byte-identical to
+    // scripts/setup-knowers.sh's heredoc — the source of truth).
+    {
+        std::ofstream out(".quorum/teams/knowers.yaml", std::ios::trunc);
+        if (!out.is_open()) {
+            std::cerr << "ERROR: cannot write .quorum/teams/knowers.yaml\n";
+            return 1;
+        }
+        out << "name: knowers\n"
+            << "# Read-only \"knower\" team for analyzing this workspace.\n"
+            << "# Run in brainstorm mode (clamps everyone to Read/Grep/Glob — no Bash, no writes).\n"
+            << "default_path: [leader, cartographer, architect, historian, recap]\n";
+    }
+    std::cout << "  Created: .quorum/teams/knowers.yaml  "
+              << "(default_path: [leader, cartographer, architect, historian, recap])\n";
 
     // 7. Print next steps
     std::cout << "  Created: .quorum/vaults/leader/knowledge/\n";
@@ -176,10 +271,14 @@ inline int init_project() {
               << "(project-wide rules and references that apply to all agents)\n";
     std::cout << "  Created: .quorum/knowledge/roles/{leader,thinker,doer,reviewer,scribe,librarian}/  "
               << "(role-specific rules apply to every agent of that role)\n";
-    std::cout << "\nQuorum initialized. Next steps:\n";
-    std::cout << "  1. Add agents (auto-discovered from .quorum/agents/):\n";
+    std::cout << "\nQuorum initialized with 7 agents "
+              << "(leader, thinker, scribe, cartographer, architect, historian, recap)\n"
+              << "and 2 teams (default, knowers). Next steps:\n";
+    std::cout << "  1. Attach knower specialty skills + Tier-1 scans (token-free):\n";
+    std::cout << "     scripts/setup-knowers.sh <project-dir>\n";
+    std::cout << "  2. Add more agents (auto-discovered from .quorum/agents/):\n";
     std::cout << "     quorum agent create --role doer --name my-dev\n";
-    std::cout << "  2. Start a conversation:\n";
+    std::cout << "  3. Start a conversation:\n";
     std::cout << "     quorum converse \"your goal here\"\n";
 
     return 0;

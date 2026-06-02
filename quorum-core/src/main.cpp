@@ -676,9 +676,20 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Init doesn't need --config -- it creates the config
+    // Init doesn't need --config -- it creates the config.
+    // Compute the repo root from the binary path so init can resolve the
+    // shipped knower SKILL templates: <repo>/build/quorum_daemon → parent
+    // twice = <repo>. Best-effort: empty string on failure (init then falls
+    // back to $HOME/.claude/skills + the CWD ladder, and never fails).
     if (subcommand == "init") {
-        return sui::quorum::cli::init_project();
+        std::string quorum_root;
+        try {
+            quorum_root = fs::canonical(fs::path(argv[0]))
+                              .parent_path().parent_path().string();
+        } catch (...) {
+            quorum_root.clear();
+        }
+        return sui::quorum::cli::init_project(quorum_root);
     }
 
     // Benchmark doesn't need --config -- it spawns a child daemon against a
