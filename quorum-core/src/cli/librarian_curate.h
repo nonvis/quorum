@@ -169,14 +169,171 @@ inline void append_file_section(std::string& out, const std::string& label,
     return out;
 }
 
+// Knower role names whose vaults carry the AUTHORITATIVE distilled knowledge
+// (by lens). The librarian's Pitch / Roadmap lanes derive from these vaults'
+// ref-*.md content, NOT from learnings.md. Discovered by walking
+// .quorum/vaults/* and matching these names; if none match we fall back to
+// "all vaults except scribe" (the scribe journal feeds the Decision Log only).
+[[nodiscard]] inline bool is_known_knower(const std::string& name) {
+    return name == "cartographer" || name == "architect" ||
+           name == "historian" || name == "recap";
+}
+
+// Extract a ref note's frontmatter `summary:` line (the write-for-retrieval
+// preview, Decision #44), if present in the leading `--- ... ---` block. Empty
+// string when absent. Used to prefer the one-line summary over a raw head
+// excerpt so the digest stays compact and on-topic.
+[[nodiscard]] inline std::string frontmatter_summary(const std::string& content) {
+    if (content.rfind("---", 0) != 0) return {};
+    // Find the closing fence of the frontmatter block.
+    size_t close = content.find("\n---", 3);
+    if (close == std::string::npos) return {};
+    std::string fm = content.substr(0, close);
+    std::istringstream iss(fm);
+    std::string line;
+    while (std::getline(iss, line)) {
+        // Trim leading whitespace.
+        size_t s = line.find_first_not_of(" \t");
+        if (s == std::string::npos) continue;
+        std::string trimmed = line.substr(s);
+        const std::string key = "summary:";
+        if (trimmed.rfind(key, 0) == 0) {
+            std::string val = trimmed.substr(key.size());
+            size_t vs = val.find_first_not_of(" \t");
+            if (vs == std::string::npos) return {};
+            val = val.substr(vs);
+            // Strip a trailing CR if any.
+            if (!val.empty() && val.back() == '\r') val.pop_back();
+            return val;
+        }
+    }
+    return {};
+}
+
+// Build a digest of the KNOWER vaults — the AUTHORITATIVE distilled knowledge
+// the Pitch / Roadmap lanes derive from. Mirrors scribe_vault_digest's shape
+// (filenames + head of the most-recent notes, same caps) but:
+//   - enumerates ONLY ref-*.md (the durable, retrieval-shaped notes), skipping
+//     rule-*.md (operating rules, not pitch material);
+//   - aggregates across every knower vault under <project_root>/.quorum/vaults/
+//     selected by is_known_knower (fallback: all vaults except `scribe`);
+//   - also folds in <project_root>/.quorum/knowledge/ref-*.md (project-scope
+//     promoted refs — vault_manager auto-promotion target);
+//   - prefers each ref's frontmatter `summary:` line as the excerpt when present.
+// Plain filesystem only (does NOT import context_assembler.h — replicates the
+// lightweight sibling-vault walk that helper performs).
+[[nodiscard]] inline std::string knower_vault_digest(
+    const std::filesystem::path& project_root, size_t max_recent = 5,
+    size_t head_chars = 800) {
+    namespace fs = std::filesystem;
+    std::string out;
+
+    struct Ref {
+        fs::path path;
+        std::string vault_label;   // "vault: <knower>" or "project knowledge"
+        fs::file_time_type mtime;
+    };
+    std::vector<Ref> refs;
+
+    auto collect_refs = [&](const fs::path& knowledge_dir,
+                            const std::string& label) {
+        if (!fs::exists(knowledge_dir) || !fs::is_directory(knowledge_dir))
+            return;
+        for (const auto& e : fs::directory_iterator(knowledge_dir)) {
+            if (!e.is_regular_file()) continue;
+            const auto fn = e.path().filename().string();
+            if (e.path().extension() != ".md") continue;
+            if (fn.rfind("ref-", 0) != 0) continue;   // ref-* only; skip rule-*
+            std::error_code ec;
+            auto mt = fs::last_write_time(e.path(), ec);
+            refs.push_back({e.path(), label, mt});
+        }
+    };
+
+    // 1) Walk sibling vaults under .quorum/vaults/, selecting knowers. Two-pass:
+    //    prefer known knower roles; if none matched, fall back to all-but-scribe.
+    auto vaults_root = project_root / ".quorum" / "vaults";
+    std::vector<std::pair<fs::path, std::string>> selected;  // (knowledge_dir, label)
+    std::vector<std::pair<fs::path, std::string>> non_scribe; // fallback pool
+    if (fs::exists(vaults_root) && fs::is_directory(vaults_root)) {
+        for (const auto& sib : fs::directory_iterator(vaults_root)) {
+            if (!sib.is_directory()) continue;
+            auto name = sib.path().filename().string();
+            auto knowledge = sib.path() / "knowledge";
+            if (!fs::exists(knowledge) || !fs::is_directory(knowledge)) continue;
+            std::string label = "vault: " + name;
+            if (is_known_knower(name)) {
+                selected.push_back({knowledge, label});
+            }
+            if (name != "scribe") {
+                non_scribe.push_back({knowledge, label});
+            }
+        }
+    }
+    const auto& knower_dirs = selected.empty() ? non_scribe : selected;
+    for (const auto& [dir, label] : knower_dirs) {
+        collect_refs(dir, label);
+    }
+
+    // 2) Project-scope promoted refs (vault_manager auto-promotion target).
+    collect_refs(project_root / ".quorum" / "knowledge", "project knowledge");
+
+    if (refs.empty()) {
+        out += "(no knower-vault ref-*.md notes found — Pitch/Roadmap have no "
+               "authoritative source yet)\n";
+        return out;
+    }
+
+    // Filenames first (deterministic order), labelled by source vault.
+    std::sort(refs.begin(), refs.end(), [](const Ref& a, const Ref& b) {
+        return a.path.filename().string() < b.path.filename().string();
+    });
+    out += "Knower ref notes (authoritative — by lens):\n";
+    for (const auto& r : refs) {
+        out += "- " + r.path.filename().string() + "  [" + r.vault_label + "]\n";
+    }
+    out += "\n";
+
+    // Most-recent refs (by mtime), bounded head excerpt; prefer `summary:`.
+    std::sort(refs.begin(), refs.end(),
+        [](const Ref& a, const Ref& b) { return a.mtime > b.mtime; });
+    size_t shown = std::min(max_recent, refs.size());
+    out += "Recent refs (summary or head):\n\n";
+    for (size_t i = 0; i < shown; ++i) {
+        auto content = slurp(refs[i].path);
+        auto summary = frontmatter_summary(content);
+        out += "#### " + refs[i].path.filename().string() +
+               "  [" + refs[i].vault_label + "]\n\n";
+        if (!summary.empty()) {
+            out += "summary: " + summary + "\n\n";
+        } else {
+            if (content.size() > head_chars) {
+                content = content.substr(0, head_chars) + "\n... (truncated)";
+            }
+            out += "```\n" + content;
+            if (!content.empty() && content.back() != '\n') out += "\n";
+            out += "```\n\n";
+        }
+    }
+    return out;
+}
+
 }  // namespace detail
 
 // Compose the curation prompt fed to the librarian agent. Per pitch-protocol.md
-// "Curation prompt": (1) current contents of the four output files so the
-// librarian proposes deltas, not restatements; (2) .quorum/learnings.md + a
-// digest of the scribe vault; (3) instructions covering the block formats, the
-// field-mapping table, and the "cite source, propose deltas only, do not invent"
-// rules.
+// "Curation prompt" (v0.4):
+//   (1) current contents of the four output files so the librarian proposes
+//       deltas, not restatements;
+//   (2) the KNOWER-VAULT digest — the AUTHORITATIVE distilled knowledge (by
+//       lens) that feeds the Pitch + Roadmap lanes; plus .quorum/learnings.md,
+//       which feeds the Decision Log lane only;
+//   (3) instructions covering the block formats, the source-routing table, and
+//       the "cite source, propose deltas only, do not invent" rules.
+//
+// Source-of-truth linearization (v0.4): scribe journal -> knower vaults
+// (authoritative) -> librarian projection (human view). Pitch/Roadmap derive
+// from knower ref-*.md; the chronological Decision Log still draws from the
+// journal's `decisions` field.
 [[nodiscard]] inline std::string assemble_curation_prompt(
     const std::string& project_root) {
     namespace fs = std::filesystem;
@@ -185,11 +342,17 @@ inline void append_file_section(std::string& out, const std::string& label,
     std::string p;
     p += "You are the Quorum librarian, running as a periodic CURATOR "
          "(analyst-class, read-only).\n\n";
-    p += "Your job: distill the scribe's recorded learnings into this project's "
-         "aspirational layer (Pitch / Decision Log / Roadmap, stored under "
-         ".quorum/librarian/). You do NOT write files. You emit structured "
-         "blocks; the daemon applies them behind an operator-approval diff "
-         "gate.\n\n";
+    p += "Your job: PROJECT this project's authoritative knowledge into its "
+         "human-facing aspirational layer (Pitch / Decision Log / Roadmap, "
+         "stored under .quorum/librarian/). You do NOT write files. You emit "
+         "structured blocks; the daemon applies them behind an "
+         "operator-approval diff gate.\n\n";
+    p += "Source of truth (linearized): scribe journal -> KNOWER VAULTS "
+         "(authoritative, by lens) -> librarian projection (this layer). The "
+         "Pitch and Roadmap lanes derive from the KNOWER VAULTS' ref notes; the "
+         "chronological Decision Log derives from the scribe journal "
+         "(learnings.md `decisions`). Do NOT re-derive Pitch/Roadmap content "
+         "from learnings.md — the knower vaults are the authoritative home.\n\n";
 
     p += "## Current aspirational layer (propose DELTAS against this — Rule 6 "
          "idempotency)\n\n";
@@ -203,7 +366,15 @@ inline void append_file_section(std::string& out, const std::string& label,
     detail::append_file_section(p, "Roadmap",
                                 curated / "01 - Roadmap.md");
 
-    p += "## Scribe input\n\n";
+    p += "## Authoritative source for Pitch + Roadmap — KNOWER VAULTS\n\n";
+    p += "These ref-*.md notes (cartographer / architect / historian / recap, "
+         "plus project-promoted refs) are the AUTHORITATIVE distilled knowledge. "
+         "Derive Pitch (What we're building / Why it matters / Current "
+         "direction) and Roadmap (Open items) ONLY from this digest.\n\n";
+    p += detail::knower_vault_digest(root);
+    p += "\n";
+
+    p += "## Source for Decision Log — scribe journal\n\n";
     p += "### .quorum/learnings.md\n\n";
     {
         auto learnings = detail::slurp(root / ".quorum" / "learnings.md");
@@ -215,23 +386,27 @@ inline void append_file_section(std::string& out, const std::string& label,
             p += "```\n\n";
         }
     }
-    p += "### Scribe knowledge vault digest\n\n";
+    // Scribe-vault digest retained as SECONDARY context only (not a Pitch/Roadmap
+    // source): it can help phrase Decision Log entries that reference a scribe
+    // note, but it must NOT seed Pitch/Roadmap proposals — those come from the
+    // knower vaults above.
+    p += "### Scribe knowledge vault digest (secondary context — Decision Log "
+         "phrasing only)\n\n";
     p += detail::scribe_vault_digest(
              root / ".quorum" / "vaults" / "scribe" / "knowledge");
     p += "\n";
 
-    p += "## Field-mapping table (route each learnings field to the right "
-         "output)\n\n";
-    p += "| learnings.md field | output file | block | semantics |\n";
+    p += "## Source-routing table (which input feeds which output lane)\n\n";
+    p += "| source | output file | block | semantics |\n";
     p += "|---|---|---|---|\n";
-    p += "| decisions     | 00 - Decision Log.md       | DECISION_LOG_APPEND | "
-         "one append per decision |\n";
-    p += "| did_not_work  | Pitch/01 - Anti-goals.md   | CURATION_UPDATE | "
-         "section: Anti-goals |\n";
-    p += "| worked + tried| Pitch/00 - Introduction.md | CURATION_UPDATE | "
-         "section: What we're building / Current direction |\n";
-    p += "| open_questions| 01 - Roadmap.md            | CURATION_UPDATE | "
-         "section: Open items |\n\n";
+    p += "| knower vaults (ref-*) | Pitch/00 - Introduction.md | CURATION_UPDATE | "
+         "section: What we're building / Why it matters / Current direction |\n";
+    p += "| knower vaults (ref-*) | 01 - Roadmap.md            | CURATION_UPDATE | "
+         "section: Open items |\n";
+    p += "| knower vaults (ref-*) | Pitch/01 - Anti-goals.md   | CURATION_UPDATE | "
+         "section: Anti-goals (explicit non-goals named in the refs) |\n";
+    p += "| learnings.md `decisions` | 00 - Decision Log.md     | DECISION_LOG_APPEND | "
+         "one append per decision (chronological) |\n\n";
 
     p += "## Block formats (emit ONLY these; the daemon applies them)\n\n";
     p += "```CURATION_UPDATE\n";
@@ -239,7 +414,7 @@ inline void append_file_section(std::string& out, const std::string& label,
     p += "section: Current direction\n";
     p += "content: |\n";
     p += "  - {distilled bullet}\n";
-    p += "source: learnings.md {utc}\n";
+    p += "source: vault: <knower> ref-<slug>.md\n";
     p += "```\n\n";
     p += "Valid CURATION_UPDATE targets (file :: section):\n";
     p += "- Pitch/00 - Introduction.md :: What we're building | Why it matters "
@@ -257,12 +432,19 @@ inline void append_file_section(std::string& out, const std::string& label,
 
     p += "## Rules\n\n";
     p += "1. Propose ONLY changes not already reflected in the current files "
-         "(deltas — Rule 6).\n";
-    p += "2. CITE the source learnings entry in each block's `source:` field. "
-         "Do NOT invent claims the scribe never recorded (Rule 7).\n";
+         "(deltas — Rule 6). If the knower vaults are unchanged since the last "
+         "curate, emit NO Pitch/Roadmap proposals.\n";
+    p += "2. Pitch (What we're building / Why it matters / Current direction) "
+         "and Roadmap (Open items) CURATION_UPDATE blocks derive from the KNOWER "
+         "VAULTS' ref notes — cite the ref note in `source:` (e.g. "
+         "`vault: architect ref-design.md`). DECISION_LOG_APPEND blocks derive "
+         "from learnings.md `decisions` — cite `learnings.md {utc}`. Do NOT "
+         "invent claims absent from those sources (Rule 7).\n";
     p += "3. CURATION_UPDATE replaces the named section's body; pick canonical "
          "sections only — unknown sections are dropped.\n";
-    p += "4. Route fields per the mapping table; do not cross lanes.\n";
+    p += "4. Route per the source-routing table; do not cross lanes. In "
+         "particular, do NOT seed Pitch/Roadmap from learnings.md — the knower "
+         "vaults are their authoritative source.\n";
     p += "5. Emit no file writes. The daemon applies your blocks behind an "
          "operator gate.\n";
     return p;

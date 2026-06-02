@@ -1,6 +1,6 @@
 # Quorum pitch-curation protocol spec
 
-Version: **v0.3** (Phase 11 — Librarian as Curator)
+Version: **v0.4** (Phase 11 — Librarian as Curator)
 
 Status: authoritative contract for the librarian curation cycle. The C++
 daemon and the librarian SKILL.md both implement this document. Mirrors the
@@ -38,8 +38,12 @@ agent-loop audit files.
     │   │   └── 01 - Anti-goals.md   # what we explicitly will NOT do
     │   ├── 00 - Decision Log.md     # append-only, one entry per scribe decision
     │   └── 01 - Roadmap.md          # phase / open-item tracker
-    ├── learnings.md                 # scribe input (handoff-protocol v0.2)
-    └── vaults/scribe/knowledge/     # scribe input (per-conv notes, rule-*/ref-*)
+    ├── learnings.md                 # journal input — Decision Log lane (handoff-protocol v0.2)
+    ├── knowledge/                   # project-promoted refs (ref-*) — Pitch/Roadmap source (v0.4)
+    └── vaults/                      # per-agent vaults
+        ├── scribe/knowledge/        # scribe journal notes (secondary context only)
+        └── <knower>/knowledge/      # AUTHORITATIVE refs (ref-*) — Pitch/Roadmap source (v0.4)
+                                     #   knowers = cartographer / architect / historian / recap
 ```
 
 The block `file:` fields stay **relative** (`Pitch/00 - Introduction.md`,
@@ -96,9 +100,12 @@ not already reflected in the aspirational layer.
 
 ### Rule 7: Cite the source, do not invent
 
-Every proposal cites the `learnings.md` entry (or scribe note) it derives from,
-via the block `source:` field. The librarian distills existing recorded content;
-it does not author new claims the scribe never recorded.
+Every proposal cites the source it derives from, via the block `source:` field.
+As of v0.4 the source depends on the lane: **Pitch / Roadmap** `CURATION_UPDATE`
+blocks cite the **knower ref note** (e.g. `vault: architect ref-design.md`);
+**Decision Log** `DECISION_LOG_APPEND` blocks cite the `learnings.md` entry
+(`learnings.md {utc}`). The librarian distills existing recorded content; it
+does not author new claims absent from those sources.
 
 ### Rule 8: Operator-owned section lock (hard, apply-time)
 
@@ -125,20 +132,43 @@ Scope:
 The librarian (analyst-class) should not propose changes to a section it sees
 carrying the marker; even if it does, the daemon's apply skips the block.
 
-## Input → output field mapping
+## Input → output source mapping
 
-The scribe's `learnings.md` uses five canonical fields per session entry
-(handoff-protocol v0.2). Curation routes them deterministically:
+As of **v0.4**, curated knowledge has **one authoritative home** and the
+pipeline is linearized so the librarian layer no longer parallel-derives the
+same material the knowers already distilled:
 
-| `learnings.md` field | Curation output | Block | Semantics |
-|----------------------|-----------------|-------|-----------|
-| `decisions`          | `00 - Decision Log.md` | `DECISION_LOG_APPEND` | one append per decision (Q7) |
-| `did_not_work`       | `Pitch/01 - Anti-goals.md` | `CURATION_UPDATE` | proposed anti-goals; operator confirms (Q6) |
-| `worked` + `tried`   | `Pitch/00 - Introduction.md` | `CURATION_UPDATE` | refine "What we're building" / "Current direction" |
-| `open_questions`     | `01 - Roadmap.md` | `CURATION_UPDATE` | "Open items" section |
+```
+scribe journal  →  knower vaults (authoritative, by lens)  →  librarian projection (human view)
+```
+
+The **Pitch** and **Roadmap** lanes derive from the **KNOWER VAULTS**
+(`.quorum/vaults/<knower>/knowledge/ref-*.md`, knowers =
+cartographer / architect / historian / recap, plus project-promoted refs under
+`.quorum/knowledge/ref-*.md`) — the authoritative distilled knowledge, by lens.
+The **Decision Log**, being chronological, still draws from the scribe journal
+(`learnings.md` `decisions`). Curation routes deterministically:
+
+| Source | Curation output | Block | Semantics |
+|--------|-----------------|-------|-----------|
+| knower vaults (`ref-*`) | `Pitch/00 - Introduction.md` | `CURATION_UPDATE` | refine "What we're building" / "Why it matters" / "Current direction" |
+| knower vaults (`ref-*`) | `01 - Roadmap.md` | `CURATION_UPDATE` | "Open items" section |
+| knower vaults (`ref-*`) | `Pitch/01 - Anti-goals.md` | `CURATION_UPDATE` | explicit non-goals named in the refs; operator confirms (Q6) |
+| `learnings.md` `decisions` | `00 - Decision Log.md` | `DECISION_LOG_APPEND` | one append per decision, chronological (Q7) |
+
+Source discovery for the Pitch/Roadmap lanes: walk `.quorum/vaults/*`, select
+the knower roles above; if none match, fall back to **all vaults except
+`scribe`**. Only `ref-*.md` notes are read (the durable, retrieval-shaped
+knowledge); `rule-*.md` (operating rules) are excluded from the Pitch/Roadmap
+source. Each ref's frontmatter `summary:` line (write-for-retrieval, Decision
+#44) is preferred as the digest excerpt when present.
 
 The librarian reasons over content *within* each lane (e.g. dedup, summarize,
-phrase as an anti-goal), but does not cross lanes.
+phrase as an anti-goal), but does not cross lanes — in particular it does NOT
+re-derive Pitch/Roadmap content from `learnings.md`. The scribe journal feeds
+the Decision Log only. Each Pitch/Roadmap block cites the ref note it derives
+from in `source:` (e.g. `vault: architect ref-design.md`); each Decision Log
+append cites `learnings.md {utc}`.
 
 ## Block formats
 
@@ -280,13 +310,28 @@ synchronous) with:
 
 1. The current contents of the four output files (so it proposes *deltas*, not
    restatements — Rule 6 idempotency).
-2. `.quorum/learnings.md` and a digest of the scribe vault.
-3. Instructions: *"You are the curator. Distill the scribe's recorded learnings
-   into the aspirational layer. Propose section-scoped `CURATION_UPDATE` blocks
-   and `DECISION_LOG_APPEND` blocks per pitch-protocol v0.1. Route fields per the
-   mapping table. Do NOT invent — cite the source learnings entry in each block's
-   `source:`. Propose only changes not already reflected in the current files.
-   Emit no file writes; the daemon applies your blocks behind an operator gate."*
+2. The **KNOWER-VAULT digest** — the AUTHORITATIVE distilled knowledge for the
+   Pitch + Roadmap lanes: bounded `ref-*.md` filenames + a `summary:`-preferred
+   head excerpt across `.quorum/vaults/<knower>/knowledge/` (knowers =
+   cartographer / architect / historian / recap; fallback all-but-`scribe`)
+   plus `.quorum/knowledge/ref-*.md`. Then `.quorum/learnings.md` as the source
+   for the **Decision Log** lane. The scribe-vault digest is included as
+   *secondary context only* (to help phrase Decision Log entries), not as a
+   Pitch/Roadmap source.
+3. Instructions: *"You are the curator. PROJECT the project's authoritative
+   knowledge into the aspirational layer. Source of truth (linearized): scribe
+   journal → knower vaults (authoritative, by lens) → librarian projection.
+   Derive Pitch (What we're building / Why it matters / Current direction) and
+   Roadmap (Open items) ONLY from the knower-vault ref notes; derive the
+   chronological Decision Log from `learnings.md` `decisions`. Propose
+   section-scoped `CURATION_UPDATE` blocks and `DECISION_LOG_APPEND` blocks per
+   pitch-protocol v0.4. Route per the source-routing table; do NOT cross lanes
+   (in particular do NOT seed Pitch/Roadmap from `learnings.md`). Do NOT invent
+   — cite the source (knower ref note for Pitch/Roadmap, `learnings.md {utc}`
+   for the Decision Log) in each block's `source:`. Propose only changes not
+   already reflected in the current files; if the knower vaults are unchanged
+   since the last run, emit no Pitch/Roadmap proposals. Emit no file writes;
+   the daemon applies your blocks behind an operator gate."*
 
 ## Worked example
 
@@ -373,6 +418,25 @@ unchanged across the move.
 
 ## Changelog
 
+- **v0.4** (Phase 11, 2026-06-02) — **linearized the curation source of truth**:
+  `scribe journal → knower vaults (authoritative, by lens) → librarian
+  projection`. The **Pitch** (`Pitch/00 - Introduction.md`) and **Roadmap**
+  (`01 - Roadmap.md`) lanes now derive from the **KNOWER VAULTS**
+  (`.quorum/vaults/<knower>/knowledge/ref-*.md`, knowers = cartographer /
+  architect / historian / recap; fallback all-but-`scribe`; plus
+  `.quorum/knowledge/ref-*.md` project-promoted refs) — the authoritative
+  distilled knowledge — NOT primarily from `learnings.md`. The **Decision Log**
+  (`00 - Decision Log.md`), being chronological, still draws from the scribe
+  journal (`learnings.md` `decisions`). The prompt now presents a bounded
+  knower-vault digest (`ref-*` only — `rule-*` excluded; `summary:`-preferred
+  excerpt; same `max_recent`/`head_chars` caps as the scribe digest) as the
+  authoritative Pitch/Roadmap source; the scribe-vault digest is retained as
+  *secondary context* for Decision Log phrasing only. Rationale: the librarian
+  layer and the knower vaults were PARALLEL derivations of the same material and
+  could drift; linearizing gives curated knowledge one authoritative home.
+  **Wire format, the four output files, the curatable-section set, the `apply_*`
+  primitives, and the operator-gate flow are all UNCHANGED** — only input
+  sourcing + prompt instructions changed.
 - **v0.3** (Phase 11, 2026-05-30) — added the **operator-owned section lock**
   (Rule 8). A curated section whose current body contains the literal marker
   `<!-- operator-owned -->` is never overwritten by curation. The guard is a HARD,

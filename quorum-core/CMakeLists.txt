@@ -251,6 +251,11 @@ add_executable(test_librarian_pipeline tests/unit/test_librarian_pipeline.cpp)
 target_include_directories(test_librarian_pipeline PRIVATE src)
 add_test(NAME test_librarian_pipeline COMMAND test_librarian_pipeline)
 
+# Phase 11 (pitch-protocol v0.4): knower-vaults-as-source for Pitch/Roadmap lanes
+add_executable(test_librarian_knower_source tests/unit/test_librarian_knower_source.cpp)
+target_include_directories(test_librarian_knower_source PRIVATE src)
+add_test(NAME test_librarian_knower_source COMMAND test_librarian_knower_source)
+
 # Phase 12: quorum ask CLI (ask the manager, read-only) — pure helpers
 add_executable(test_ask tests/unit/test_ask.cpp)
 target_include_directories(test_ask PRIVATE src)
