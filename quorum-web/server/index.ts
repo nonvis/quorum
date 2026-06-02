@@ -3,7 +3,7 @@ import { cors } from "hono/cors";
 import { config, repoRoot, getState, setCurrentProject, getProjectConfig } from "../config";
 import { join, resolve } from "path";
 import { homedir } from "os";
-import { readFileSync, writeFileSync, readdirSync, existsSync, unlinkSync, mkdirSync, copyFileSync, chmodSync } from "fs";
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, copyFileSync, chmodSync } from "fs";
 
 // Expand a leading `~` to the user's home directory and resolve to an
 // absolute path. Plain `existsSync(join(p, ".quorum"))` does NOT do shell
@@ -70,90 +70,6 @@ app.post("/api/init", async (c) => {
     return c.json({ success: true, output: result.stdout });
   }
   return c.json({ success: false, error: result.stderr || result.stdout }, 500);
-});
-
-// -- Team endpoints --
-
-app.get("/api/teams", (c) => {
-  const state = getState();
-  if (!state.currentProject) return c.json([]);
-
-  const teamsDir = join(state.currentProject, ".quorum", "teams");
-  if (!existsSync(teamsDir)) return c.json([]);
-
-  const files = readdirSync(teamsDir).filter(
-    (f) => f.endsWith(".yaml") || f.endsWith(".yml")
-  );
-
-  const teams = files.map((file) => {
-    const content = readFileSync(join(teamsDir, file), "utf-8");
-    const stem = file.replace(/\.ya?ml$/, "");
-    const name = content.match(/^name:\s*(.+)/m)?.[1]?.trim() ?? stem;
-    const pathMatch = content.match(/^default_path:\s*\[(.+)\]/m);
-    const default_path = pathMatch
-      ? pathMatch[1].split(",").map((s) => s.trim())
-      : [];
-    return { id: stem, name, default_path };
-  });
-
-  return c.json(teams);
-});
-
-app.post("/api/teams", async (c) => {
-  const body = await c.req.json<{ name: string; defaultPath: string[] }>();
-  if (!body.name?.trim() || !body.defaultPath?.length) {
-    return c.json({ error: "name and defaultPath are required" }, 400);
-  }
-  const state = getState();
-  if (!state.currentProject) return c.json({ error: "no project selected" }, 400);
-
-  const id = body.name.toLowerCase().replace(/\s+/g, "-");
-  const teamsDir = join(state.currentProject, ".quorum", "teams");
-  const filePath = join(teamsDir, id + ".yaml");
-
-  if (existsSync(filePath)) {
-    return c.json({ error: `Team "${id}" already exists` }, 400);
-  }
-
-  mkdirSync(teamsDir, { recursive: true });
-  const yaml = `name: ${body.name.trim()}\ndefault_path: [${body.defaultPath.join(", ")}]\n`;
-  writeFileSync(filePath, yaml);
-  return c.json({ success: true, id });
-});
-
-app.put("/api/teams/:id", async (c) => {
-  const id = c.req.param("id");
-  const body = await c.req.json<{ name?: string; defaultPath?: string[] }>();
-  const state = getState();
-  if (!state.currentProject) return c.json({ error: "no project selected" }, 400);
-
-  const filePath = join(state.currentProject, ".quorum", "teams", id + ".yaml");
-  if (!existsSync(filePath)) return c.json({ error: "team not found" }, 404);
-
-  let content = readFileSync(filePath, "utf-8");
-  if (body.name != null) {
-    content = content.replace(/^name:\s*.+/m, `name: ${body.name.trim()}`);
-  }
-  if (body.defaultPath != null) {
-    content = content.replace(
-      /^default_path:\s*.+/m,
-      `default_path: [${body.defaultPath.join(", ")}]`
-    );
-  }
-  writeFileSync(filePath, content);
-  return c.json({ success: true });
-});
-
-app.delete("/api/teams/:id", async (c) => {
-  const id = c.req.param("id");
-  const state = getState();
-  if (!state.currentProject) return c.json({ error: "no project selected" }, 400);
-
-  const filePath = join(state.currentProject, ".quorum", "teams", id + ".yaml");
-  if (!existsSync(filePath)) return c.json({ error: "team not found" }, 404);
-
-  unlinkSync(filePath);
-  return c.json({ success: true });
 });
 
 // -- Agent endpoints --
@@ -720,7 +636,7 @@ app.get("/api/events", (c) => {
 // -- Write endpoints (via daemon CLI) --
 
 app.post("/api/converse", async (c) => {
-  const body = await c.req.json<{ goal: string; team?: string; mode?: string }>();
+  const body = await c.req.json<{ goal: string; mode?: string }>();
   if (!body.goal) return c.json({ error: "goal is required" }, 400);
 
   // Validate mode early — must match what the C++ CLI accepts.
@@ -736,20 +652,18 @@ app.post("/api/converse", async (c) => {
   );
   const maxIdBefore = before[0]?.max_id ?? 0;
 
-  const teamTag = body.team ? ` [team: ${body.team}]` : "";
   const modeTag = body.mode ? ` [mode: ${body.mode}]` : "";
   const args: string[] = ["converse"];
-  if (body.team) args.push("--team", body.team);
   if (body.mode) args.push("--mode", body.mode);
   args.push(body.goal);
 
   if (isDaemonRunning()) {
     // Daemon already running — just insert conversation via CLI (it exits immediately)
-    console.log(`[converse] daemon running, exec: "${body.goal}"${teamTag}${modeTag}`);
+    console.log(`[converse] daemon running, exec: "${body.goal}"${modeTag}`);
     await execDaemon(...args);
   } else {
     // No daemon — spawn one (it creates conversation + runs dispatch loop)
-    console.log(`[converse] spawning daemon for: "${body.goal}"${teamTag}${modeTag}`);
+    console.log(`[converse] spawning daemon for: "${body.goal}"${modeTag}`);
     spawnDaemon(...args);
   }
 

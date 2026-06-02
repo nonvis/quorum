@@ -45,37 +45,18 @@ function AgentBadge({ agent, dimmed, onClick }: { agent: Agent; dimmed: boolean;
 
 export function AgentRoster({
   agents,
-  teamPath,
   onAgentClick,
 }: {
   agents: Agent[];
-  teamPath: string[];
   onAgentClick?: (agentId: string) => void;
 }) {
   if (agents.length === 0) return null;
 
-  const agentMap = new Map(agents.map((a) => [a.id, a]));
-
-  // Agents in teamPath order (only those that exist)
-  const inPath = teamPath
-    .map((id) => agentMap.get(id))
-    .filter((a): a is Agent => a !== undefined);
-
-  // Remaining agents not in teamPath
-  const pathSet = new Set(teamPath);
-  const outOfPath = agents.filter((a) => !pathSet.has(a.id));
-
   return (
     <div className="px-6 py-1 flex items-center gap-2 flex-wrap">
       <span className="text-xs text-zinc-500">Agents:</span>
-      {inPath.map((agent, i) => (
-        <span key={agent.id} className="inline-flex items-center gap-2">
-          {i > 0 && <span className="text-zinc-600 text-xs">&rarr;</span>}
-          <AgentBadge agent={agent} dimmed={false} onClick={() => onAgentClick?.(agent.id)} />
-        </span>
-      ))}
-      {outOfPath.map((agent) => (
-        <AgentBadge key={agent.id} agent={agent} dimmed={true} onClick={() => onAgentClick?.(agent.id)} />
+      {agents.map((agent) => (
+        <AgentBadge key={agent.id} agent={agent} dimmed={false} onClick={() => onAgentClick?.(agent.id)} />
       ))}
     </div>
   );

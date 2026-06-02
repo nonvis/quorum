@@ -41,12 +41,6 @@ export interface ProjectState {
   recent: string[];
 }
 
-export interface Team {
-  id: string;
-  name: string;
-  default_path: string[];
-}
-
 export interface Agent {
   id: string;
   name: string;

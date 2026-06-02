@@ -1,4 +1,4 @@
-import type { Conversation, Task, Stats, ProjectConfig, ProjectState, Team, Agent, BudgetInfo, AgentCost } from "./types";
+import type { Conversation, Task, Stats, ProjectConfig, ProjectState, Agent, BudgetInfo, AgentCost } from "./types";
 
 const BASE = "/api";
 
@@ -26,7 +26,6 @@ export type ConversationMode = "generic" | "brainstorm";
 
 export async function startConversation(
   goal: string,
-  team?: string,
   mode?: ConversationMode,
 ) {
   const res = await fetch(`${BASE}/converse`, {
@@ -34,7 +33,6 @@ export async function startConversation(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       goal,
-      team: team ?? undefined,
       mode: mode ?? undefined,
     }),
   });
@@ -89,34 +87,6 @@ export async function initProject(path: string): Promise<{ success: boolean; out
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path }),
   });
-  return res.json();
-}
-
-export async function fetchTeams(): Promise<Team[]> {
-  const res = await fetch(`${BASE}/teams`);
-  return res.json();
-}
-
-export async function createTeam(name: string, defaultPath: string[]): Promise<{ success: boolean; id?: string; error?: string }> {
-  const res = await fetch(`${BASE}/teams`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, defaultPath }),
-  });
-  return res.json();
-}
-
-export async function updateTeam(id: string, updates: { name?: string; defaultPath?: string[] }): Promise<{ success: boolean; error?: string }> {
-  const res = await fetch(`${BASE}/teams/${id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(updates),
-  });
-  return res.json();
-}
-
-export async function deleteTeam(id: string): Promise<{ success: boolean; error?: string }> {
-  const res = await fetch(`${BASE}/teams/${id}`, { method: "DELETE" });
   return res.json();
 }
 

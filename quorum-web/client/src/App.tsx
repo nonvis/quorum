@@ -1,18 +1,15 @@
 import { useState, useCallback, useEffect } from "react";
-import type { Conversation, Stats, ProjectConfig, ProjectState, Team, Agent } from "./types";
-import { fetchConversations, fetchStats, fetchConfig, fetchProjects, fetchTeams, fetchAgents, fetchDaemonStatus } from "./api";
+import type { Conversation, Stats, ProjectConfig, ProjectState, Agent } from "./types";
+import { fetchConversations, fetchStats, fetchConfig, fetchProjects, fetchAgents, fetchDaemonStatus } from "./api";
 import { useSSE } from "./hooks/useSSE";
 import { StatsBanner } from "./components/StatsBanner";
 import { ProjectSelector } from "./components/ProjectSelector";
-import { TeamSelector } from "./components/TeamSelector";
 import { AgentRoster } from "./components/AgentRoster";
 import { PromptInput } from "./components/PromptInput";
 import { ConversationCard } from "./components/ConversationCard";
 import { ConfigPanel } from "./components/ConfigPanel";
 import { BudgetPanel } from "./components/BudgetPanel";
 import { AgentCreateForm } from "./components/AgentCreateForm";
-import { BootstrapPanel } from "./components/BootstrapPanel";
-import { TeamCreateForm } from "./components/TeamCreateForm";
 import { AgentContextEditor } from "./components/AgentContextEditor";
 
 export default function App() {
@@ -21,9 +18,7 @@ export default function App() {
   const [projectConfig, setProjectConfig] = useState<ProjectConfig | null>(null);
   const [showConfig, setShowConfig] = useState(false);
   const [project, setProject] = useState<ProjectState>({ current: null, recent: [] });
-  const [teams, setTeams] = useState<Team[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
   const [daemonRunning, setDaemonRunning] = useState(true);
   const [editingAgent, setEditingAgent] = useState<string | null>(null);
 
@@ -47,20 +42,9 @@ export default function App() {
     });
   }, [refresh]);
 
-  // Reload teams, agents, conversations, config when project changes.
-  // Phase 7 Track 7 (#26): when switching projects, the previously selected
-  // team id may not exist in the new project — drop it and pick the first
-  // available team. Otherwise the stale id leaks into POST /api/converse and
-  // the C++ daemon errors with "team 'X' not found".
+  // Reload agents, conversations, config when project changes.
   useEffect(() => {
     if (project.current) {
-      fetchTeams().then((t) => {
-        setTeams(t);
-        const stillValid = selectedTeam != null && t.some((team) => team.id === selectedTeam);
-        if (!stillValid) {
-          setSelectedTeam(t.length > 0 ? t[0].id : null);
-        }
-      });
       fetchAgents().then(setAgents);
       refresh();
       fetchConfig().then(setProjectConfig);
@@ -80,10 +64,6 @@ export default function App() {
 
   const ACTIVE_STATES = new Set(["active", "waiting_for_human"]);
   const busy = conversations.some((c) => ACTIVE_STATES.has(c.state));
-
-  // Freshly initialized: only the auto-created leader, no conversations yet.
-  const isFreshInit =
-    agents.length === 1 && agents[0]?.role === "leader" && conversations.length === 0;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
@@ -110,42 +90,10 @@ export default function App() {
 
       {project.current ? (
         <>
-          {teams.length > 0 && (
-            <TeamSelector teams={teams} selected={selectedTeam} onSelect={setSelectedTeam} />
-          )}
-          {project.current && (
-            <div className="px-6 py-1">
-              <TeamCreateForm
-                agents={agents}
-                onCreated={() => fetchTeams().then((t) => {
-                  setTeams(t);
-                  const stillValid = selectedTeam != null && t.some((team) => team.id === selectedTeam);
-                  if (!stillValid) {
-                    setSelectedTeam(t.length > 0 ? t[0].id : null);
-                  }
-                })}
-              />
-            </div>
-          )}
           {agents.length > 0 && (
             <AgentRoster
               agents={agents}
-              teamPath={teams.find((t) => t.id === selectedTeam)?.default_path ?? []}
               onAgentClick={setEditingAgent}
-            />
-          )}
-          {project.current && (
-            <BootstrapPanel
-              isFresh={isFreshInit}
-              projectPath={project.current}
-              onCreated={() => {
-                fetchAgents().then(setAgents);
-                fetchTeams().then((t) => {
-                  setTeams(t);
-                  const stillValid = selectedTeam != null && t.some((tm) => tm.id === selectedTeam);
-                  if (!stillValid) setSelectedTeam(t.length > 0 ? t[0].id : null);
-                });
-              }}
             />
           )}
           {project.current && (
@@ -154,7 +102,7 @@ export default function App() {
             </div>
           )}
           <BudgetPanel />
-          <PromptInput onSubmit={refresh} busy={busy} team={selectedTeam} teams={teams} />
+          <PromptInput onSubmit={refresh} busy={busy} />
 
           <div className="px-6 pb-6">
             <h2 className="text-sm font-medium text-zinc-500 uppercase tracking-wide mb-3">
