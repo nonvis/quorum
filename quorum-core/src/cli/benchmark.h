@@ -20,9 +20,11 @@
 //   4. Programmatically run `init_project()` inside the tempdir.
 //   5. Scaffold three additional agents via `create_agent(no_ai=true)`:
 //      a doer with id == role-specialty, an evaluator, and a scribe.
-//   6. Write .quorum/teams/benchmark.yaml with the four-agent path.
+//   6. Append `conversations.default_path: [leader, <role>, evaluator, scribe]`
+//      to the generated .quorum/config.yaml so the daemon routes the four-agent
+//      pipeline deterministically (no HANDOFF needed).
 //   7. Resolve the rubric via `resolve_rubric()`. Bail if absent.
-//   8. Spawn `<self> converse --team benchmark <goal>`. The daemon loop
+//   8. Spawn `<self> converse --once <goal>`. The daemon loop
 //      runs to completion (state == done) and exits.
 //   9. Open the tempdir's quorum.db, query the latest evaluations row,
 //      extract score_total. Default to NaN if no row landed (treated as
@@ -31,7 +33,7 @@
 //
 // --dry-run skips step 8 (and therefore step 9 / score retrieval). It's
 // the smoke-test path: validate the temp project, the rubric resolves,
-// the team config writes — without spending claude -p tokens.
+// the default_path config writes — without spending claude -p tokens.
 //
 // Tests don't exercise the spawn path; they exercise the rubric override
 // resolution + the parser. Real benchmark runs (Track 9) hit the daemon.
@@ -293,9 +295,17 @@ run_one_benchmark(const std::string& role_specialty,
         }
     }
 
-    // 7. Scaffold doer + evaluator + scribe agents (no-AI mode for speed)
+    // 7. Scaffold doer + evaluator + scribe agents (no-AI mode for speed).
+    //    `quorum init` now provisions a full default roster (leader + thinker +
+    //    scribe + 4 knowers), so some of these — notably `scribe` — already
+    //    exist on disk. Treat a pre-existing agent YAML as success (skip) so
+    //    the four-agent pipeline still resolves: leader + scribe come from
+    //    init, the role-specialty doer + evaluator are added here.
     auto scaffold = [&](const std::string& role,
                         const std::string& name) -> bool {
+        if (fs::exists(fs::path(".quorum") / "agents" / (name + ".yaml"))) {
+            return true;  // already provisioned by init
+        }
         sui::quorum::cli::AgentCreateParams p;
         p.role = role;
         p.name = name;
@@ -349,12 +359,15 @@ run_one_benchmark(const std::string& role_specialty,
         return std::nullopt;
     }
 
-    // 8. Write benchmark team yaml
+    // 8. Append the deterministic routing path to the generated config.yaml.
+    //    The parser reads `conversations.default_path`; with no HANDOFF the
+    //    daemon walks [leader, <role>, evaluator, scribe] in order. The
+    //    `conversations:` section already exists (init writes it indented two
+    //    spaces), so this `  default_path:` key nests correctly under it.
     {
-        std::ofstream out(tempdir / ".quorum" / "teams" / "benchmark.yaml",
-                          std::ios::trunc);
-        out << "name: Benchmark\n"
-            << "default_path: [leader, " << role_specialty
+        std::ofstream out(tempdir / ".quorum" / "config.yaml",
+                          std::ios::app);
+        out << "  default_path: [leader, " << role_specialty
             << ", evaluator, scribe]\n";
     }
 
@@ -383,7 +396,7 @@ run_one_benchmark(const std::string& role_specialty,
     }
 
     auto cmd = daemon_path
-        + " converse --once --team benchmark '" + escaped_goal + "'";
+        + " converse --once '" + escaped_goal + "'";
     if (verbose) {
         std::cout << "  Spawning: " << cmd << "\n";
     }

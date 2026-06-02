@@ -137,9 +137,7 @@ static void print_usage(const char* prog) {
     std::cerr << "Usage:\n"
               << "  " << prog << " init                                      Initialize .quorum/ in current directory\n"
               << "  " << prog << " converse \"goal text\"                      Run conversation to completion, then exit (auto-discovers .quorum/)\n"
-              << "  " << prog << " converse --team quick-build \"fix bug\"     Use specific team\n"
               << "  " << prog << " converse --keep-alive \"goal text\"        Run conversation, then keep daemon running (persistent mode)\n"
-              << "  " << prog << " teams                                      List available teams\n"
               << "  " << prog << " skills                                     List available Claude Code skills\n"
               << "  " << prog << " vault dedup [--vault <path>] [--dry-run] [--global] [--threshold <f>]\n"
               << "                                          Cluster near-duplicate rule-*.md/ref-*.md files\n"
@@ -168,7 +166,6 @@ static void print_usage(const char* prog) {
               << "  --verbose            Enable verbose logging\n"
               << "  --budget <usd>       Per-conversation budget (default: 5.0)\n"
               << "  --max-rounds <n>     Max revision rounds (default: 3)\n"
-              << "  --team <name>        Team preset from .quorum/teams/ (optional)\n"
               << "  --mode <generic|brainstorm>  Conversation mode (default: generic)\n"
               << "  --keep-alive         converse only: keep the daemon running after the conversation completes (persistent mode)\n"
               << "  --once               converse only: exit when the conversation completes (now the default; retained for back-compat)\n"
@@ -462,7 +459,6 @@ int main(int argc, char* argv[]) {
     std::string response_text;
     std::string agent_subcmd;
     sui::quorum::cli::AgentCreateParams agent_params;
-    std::string team_name;
     std::string mode_name;
     std::string bench_role;
     std::string bench_task;
@@ -489,8 +485,6 @@ int main(int argc, char* argv[]) {
                 conv_budget = std::stod(sub_args[++i]);
             } else if (sub_args[i] == "--max-rounds" && i + 1 < sub_args.size()) {
                 conv_max_rounds = std::stoi(sub_args[++i]);
-            } else if (sub_args[i] == "--team" && i + 1 < sub_args.size()) {
-                team_name = sub_args[++i];
             } else if (sub_args[i] == "--mode" && i + 1 < sub_args.size()) {
                 mode_name = sub_args[++i];
                 if (mode_name != "generic" && mode_name != "brainstorm") {
@@ -542,8 +536,6 @@ int main(int argc, char* argv[]) {
             }
         }
     } else if (subcommand == "init") {
-        // No additional flags needed
-    } else if (subcommand == "teams") {
         // No additional flags needed
     } else if (subcommand == "skills") {
         // No additional flags needed
@@ -707,32 +699,6 @@ int main(int argc, char* argv[]) {
         }
         return sui::quorum::cli::run_benchmark(
             bench_role, bench_task, bench_dry_run, verbose, bench_keep_tempdir);
-    }
-
-    // Teams doesn't need --config -- reads .quorum/teams/ directly
-    if (subcommand == "teams") {
-        auto root = sui::quorum::discover_project_root();
-        if (!root) {
-            std::cerr << "No .quorum/ found. Run 'quorum init' first.\n";
-            return 1;
-        }
-        auto teams = sui::quorum::load_team_presets(
-            (fs::path(*root) / ".quorum" / "teams").string());
-        if (teams.empty()) {
-            std::cout << "No teams configured. Create a file in .quorum/teams/:\n";
-            std::cout << "  echo 'name: My Team\\ndefault_path: [leader, doer]' > .quorum/teams/my-team.yaml\n";
-            return 0;
-        }
-        std::cout << "Teams:\n";
-        for (const auto& t : teams) {
-            std::cout << "  " << t.id << "  \"" << t.name << "\"    ";
-            for (size_t i = 0; i < t.default_path.size(); ++i) {
-                if (i > 0) std::cout << " -> ";
-                std::cout << t.default_path[i];
-            }
-            std::cout << "\n";
-        }
-        return 0;
     }
 
     // Skills doesn't need --config -- reads .claude/skills/ directly
@@ -914,45 +880,6 @@ int main(int argc, char* argv[]) {
         return sui::quorum::cli::run_vault_audit(vault_audit_opts);
     }
 
-    // Load team presets from .quorum/teams/ if available
-    if (fs::exists(".quorum/teams") && fs::is_directory(".quorum/teams")) {
-        cfg.teams = sui::quorum::load_team_presets(".quorum/teams");
-        if (verbose && !cfg.teams.empty()) {
-            std::cout << "  Teams:      " << cfg.teams.size() << "\n";
-            for (const auto& t : cfg.teams) {
-                std::cout << "    - " << t.id << " (" << t.name << ")\n";
-            }
-        }
-    }
-
-    // Apply team preset if --team specified
-    if (!team_name.empty()) {
-        bool found = false;
-        for (const auto& t : cfg.teams) {
-            if (t.id == team_name) {
-                cfg.conversations.default_path = t.default_path;
-                if (!t.default_mode.empty()) {
-                    cfg.conversations.default_mode = t.default_mode;
-                }
-                found = true;
-                if (verbose) {
-                    std::cout << "  Using team: " << t.name << "\n";
-                }
-                break;
-            }
-        }
-        if (!found) {
-            std::cerr << "ERROR: team '" << team_name << "' not found. Available:\n";
-            for (const auto& t : cfg.teams) {
-                std::cerr << "  - " << t.id << " (" << t.name << ")\n";
-            }
-            if (cfg.teams.empty()) {
-                std::cerr << "  (no team presets in .quorum/teams/)\n";
-            }
-            return 1;
-        }
-    }
-
     // ── Agent subcommand early exit (no DB, no daemon) ──────────────────
     if (subcommand == "agent") {
         if (agent_subcmd != "create") {
@@ -1110,7 +1037,7 @@ int main(int argc, char* argv[]) {
                 // A daemon is already running, so converse just seeds the conversation and
                 // returns; the running daemon completes it. converse runs no loop here, so
                 // exit-on-complete is moot in this branch.
-                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, team_name, mode_name, conv_no_vault_write);
+                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, mode_name, conv_no_vault_write);
                 std::cout << "Conversation " << id << " created.\n";
                 std::cout << "Daemon already running — it will pick up the conversation.\n";
             } else if (subcommand == "resume") {
@@ -1160,7 +1087,7 @@ int main(int argc, char* argv[]) {
             release_pid_lock(cfg.daemon.pid_file);
             return 1;
         }
-        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, team_name, mode_name, conv_no_vault_write);
+        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, mode_name, conv_no_vault_write);
         std::cout << "Conversation " << id << " created. Starting daemon...\n";
         if (exit_on_complete) {
             once_target_conv_id = id;

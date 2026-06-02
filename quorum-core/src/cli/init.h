@@ -50,7 +50,6 @@ inline int init_project(const std::string& quorum_root = "") {
     // 2. Create directories
     fs::create_directories(".quorum/agents");
     fs::create_directories(".quorum/vaults/leader/knowledge");
-    fs::create_directories(".quorum/teams");
     // Project-scope knowledge: rules/refs that apply to ALL agents.
     // Phase 7 Track 2 — context_assembler resolves rules across project,
     // role, and per-agent vault scopes, with the cap operating on the union.
@@ -163,7 +162,7 @@ inline int init_project(const std::string& quorum_root = "") {
             << "quorum.pid\n"
             << "vaults/*/knowledge/\n"
             << "\n"
-            << "# Keep: config.yaml, agents/, teams/\n";
+            << "# Keep: config.yaml, agents/\n";
     }
     std::cout << "  Created: .quorum/.gitignore\n";
 
@@ -176,27 +175,7 @@ inline int init_project(const std::string& quorum_root = "") {
         }
     }
 
-    // 6b. Write the single default team preset.
-    // default_path entries are agent IDs (not role names), in routing order.
-    // init now scaffolds leader + thinker + scribe, so the default routes
-    // through all three. Editing this file — or dropping more team YAMLs
-    // alongside it — composes your real team(s).
-    {
-        std::ofstream out(".quorum/teams/default.yaml", std::ios::trunc);
-        if (!out.is_open()) {
-            std::cerr << "ERROR: cannot write .quorum/teams/default.yaml\n";
-            return 1;
-        }
-        out << "name: Default\n"
-            << "# default_path lists agent IDs (not role names), in routing order.\n"
-            << "# Only `leader` exists at init; extend it once you add agents, e.g.:\n"
-            << "#   default_path: [leader, architect, move-dev, security-reviewer, scribe]\n"
-            << "default_path: [leader, thinker, scribe]\n";
-    }
-    std::cout << "  Created: .quorum/teams/default.yaml  "
-              << "(default_path: [leader, thinker, scribe])\n";
-
-    // 6c. Scaffold the rest of the default roster (definitions only — no
+    // 6b. Scaffold the rest of the default roster (definitions only — no
     // Tier-1 scans, no Python tool copies, no recap dump seeding; those stay
     // in scripts/setup-knowers.sh). Every agent is created with no_ai = true
     // so init spends ZERO tokens. CWD is the fresh project, so create_agent
@@ -248,32 +227,15 @@ inline int init_project(const std::string& quorum_root = "") {
         sui::quorum::cli::create_agent(p);
     }
 
-    // 6d. Write the knowers team preset (byte-identical to
-    // scripts/setup-knowers.sh's heredoc — the source of truth).
-    {
-        std::ofstream out(".quorum/teams/knowers.yaml", std::ios::trunc);
-        if (!out.is_open()) {
-            std::cerr << "ERROR: cannot write .quorum/teams/knowers.yaml\n";
-            return 1;
-        }
-        out << "name: knowers\n"
-            << "# Read-only \"knower\" team for analyzing this workspace.\n"
-            << "# Run in brainstorm mode (clamps everyone to Read/Grep/Glob — no Bash, no writes).\n"
-            << "default_path: [leader, cartographer, architect, historian, recap]\n";
-    }
-    std::cout << "  Created: .quorum/teams/knowers.yaml  "
-              << "(default_path: [leader, cartographer, architect, historian, recap])\n";
-
     // 7. Print next steps
     std::cout << "  Created: .quorum/vaults/leader/knowledge/\n";
-    std::cout << "  Created: .quorum/teams/\n";
     std::cout << "  Created: .quorum/knowledge/  "
               << "(project-wide rules and references that apply to all agents)\n";
     std::cout << "  Created: .quorum/knowledge/roles/{leader,thinker,doer,reviewer,scribe,librarian}/  "
               << "(role-specific rules apply to every agent of that role)\n";
     std::cout << "\nQuorum initialized with 7 agents "
-              << "(leader, thinker, scribe, cartographer, architect, historian, recap)\n"
-              << "and 2 teams (default, knowers). Next steps:\n";
+              << "(leader, thinker, scribe, cartographer, architect, historian, recap).\n"
+              << "Next steps:\n";
     std::cout << "  1. Attach knower specialty skills + Tier-1 scans (token-free):\n";
     std::cout << "     scripts/setup-knowers.sh <project-dir>\n";
     std::cout << "  2. Add more agents (auto-discovered from .quorum/agents/):\n";

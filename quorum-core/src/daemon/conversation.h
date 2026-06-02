@@ -62,21 +62,10 @@ public:
     // Empty string falls back to cfg_.default_mode. Unknown values log a
     // warning and fall back to "generic".
     int64_t start(const std::string& goal, double budget_usd = 5.0,
-                  int max_rounds = 20, const std::string& team = "",
-                  const std::string& mode = "",
+                  int max_rounds = 20, const std::string& mode = "",
                   bool no_vault_write = false) {
         reload_agents();  // Phase 9 finding #2 — refresh roster from disk
         auto conv_id = db_.create_conversation(goal, budget_usd, max_rounds);
-
-        // Store team name on conversation record
-        if (!team.empty()) {
-            db_.execute(
-                "UPDATE conversations SET team = ? WHERE id = ?",
-                [&](sqlite3_stmt* stmt) {
-                    sqlite3_bind_text(stmt, 1, team.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_int64(stmt, 2, conv_id);
-                });
-        }
 
         // Resolve mode: explicit arg > config default > "generic"
         std::string resolved_mode = mode.empty() ? cfg_.default_mode : mode;

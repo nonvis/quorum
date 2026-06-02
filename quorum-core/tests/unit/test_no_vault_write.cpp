@@ -227,8 +227,8 @@ static void test_C_db_persistence() {
     sui::quorum::ConversationEngine engine(db, cfg, agents);
 
     // Start two conversations: one with flag clear, one set.
-    auto id_clear = engine.start("goal-clear", 5.0, 20, "", "", false);
-    auto id_set   = engine.start("goal-set",   5.0, 20, "", "", true);
+    auto id_clear = engine.start("goal-clear", 5.0, 20, "", false);
+    auto id_set   = engine.start("goal-set",   5.0, 20, "", true);
 
     auto conv_clear = db.get_conversation(id_clear);
     auto conv_set   = db.get_conversation(id_set);
