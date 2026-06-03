@@ -117,7 +117,7 @@ Canonical structure:
 ---
 title: Autopilot flight plan
 generated_by: quorum supervisor init
-spec_version: 0.1
+spec_version: 0.3
 project_root: <abs path>
 ---
 

@@ -35,6 +35,7 @@
 #include "cli/supervisor_init.h"
 #include "cli/knower_refresh.h"
 #include "utils/discover.h"
+#include "utils/self_path.h"
 
 namespace fs = std::filesystem;
 
@@ -661,30 +662,35 @@ int main(int argc, char* argv[]) {
     // Init doesn't need --config -- it creates the config.
     // Compute the repo root from the binary path so init can resolve the
     // shipped knower SKILL templates: <repo>/build/quorum_daemon → parent
-    // twice = <repo>. Best-effort: empty string on failure (init then falls
-    // back to $HOME/.claude/skills + the CWD ladder, and never fails).
+    // twice = <repo>. Uses the OS's real executable path (robust to the PATH
+    // `quorum` symlink, where argv[0] is the bare name "quorum"); falls back to
+    // fs::canonical(argv[0]) on odd platforms. Best-effort: empty string on
+    // failure (init then falls back to $HOME/.claude/skills + the CWD ladder,
+    // and never fails).
     if (subcommand == "init") {
-        std::string quorum_root;
-        try {
-            quorum_root = fs::canonical(fs::path(argv[0]))
-                              .parent_path().parent_path().string();
-        } catch (...) {
-            quorum_root.clear();
-        }
+        std::string quorum_root =
+            sui::quorum::quorum_repo_root_from_exe(argv[0]);
         return sui::quorum::cli::init_project(quorum_root);
     }
 
     // Benchmark doesn't need --config -- it spawns a child daemon against a
     // fresh temp project. Set QUORUM_DAEMON_PATH so the spawned child
     // resolves to *this* binary (otherwise PATH lookup would miss
-    // build/quorum_daemon).
+    // build/quorum_daemon). Use the OS's real executable path (robust to the
+    // PATH `quorum` symlink, where argv[0] is the bare name "quorum"); fall
+    // back to fs::canonical(argv[0]) on odd platforms.
     if (subcommand == "benchmark") {
         if (!std::getenv("QUORUM_DAEMON_PATH")) {
-            try {
-                auto self = fs::canonical(fs::path(argv[0]));
-                setenv("QUORUM_DAEMON_PATH", self.string().c_str(), 1);
-            } catch (...) {
-                // best-effort; benchmark.h falls back to PATH lookup
+            std::string self = sui::quorum::self_executable_path();
+            if (self.empty()) {
+                try {
+                    self = fs::canonical(fs::path(argv[0])).string();
+                } catch (...) {
+                    // best-effort; benchmark.h falls back to PATH lookup
+                }
+            }
+            if (!self.empty()) {
+                setenv("QUORUM_DAEMON_PATH", self.c_str(), 1);
             }
         }
         return sui::quorum::cli::run_benchmark(
@@ -774,18 +780,14 @@ int main(int argc, char* argv[]) {
     // Phase 14 Track 3 — `quorum knower refresh`. No --config needed: re-runs the
     // read-only knower scan pass(es) against the target project (default cwd, or
     // --project <path|name>) by shelling out to scripts/run-knower.sh. Resolve the
-    // quorum repo root from argv[0] (same self-relative trick as init: the binary
-    // is <repo>/build/quorum_daemon, and `make install` symlinks the CLI to it, so
-    // fs::canonical resolves through the symlink back into <repo>) so the script is
-    // findable even when invoked via the installed `quorum` name.
+    // quorum repo root from the OS's real executable path (the binary is
+    // <repo>/build/quorum_daemon, and `make install` symlinks the CLI to it).
+    // self_executable_path() is robust to the installed `quorum` name (where
+    // argv[0] is the bare string "quorum"); falls back to fs::canonical(argv[0])
+    // on odd platforms. Best-effort: empty on failure (see header).
     if (subcommand == "knower" && knower_subcmd_arg == "refresh") {
-        try {
-            knower_refresh_opts.quorum_root =
-                fs::canonical(fs::path(argv[0]))
-                    .parent_path().parent_path().string();
-        } catch (...) {
-            knower_refresh_opts.quorum_root.clear();  // best-effort; see header
-        }
+        knower_refresh_opts.quorum_root =
+            sui::quorum::quorum_repo_root_from_exe(argv[0]);
         return sui::quorum::cli::run_knower_refresh(knower_refresh_opts);
     }
 

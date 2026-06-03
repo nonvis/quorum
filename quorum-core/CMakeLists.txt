@@ -180,6 +180,12 @@ target_include_directories(test_discover PRIVATE src)
 target_link_libraries(test_discover PRIVATE SQLite::SQLite3)
 add_test(NAME test_discover COMMAND test_discover)
 
+# self-executable-path helper (utils/self_path.h) — fixes init/knower-refresh/
+# benchmark repo-root resolution under the installed `quorum` PATH symlink.
+add_executable(test_self_path tests/unit/test_self_path.cpp)
+target_include_directories(test_self_path PRIVATE src)
+add_test(NAME test_self_path COMMAND test_self_path)
+
 add_executable(test_agent_modify tests/unit/test_agent_modify.cpp)
 target_include_directories(test_agent_modify PRIVATE src)
 add_test(NAME test_agent_modify COMMAND test_agent_modify)

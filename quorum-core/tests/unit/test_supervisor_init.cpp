@@ -93,7 +93,7 @@ static void test_A_generate_with_roster(const fs::path& tdir) {
           "A(a): frontmatter title present");
     check(contains(md, "generated_by: quorum supervisor init"),
           "A(a): frontmatter generated_by present");
-    check(contains(md, "spec_version: 0.2"),
+    check(contains(md, "spec_version: 0.3"),
           "A(a): frontmatter spec_version present");
     check(contains(md, "## Project"), "A(a): Project heading present");
     check(contains(md, "- name: A_roster"),
