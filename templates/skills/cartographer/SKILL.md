@@ -72,6 +72,31 @@ Update `ref-project-index.md` **in place** on a re-run (don't coin new slugs). F
 - Tools: `Read`, `Grep`, `Glob`, read-only git (`git log`/`show`/`status`/`branch --show-current`) only.
 - NEVER: any state-mutating git command, file writes/edits in a repo, or workspace changes. Your only write is the VAULT_UPDATE block (daemon-applied, under `.quorum/`).
 
+## Brainstorm participant — write only when instructed to
+
+You play two roles depending on **what your incoming task asks for** — key
+off the task instruction, **not** the mode:
+
+- **Direct-emit / write-now task** — the task tells you to *produce, refresh,
+  or write* your artifact (e.g. the single-knower scan goal "…emit
+  `knowledge/ref-project-index.md`, HANDOFF done", **or** a leader's
+  post-approval "write now" instruction in a gated brainstorm). → Do exactly
+  as today: emit your `VAULT_UPDATE` to your own vault
+  (`knowledge/ref-project-index.md`) and HANDOFF.
+- **Discussion-participant task** — the task asks you to *explore, weigh in
+  on, or discuss* a question (e.g. "where does X live / what's in folder Y"),
+  with **no** instruction to produce/refresh/write your artifact. →
+  Contribute your layout analysis (where things are, the quick lookup) as
+  plain reasoning + a SUMMARY, then HANDOFF back. **Emit NO `VAULT_UPDATE`** —
+  knowledge writes in a brainstorm are human-gated; the leader will hand you
+  an explicit write-now instruction *after* the human approves, and only then
+  do you write.
+
+When that write-now instruction does arrive, **synthesize the slice from the
+discussion's conclusion** (the layout facts the team actually settled on),
+folding in any operator edits — not a fresh blind re-scan. Update
+`ref-project-index.md` in place as always.
+
 ## Block formats
 
 ### HANDOFF — when done

@@ -165,6 +165,29 @@ Field rules:
 - `Updated at:` at file top is overwritten with each write's UTC timestamp.
 - `Created at:` written once on bootstrap; never overwritten.
 
+## Brainstorm gate invariant (leader handoff convention, Phase 14 T2)
+
+The first concrete *leader* handoff convention (the "leader handoff schema"
+flagged TBD above). In `brainstorm` mode, knowledge writes are **human-gated**:
+
+1. The leader runs a **read-only** discussion (knowers + thinker contribute
+   analysis only; **no `VAULT_UPDATE` is emitted during discussion**).
+2. The leader emits findings + a per-knower proposed-vault-update manifest and
+   `HANDOFF to: human` (→ `waiting_for_human`).
+3. Only on `respond "yes[/edits]"` does the leader hand each approved knower a
+   **write-now** instruction; the knower then emits its `VAULT_UPDATE` (its own
+   vault, synthesized from the discussion).
+4. `respond "no/more"` continues the discussion; the gate repeats.
+
+**Invariant (L3): no knower emits a `VAULT_UPDATE` before the post-approval
+write instruction.** A knower keys its write off the *task instruction* (a
+direct-emit/write-now goal, e.g. the `run-knower.sh` single-knower scan, or the
+leader's post-approval instruction) — **not** the mode. This keeps the
+automated single-knower flow (no human in the loop) self-writing while the
+interactive leader-driven brainstorm stays gated. Encoded in the leader and
+knower SKILLs; the daemon already supplies `HANDOFF to: human` →
+`waiting_for_human` + `respond` resume as primitives.
+
 ## Migration policy
 
 When this spec changes:

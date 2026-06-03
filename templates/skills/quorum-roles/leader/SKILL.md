@@ -31,11 +31,56 @@ You MAY read files and run queries (cat, ls, grep, sqlite3).
 ## Brainstorm Mode
 
 In `brainstorm` mode the daemon clamps every agent to Read/Grep/Glob —
-no project file writes, no phase-plan routing. There is no "next task"
-to look up. Frame the question, identify which teammate is best suited
-to explore it, and HANDOFF with that framing. Don't try to write to
-other vaults yourself; the parser will reject it. Final knowledge
-curation belongs to scribe.
+no project file writes, no phase-plan routing, **no doer ever** (the
+daemon hard-rejects any HANDOFF that resolves to a doer; never route to
+one). There is no "next task" to look up. You are read-only; you never
+write to any vault yourself (the parser will reject it). Knowledge that
+comes out of a brainstorm is written by the **participating knowers**
+themselves, and only after the human approves — see the gate protocol
+below.
+
+## Brainstorm Gate Protocol (human-gated knower self-write)
+
+Brainstorm knowledge writes are **human-gated**. You orchestrate a
+read-only discussion, present the human a findings summary plus a
+per-knower manifest of *exactly what would be written where*, and only
+on the human's approval do you instruct the knowers to write their own
+slices. The invariant: **no knower emits a `VAULT_UPDATE` before the
+post-approval write instruction.**
+
+Run it in this order:
+
+1. **Seed + discuss (read-only).** Frame the question. HANDOFF to the
+   knower(s)/thinker best suited to explore it, instructing them to
+   **participate in the discussion** — contribute analysis only, **do
+   NOT write or emit a `VAULT_UPDATE`**. Iterate as needed; everyone
+   stays read-only.
+2. **Findings + manifest → human.** When the discussion has converged,
+   emit your **findings** (what the team concluded) and a per-knower
+   **proposed vault update manifest** — one row per knower that would
+   write, naming the knower, its target artifact path, and a 1–2 line
+   description of the slice it would record. Then `HANDOFF to: human`
+   with that summary + manifest in the prompt. Write **nothing**
+   yourself.
+
+   ```
+   ## Proposed vault updates (pending your approval)
+   | Knower | Artifact | What it would record |
+   |---|---|---|
+   | historian | knowledge/ref-decisions.md | The verbal decision to X, no PR yet |
+   | architect | knowledge/ref-architecture-map.md | New edge Y→Z surfaced in discussion |
+   ```
+3. **On approval (`respond "yes"` / `"yes, but <edits>"`).** For **each
+   approved knower** in the manifest, HANDOFF a **write-now**
+   instruction: tell it to emit its `VAULT_UPDATE` for the named
+   artifact, **synthesized from this discussion's conclusion** (not a
+   fresh raw code scan), folding in any human edits. Route them one at a
+   time (one task per conversation turn); each knower writes its own
+   vault, then hands back to you. When all approved writes are done,
+   `HANDOFF to: done`.
+4. **On rejection / more (`respond "no"` / `"keep going: ..."`).**
+   Continue the read-only discussion (back to step 1/2); the gate
+   repeats. No knower writes until a later approval turn.
 
 ## Routing
 

@@ -109,6 +109,30 @@ recap has **NO scored rubric and NO evaluator — by design** (it is the first s
 - **Company policy (hard): NEVER query Linear, Slack, Telegram, or any chat/ticket tool via CLI or API.** The operator dumps; recap logs. You read `messages-dump.md` / `linear-dump.md` as static files only.
 - NEVER: state-mutating git, file writes/edits in a repo, writing the operator-owned `.quorum/recap/where-i-left-off.md` final marker, or appending to `linear-dump.md` / `messages-dump.md`. Your ONLY write is the VAULT_UPDATE block (→ `knowledge/ref-recap.md`).
 
+## Brainstorm participant — write only when instructed to
+
+You play two roles depending on **what your incoming task asks for** — key
+off the task instruction, **not** the mode:
+
+- **Direct-emit / write-now task** — the task tells you to *produce, refresh,
+  or write* your artifact (e.g. the single-knower scan goal "…emit
+  `knowledge/ref-recap.md`, HANDOFF done", **or** a leader's post-approval
+  "write now" instruction in a gated brainstorm). → Do exactly as today: emit
+  your `VAULT_UPDATE` to your own vault (`knowledge/ref-recap.md`) and HANDOFF.
+- **Discussion-participant task** — the task asks you to *explore, weigh in
+  on, or discuss* a question ("what changed lately / where did we leave off"),
+  with **no** instruction to produce/refresh/write your artifact. →
+  Contribute your what-happened-when recall (dated timeline, where-I-left-off)
+  as plain reasoning + a SUMMARY, then HANDOFF back. **Emit NO `VAULT_UPDATE`**
+  — knowledge writes in a brainstorm are human-gated; the leader will hand you
+  an explicit write-now instruction *after* the human approves, and only then
+  do you write.
+
+When that write-now instruction does arrive, **synthesize the slice from the
+discussion's conclusion** (the activity/where-I-left-off the team actually
+settled on), folding in any operator edits — not a fresh blind re-mine. Stay
+condensed + non-deep as always; update `ref-recap.md` in place.
+
 ## Block formats
 
 ### HANDOFF — when done

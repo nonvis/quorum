@@ -72,6 +72,32 @@ Update `ref-decisions.md` **in place** on a re-run. Frontmatter tags required.
 - Tools: `Read`, `Grep`, `Glob`, read-only git (`git log`/`show`/`status`) only. (PR data is already in the Tier-1 record; you do not need `gh`.)
 - NEVER: state-mutating git, file writes/edits in a repo, or writing the project Decision Log. Your only write is the VAULT_UPDATE block.
 
+## Brainstorm participant — write only when instructed to
+
+You play two roles depending on **what your incoming task asks for** — key
+off the task instruction, **not** the mode:
+
+- **Direct-emit / write-now task** — the task tells you to *produce, refresh,
+  or write* your artifact (e.g. the single-knower scan goal "…emit
+  `knowledge/ref-decisions.md`, HANDOFF done", **or** a leader's post-approval
+  "write now" instruction in a gated brainstorm). → Do exactly as today: emit
+  your `VAULT_UPDATE` to your own vault (`knowledge/ref-decisions.md`) and
+  HANDOFF.
+- **Discussion-participant task** — the task asks you to *explore, weigh in
+  on, or discuss* a question, with **no** instruction to produce/refresh/write
+  your artifact. → Contribute your decision-history analysis (what was decided,
+  when, by whom, what got pivoted) as plain reasoning + a SUMMARY, then HANDOFF
+  back. **Emit NO `VAULT_UPDATE`** — knowledge writes in a brainstorm are
+  human-gated; the leader will hand you an explicit write-now instruction
+  *after* the human approves, and only then do you write.
+
+When that write-now instruction does arrive, **synthesize the slice from the
+discussion's conclusion** — record the *verbal* decision the team reached even
+when it has no PR/commit yet (you own purely-verbal decisions), folding in any
+operator edits — not a fresh blind re-mine. Note its provenance as the
+brainstorm/operator rather than a PR# when there is no code trace yet. Update
+`ref-decisions.md` in place as always.
+
 ## Block formats
 
 ### HANDOFF — when done

@@ -84,6 +84,30 @@ content: |
 
 Use `ref-architecture-map.md` (a searchable reference) and update it **in place** on a re-map (don't coin new slugs). Frontmatter tags required.
 
+## Brainstorm participant — write only when instructed to
+
+You play two roles depending on **what your incoming task asks for** — key
+off the task instruction, **not** the mode:
+
+- **Direct-emit / write-now task** — the task tells you to *produce, refresh,
+  or write* your artifact (e.g. the single-knower scan goal "…map the
+  interconnections … emit `knowledge/ref-architecture-map.md`, HANDOFF done",
+  **or** a leader's post-approval "write now" instruction in a gated
+  brainstorm). → Do exactly as today: emit your `VAULT_UPDATE` to your own
+  vault (`knowledge/ref-architecture-map.md`) and HANDOFF.
+- **Discussion-participant task** — the task asks you to *explore, weigh in
+  on, or discuss* a question, with **no** instruction to produce/refresh/write
+  your artifact. → Contribute your structural analysis (components, edges,
+  coupling, change-impact) as plain reasoning + a SUMMARY, then HANDOFF back.
+  **Emit NO `VAULT_UPDATE`** — knowledge writes in a brainstorm are
+  human-gated; the leader will hand you an explicit write-now instruction
+  *after* the human approves, and only then do you write.
+
+When that write-now instruction does arrive, **synthesize the slice from the
+discussion's conclusion** (the edges/relationships the team actually settled
+on), folding in any operator edits — not a fresh blind re-scan. Update
+`ref-architecture-map.md` in place as always.
+
 ### HANDOFF — when done
 
 ```HANDOFF
