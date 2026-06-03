@@ -28,7 +28,7 @@ import {
   dbWrite,
   type Conversation,
 } from "./db";
-import { execDaemon, execDaemonAt, spawnDaemon, cleanupStaleDaemon, isDaemonRunning } from "./daemon";
+import { execDaemon, execDaemonAt, execAsk, spawnDaemon, cleanupStaleDaemon, isDaemonRunning } from "./daemon";
 import { createSSEStream } from "./sse";
 
 const app = new Hono();
@@ -698,6 +698,44 @@ app.post("/api/respond/:id", async (c) => {
     output: result.stdout,
     error: result.stderr || undefined,
   });
+});
+
+// -- Recap ("What's going on?") -- Phase 14 T6.
+//
+// Shells `quorum ask --agent recap "<prompt>" --project <currentProject>` (the
+// `quorum` binary on PATH is a symlink to daemonBin). The active project is the
+// web UI's selected project (getState().currentProject) — the SAME mechanism
+// every other project-scoped endpoint uses; no new selection model. The recap
+// knower must be set up in the target project (`ask --agent recap` reads
+// .quorum/agents/recap.yaml + .quorum/vaults/recap/...); if it isn't, the CLI
+// exits non-zero and we surface its stderr so the popup shows the real reason.
+app.post("/api/recap", async (c) => {
+  const body = await c.req.json<{ prompt: string }>();
+  if (!body.prompt?.trim()) return c.json({ error: "prompt is required" }, 400);
+
+  const state = getState();
+  if (!state.currentProject) {
+    return c.json({ error: "No project selected" }, 400);
+  }
+  const projectPath = getProjectConfig(state.currentProject).projectPath;
+
+  const result = await execAsk(projectPath, "recap", body.prompt.trim());
+  if (!result.success) {
+    // Surface the CLI's own message (recap not set up / no answer / timeout)
+    // rather than failing silently. Prefer stderr; fall back to stdout.
+    return c.json(
+      { error: result.stderr || result.stdout || "recap failed" },
+      500,
+    );
+  }
+
+  // `run_ask` prints a one-line "=== <project> recap ===" header before the
+  // answer. Strip it so the client renders just the answer body.
+  let answer = result.stdout;
+  const headerMatch = answer.match(/^===[^\n]*===\n+/);
+  if (headerMatch) answer = answer.slice(headerMatch[0].length);
+
+  return c.json({ answer: answer.trim() });
 });
 
 app.post("/api/close/:id", async (c) => {

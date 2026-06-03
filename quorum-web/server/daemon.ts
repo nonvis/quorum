@@ -127,6 +127,64 @@ export async function execDaemonAt(cwd: string, ...args: string[]): Promise<Daem
   };
 }
 
+// For the long, read-only `quorum ask` call (Phase 14 T6 — recap web button).
+//
+// `ask` is a self-contained `claude -p` invocation that can run for MINUTES; it
+// does NOT use --config (it resolves the project via --project <path>), so we
+// deliberately DON'T pass --config here — unlike execDaemon. The binary on PATH
+// (`quorum`) is a symlink to this same daemonBin, so `<daemonBin> ask ...` ==
+// `quorum ask ...`.
+//
+// `ask` prints the synthesized answer to STDOUT and progress ("Asking the
+// recap...") to STDERR; on resolution/agent errors it prints to STDERR and
+// exits non-zero. We await with a generous timeout (recap is a multi-minute
+// claude call) and surface stderr to the caller so the popup can show the real
+// error (e.g. recap knower not set up) instead of failing silently.
+const ASK_TIMEOUT_MS = 8 * 60 * 1000; // 8 min — recap is a multi-minute claude -p call
+
+export async function execAsk(
+  projectPath: string,
+  agent: string,
+  prompt: string,
+): Promise<DaemonResult> {
+  const proc = Bun.spawn(
+    [config.daemonBin, "ask", "--agent", agent, "--project", projectPath, prompt],
+    {
+      cwd: projectPath,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: daemonEnv,
+    },
+  );
+
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try { proc.kill(); } catch {}
+  }, ASK_TIMEOUT_MS);
+
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  const exitCode = await proc.exited;
+  clearTimeout(timer);
+
+  if (timedOut) {
+    return {
+      success: false,
+      stdout: stdout.trim(),
+      stderr: `recap timed out after ${ASK_TIMEOUT_MS / 60000} min`,
+      exitCode: exitCode || 124,
+    };
+  }
+
+  return {
+    success: exitCode === 0,
+    stdout: stdout.trim(),
+    stderr: stderr.trim(),
+    exitCode,
+  };
+}
+
 // For long-running commands (converse) — spawns detached, doesn't wait
 export function spawnDaemon(...args: string[]): void {
   const pc = getCurrentProjectConfig();

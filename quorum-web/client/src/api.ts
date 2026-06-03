@@ -67,6 +67,21 @@ export async function updateBudget(id: number, budget_usd: number) {
   return res.json();
 }
 
+// Phase 14 T6 — "What's going on?" recap. Shells `quorum ask --agent recap`
+// against the active project on the server. Multi-minute call; the caller shows
+// a loading state. On CLI failure the server returns { error } with the real
+// message (e.g. recap knower not set up).
+export async function askRecap(
+  prompt: string,
+): Promise<{ answer?: string; error?: string }> {
+  const res = await fetch(`${BASE}/recap`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  return res.json();
+}
+
 export async function fetchProjects(): Promise<ProjectState> {
   const res = await fetch(`${BASE}/projects`);
   return res.json();

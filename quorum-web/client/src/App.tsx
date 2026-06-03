@@ -11,6 +11,7 @@ import { ConfigPanel } from "./components/ConfigPanel";
 import { BudgetPanel } from "./components/BudgetPanel";
 import { AgentCreateForm } from "./components/AgentCreateForm";
 import { AgentContextEditor } from "./components/AgentContextEditor";
+import { RecapPanel } from "./components/RecapPanel";
 
 export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -21,6 +22,7 @@ export default function App() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [daemonRunning, setDaemonRunning] = useState(true);
   const [editingAgent, setEditingAgent] = useState<string | null>(null);
+  const [showRecap, setShowRecap] = useState(false);
 
   const refresh = useCallback(async () => {
     const [convs, st, daemon] = await Promise.all([
@@ -101,6 +103,14 @@ export default function App() {
               <AgentCreateForm onCreated={() => fetchAgents().then(setAgents)} />
             </div>
           )}
+          <div className="px-6 py-1">
+            <button
+              onClick={() => setShowRecap(true)}
+              className="px-4 py-2 text-sm bg-zinc-800 text-zinc-200 rounded-lg hover:bg-zinc-700 border border-zinc-700"
+            >
+              What's going on?
+            </button>
+          </div>
           <BudgetPanel />
           <PromptInput onSubmit={refresh} busy={busy} />
 
@@ -133,6 +143,7 @@ export default function App() {
           onClose={() => setEditingAgent(null)}
         />
       )}
+      {showRecap && <RecapPanel onClose={() => setShowRecap(false)} />}
       {showConfig && <ConfigPanel onClose={() => { setShowConfig(false); fetchConfig().then(setProjectConfig); }} />}
     </div>
   );
