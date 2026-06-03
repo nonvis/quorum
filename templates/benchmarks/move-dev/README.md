@@ -34,10 +34,9 @@ quorum benchmark --role move-dev
 ```
 
 The CLI scaffolds a fresh temp project, copies `expected/` if present,
-initializes `.quorum/`, creates the standard 4-agent benchmark team
-(leader / move-dev doer / evaluator / scribe), writes
-`.quorum/teams/benchmark.yaml`, drives the conversation through the
-daemon, queries the resulting `evaluations` row, and cleans up.
+initializes `.quorum/`, creates the standard 4-agent benchmark roster
+(leader / move-dev doer / evaluator / scribe), drives the conversation
+through the daemon, queries the resulting `evaluations` row, and cleans up.
 
 ## Tasks (move-dev)
 

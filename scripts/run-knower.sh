@@ -72,7 +72,7 @@ esac
 
 echo "==> running $KNOWER (read-only brainstorm pass) ..."
 echo "    artifact : $ARTIFACT"
-echo "    budget   : \$$BUDGET   mode: brainstorm (read-only)   team: knowers"
+echo "    budget   : \$$BUDGET   mode: brainstorm (read-only)"
 echo ""
 
 # ── Run converse (happy path: it exits on its own when the conversation is
@@ -84,7 +84,6 @@ echo ""
 (
     cd "$PROJECT_DIR" && exec "$DAEMON" converse \
         --mode brainstorm \
-        --team knowers \
         --budget "$BUDGET" \
         "$GOAL"
 ) &

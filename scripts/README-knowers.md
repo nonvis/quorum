@@ -38,25 +38,23 @@ runs **no state-mutating git** in the target. Steps:
    + `recap_mine.py` → `<project-dir>/.quorum/tools/` each run.
 4. Create the `cartographer` + `architect` + `historian` + `recap` agents
    (`--no-ai`, skipped if their yaml already exists).
-5. Write `<project-dir>/.quorum/teams/knowers.yaml`
-   (`default_path: [leader, cartographer, architect, historian, recap]`).
-6. Run the deterministic cartographer Tier-1 scan →
+5. Run the deterministic cartographer Tier-1 scan →
    `<project-dir>/.quorum/cartographer/layout.json`.
-7. Run the deterministic historian Tier-1 mine →
+6. Run the deterministic historian Tier-1 mine →
    `<project-dir>/.quorum/historian/decisions-raw.json`. **This step needs an
    authenticated `gh`** (it shells out to `gh pr list` for PR data). If `gh` is
    missing or unauthenticated, the step is **skipped with a warning** (setup
    does NOT fail) — run `historian_mine.py` later once gh is ready. The tool
    also degrades gracefully on a missing git remote (empty PR lists).
-8. Run the deterministic recap Tier-1 windowed mine →
+7. Run the deterministic recap Tier-1 windowed mine →
    `<project-dir>/.quorum/recap/timeline-raw.json`, then seed the operator-owned
    dump channels `messages-dump.md` + `linear-dump.md` (stubs, **only if absent**
-   — never overwrites an existing dump). **Unlike step 7, this runs
+   — never overwrites an existing dump). **Unlike step 6, this runs
    unconditionally** — the git timeline is always emitted; `gh` only *enriches*
    it with PR data, so a missing/unauthenticated `gh` just yields empty PR lists.
-9. Print a summary + next steps.
+8. Print a summary + next steps.
 
-Re-running is safe: no duplicate agents, CLAUDE.md untouched, team + tools +
+Re-running is safe: no duplicate agents, CLAUDE.md untouched, tools +
 layout + decision record refreshed.
 
 ### `run-knower.sh <project-dir> <cartographer|architect|historian|recap>`

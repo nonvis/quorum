@@ -114,27 +114,17 @@ create_agent historian "$HIST_SKILL" \
 create_agent recap "$RECAP_SKILL" \
     "Recap: knows what changed recently + where you left off (WHAT/WHEN). Reads the Tier-1 windowed timeline (.quorum/recap/timeline-raw.json) + operator-dumped timestamped messages, weaves one dated component-grouped timeline, drafts where-i-left-off, with a by-intent read-only Linear status overlay. Read-only; never queries Linear/Slack/Telegram."
 
-# ── 5. Write the knowers team (overwrite OK — it's our team) ────────────────
-echo "==> [5/9] write .quorum/teams/knowers.yaml"
-mkdir -p "$PROJECT_DIR/.quorum/teams"
-cat > "$PROJECT_DIR/.quorum/teams/knowers.yaml" <<'EOF'
-name: knowers
-# Read-only "knower" team for analyzing this workspace.
-# Run in brainstorm mode (clamps everyone to Read/Grep/Glob — no Bash, no writes).
-default_path: [leader, cartographer, architect, historian, recap]
-EOF
-
-# ── 6. Deterministic Tier-1 layout scan (cartographer; no tokens) ───────────
-echo "==> [6/9] run deterministic Tier-1 layout scan (cartographer)"
+# ── 5. Deterministic Tier-1 layout scan (cartographer; no tokens) ───────────
+echo "==> [5/8] run deterministic Tier-1 layout scan (cartographer)"
 python3 "$PROJECT_DIR/.quorum/tools/cartographer_index.py" --root "$PROJECT_DIR"
 
-# ── 7. Tier-1 decision mine (historian; needs an authenticated gh) ──────────
+# ── 6. Tier-1 decision mine (historian; needs an authenticated gh) ──────────
 # The historian Tier-1 miner shells out to `gh pr list` for PR data. The tool
 # itself degrades gracefully on a missing git remote (empty PR lists), but it
 # needs an authenticated `gh` to fetch PRs at all. If `gh` is missing or has no
 # auth token, skip this step with a warning rather than failing setup — the
 # operator can run historian_mine.py later once gh is authenticated.
-echo "==> [7/9] run deterministic Tier-1 decision mine (historian)"
+echo "==> [6/8] run deterministic Tier-1 decision mine (historian)"
 if ! command -v gh >/dev/null 2>&1; then
     echo "    WARNING: 'gh' not found — historian PR mining needs an authenticated gh."
     echo "             Skipping; run later:"
@@ -147,12 +137,12 @@ else
     python3 "$PROJECT_DIR/.quorum/tools/historian_mine.py" --root "$PROJECT_DIR"
 fi
 
-# ── 8. Tier-1 recap timeline mine + seed dump stubs ─────────────────────────
+# ── 7. Tier-1 recap timeline mine + seed dump stubs ─────────────────────────
 # The recap miner ALWAYS emits the git timeline (windowed commits + where-I-
 # left-off facts); gh only ENRICHES it with merged/open PRs. So unlike the
 # historian step above (which is gh-gated), we run it UNCONDITIONALLY — it
 # degrades gracefully (empty PR lists) without an authenticated gh.
-echo "==> [8/9] run deterministic Tier-1 timeline mine (recap) + seed dump channels"
+echo "==> [7/8] run deterministic Tier-1 timeline mine (recap) + seed dump channels"
 python3 "$PROJECT_DIR/.quorum/tools/recap_mine.py" --root "$PROJECT_DIR"
 
 # Seed the operator-owned dump stubs (timestamped messages + Linear export) ONLY
@@ -213,9 +203,9 @@ runs `linear` (company policy). Use H2 status sections with bullets:
 EOF
 fi
 
-# ── 9. Summary + next steps ─────────────────────────────────────────────────
+# ── 8. Summary + next steps ─────────────────────────────────────────────────
 echo ""
-echo "==> [9/9] Setup complete."
+echo "==> [8/8] Setup complete."
 echo ""
 echo "  Produced:"
 echo "    $PROJECT_DIR/.quorum/                          (Quorum workspace)"
@@ -223,7 +213,6 @@ echo "    $PROJECT_DIR/.quorum/agents/cartographer.yaml"
 echo "    $PROJECT_DIR/.quorum/agents/architect.yaml"
 echo "    $PROJECT_DIR/.quorum/agents/historian.yaml"
 echo "    $PROJECT_DIR/.quorum/agents/recap.yaml"
-echo "    $PROJECT_DIR/.quorum/teams/knowers.yaml"
 echo "    $PROJECT_DIR/.quorum/tools/cartographer_index.py"
 echo "    $PROJECT_DIR/.quorum/tools/historian_mine.py"
 echo "    $PROJECT_DIR/.quorum/tools/recap_mine.py"

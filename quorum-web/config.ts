@@ -24,7 +24,6 @@ export interface ProjectConfig {
   configPath: string;
   dbPath: string;
   agentsDir: string;
-  teamsDir: string;
   vaultsDir: string;
   daemonBin: string;
 }
@@ -63,7 +62,6 @@ export function getProjectConfig(projectPath: string): ProjectConfig {
     configPath: join(quorumDir, "config.yaml"),
     dbPath: join(quorumDir, "quorum.db"),
     agentsDir: join(quorumDir, "agents"),
-    teamsDir: join(quorumDir, "teams"),
     vaultsDir: join(quorumDir, "vaults"),
     daemonBin: resolve(repoRoot, "build/quorum_daemon"),
   };
