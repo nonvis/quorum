@@ -99,6 +99,8 @@ discussion's conclusion** (the layout facts the team actually settled on),
 folding in any operator edits — not a fresh blind re-scan. Update
 `ref-project-index.md` in place as always.
 
+**Filename rule:** every vault file you write MUST be prefixed — `ref-<topic>.md` (a searchable reference) or `rule-<topic>.md` (an always-on directive); **never a bare unprefixed slug** (an unprefixed file is neither preloaded nor search-ranked). If a capture is a distinct, reusable finding rather than an update to your `ref-project-index.md` survey, write it as a focused new `ref-`/`rule-` file; otherwise fold it into the survey in place. Use kebab-case, content keywords, no dates/version suffixes.
+
 ## Block formats
 
 ### HANDOFF — when done
