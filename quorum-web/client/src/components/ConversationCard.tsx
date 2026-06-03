@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Conversation, Task } from "../types";
-import { fetchConversation, updateBudget } from "../api";
+import { fetchConversation, updateMaxRounds } from "../api";
 import { StateBadge } from "./StateBadge";
 import { TaskTimeline } from "./TaskTimeline";
 import { RespondControls } from "./RespondControls";
@@ -267,7 +267,7 @@ export function ConversationCard({
   const [expanded, setExpanded] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<number>>(new Set());
-  const [budgetInput, setBudgetInput] = useState("");
+  const [maxRoundsInput, setMaxRoundsInput] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const c = conversation;
 
@@ -365,7 +365,9 @@ export function ConversationCard({
         </div>
       )}
 
-      {/* Budget increase for paused conversations */}
+      {/* Raise max_rounds + resume for paused conversations. The per-conversation
+          budget is NOT enforced; max_rounds (turn cap) is the real limiter, so a
+          "max turns reached" pause is cleared by raising it. */}
       {c.state === "paused" && (
         <div
           className="mt-3 flex items-center gap-3"
@@ -373,26 +375,26 @@ export function ConversationCard({
         >
           <span className="text-amber-400 text-sm">Paused{c.paused_reason ? `: ${c.paused_reason}` : ""}</span>
           <div className="flex items-center gap-2 ml-auto">
-            <span className="text-zinc-500 text-xs">Budget $</span>
+            <span className="text-zinc-500 text-xs">Max rounds</span>
             <input
               type="number"
-              step="0.5"
-              min={c.budget_usd}
-              value={budgetInput}
-              onChange={(e) => setBudgetInput(e.target.value)}
-              placeholder={c.budget_usd.toFixed(2)}
+              step="5"
+              min={c.max_rounds + 1}
+              value={maxRoundsInput}
+              onChange={(e) => setMaxRoundsInput(e.target.value)}
+              placeholder={String(c.max_rounds)}
               className="w-20 px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-white text-sm font-mono focus:outline-none focus:border-zinc-500"
             />
             <button
               onClick={async () => {
-                const val = parseFloat(budgetInput);
-                if (val > 0) {
-                  await updateBudget(c.id, val);
-                  setBudgetInput("");
+                const val = parseInt(maxRoundsInput, 10);
+                if (val > c.max_rounds) {
+                  await updateMaxRounds(c.id, val);
+                  setMaxRoundsInput("");
                   onAction();
                 }
               }}
-              disabled={!budgetInput || parseFloat(budgetInput) <= 0}
+              disabled={!maxRoundsInput || parseInt(maxRoundsInput, 10) <= c.max_rounds}
               className="px-3 py-1 bg-amber-600 text-white rounded text-sm font-medium hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Increase & Resume

@@ -777,6 +777,29 @@ app.post("/api/conversations/:id/budget", async (c) => {
   return c.json({ success: true, budget_usd: body.budget_usd });
 });
 
+// Raise a conversation's max_rounds (the real per-conversation limiter — the
+// per-conversation budget is not enforced). Resumes if it was paused (e.g.
+// "max turns reached").
+app.post("/api/conversations/:id/max-rounds", async (c) => {
+  const id = Number(c.req.param("id"));
+  const body = await c.req.json<{ max_rounds: number }>();
+  if (!body.max_rounds || body.max_rounds <= 0) {
+    return c.json({ error: "max_rounds must be positive" }, 400);
+  }
+  dbWrite("UPDATE conversations SET max_rounds = ? WHERE id = ?", [body.max_rounds, id]);
+
+  const conv = freshQuery<{ state: string }>(
+    "SELECT state FROM conversations WHERE id = ?",
+    [id]
+  );
+  if (conv[0]?.state === "paused") {
+    console.log(`[max-rounds] conversation ${id} max_rounds -> ${body.max_rounds}, resuming`);
+    spawnDaemon("resume", "--conversation", String(id));
+  }
+
+  return c.json({ success: true, max_rounds: body.max_rounds });
+});
+
 // -- Start --
 
 // Clean up stale daemon processes from previous web server runs

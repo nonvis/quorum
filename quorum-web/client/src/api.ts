@@ -67,6 +67,17 @@ export async function updateBudget(id: number, budget_usd: number) {
   return res.json();
 }
 
+// Raise a conversation's max_rounds (real per-conversation limiter) and resume
+// if it was paused.
+export async function updateMaxRounds(id: number, max_rounds: number) {
+  const res = await fetch(`${BASE}/conversations/${id}/max-rounds`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ max_rounds }),
+  });
+  return res.json();
+}
+
 // Phase 14 T6 — "What's going on?" recap. Shells `quorum ask --agent recap`
 // against the active project on the server. Multi-minute call; the caller shows
 // a loading state. On CLI failure the server returns { error } with the real
