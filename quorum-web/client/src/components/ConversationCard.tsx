@@ -329,9 +329,8 @@ export function ConversationCard({
           <p className="text-white truncate">{c.goal}</p>
         </div>
         <div className="text-right text-sm text-zinc-400 shrink-0">
-          <div className="font-mono">
+          <div className="font-mono" title="spent">
             ${c.spent_usd.toFixed(2)}
-            <span className="text-zinc-500"> / ${c.budget_usd.toFixed(2)}</span>
           </div>
           {c.current_agent && (
             <div className="text-xs">
