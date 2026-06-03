@@ -8,6 +8,6 @@ Concepts (modes, agents, vaults, HANDOFF protocol, daemon, archetypes) are docum
 - `99 - Quorum Manual.md` — end-to-end setup + operation guide
 - `06 - Decision Log.md` — every architectural decision with rationale and date
 
-**In-repo specs:** `templates/specs/handoff-protocol.md` (scribe learnings), `pitch-protocol.md` (librarian curation), `autopilot-protocol.md` (autopilot supervisor + flight plan + checkpoint).
+**In-repo specs:** `templates/specs/autopilot-protocol.md` (autopilot supervisor + flight plan + checkpoint).
 
 This file used to contain prose copies of those concepts. Removed to prevent doc drift between repo and vault. The vault is the canonical reference.
