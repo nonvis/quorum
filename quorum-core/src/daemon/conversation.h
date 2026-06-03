@@ -298,9 +298,19 @@ public:
             parsed.handoff.has_value() &&
             !resolved_leader.empty() &&
             parsed.handoff->to == resolved_leader;
+        // Phase 14.1c — in a GATED brainstorm only the LEADER may end (to: done)
+        // or gate (to: human). A non-leader knower that tries to terminate/gate
+        // is bounced back to the leader so later lenses still run. Ungated
+        // single-knower scans are untouched (their explicit to: done legitimately
+        // terminates — see test E).
+        bool nonleader_terminates_gated =
+            brainstorm_mode && conv->gated && !emitter_is_leader &&
+            parsed.handoff.has_value() &&
+            (parsed.handoff->to == "done" || parsed.handoff->to == "human");
         bool brainstorm_reentry_to_leader =
             brainstorm_mode && !emitter_is_leader && !resolved_leader.empty() &&
-            ( !parsed.handoff.has_value() || handoff_targets_leader );
+            ( !parsed.handoff.has_value() || handoff_targets_leader
+              || nonleader_terminates_gated );
 
         // 4. Determine next agent
         std::string next_agent;
@@ -434,6 +444,7 @@ public:
                 std::cout << " -- " << display;
             }
             std::cout << "\n";
+            print_pending_manifest(conv_id);  // FIX C — show what's being approved
             return false;  // hold for approval; do NOT complete
         }
 
@@ -502,6 +513,7 @@ public:
                 std::cout << " -- " << display;
             }
             std::cout << "\n";
+            print_pending_manifest(conv_id);  // FIX C — show what's being approved
             return false;
         }
 
@@ -670,6 +682,27 @@ private:
     bool is_known_agent(const std::string& agent_id) const {
         return std::any_of(agents_.begin(), agents_.end(),
             [&](const AgentMetadata& a) { return a.id == agent_id; });
+    }
+
+    // Phase 14.1c (FIX C) — surface the staged-write manifest at the human
+    // gate. The knower writes were staged in prior loop iterations (main.cpp's
+    // suppress branch), so they're present in the DB by the time the leader
+    // hits the gate. Printing them lets the operator see exactly what they're
+    // approving instead of approving blind. No-op when nothing is staged.
+    void print_pending_manifest(int64_t conv_id) {
+        auto pending = db_.get_pending_vault_updates(conv_id);
+        if (pending.empty()) return;
+        std::cout << "[conversation " << conv_id << "] " << pending.size()
+                  << " note(s) staged for your approval:\n";
+        for (const auto& pu : pending) {
+            std::string preview = pu.content;
+            for (char& ch : preview) {
+                if (ch == '\n' || ch == '\r') ch = ' ';
+            }
+            if (preview.size() > 100) preview = preview.substr(0, 100);
+            std::cout << "    - " << pu.path << " (" << pu.agent_id << "): "
+                      << preview << "\n";
+        }
     }
 
     std::string get_task_agent(int64_t task_id) {

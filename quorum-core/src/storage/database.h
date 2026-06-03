@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 #include <iostream>
 
 #include <sqlite3.h>
@@ -13,6 +14,18 @@
 #include "utils/uuid.h"
 
 namespace sui::quorum {
+
+// Phase 14.1c (FIX A) — a knower VAULT_UPDATE held behind the brainstorm gate.
+// Staged when the gate suppresses the write; flushed to the knower's own vault
+// once a human approves (gate_cleared). Mirrors the VaultUpdate payload plus the
+// emitting agent's id/role/mode so the flush can route it to the right vault.
+struct PendingVaultUpdate {
+    std::string agent_id;
+    std::string role;
+    std::string mode;
+    std::string path;
+    std::string content;
+};
 
 struct ConversationRecord {
     int64_t id{0};
@@ -379,6 +392,82 @@ public:
             }
         );
         return agent;
+    }
+
+    // ── Pending vault updates (Phase 14.1c, FIX A) ────────────────────────
+    // Knower VAULT_UPDATEs produced before the human approves a gated
+    // brainstorm are STAGED here (instead of dropped) and FLUSHED to their
+    // vaults once the gate clears.
+
+    // Stage one held VAULT_UPDATE for later flush.
+    void stage_vault_update(int64_t conv_id, const std::string& agent_id,
+                            const std::string& role, const std::string& mode,
+                            const std::string& path, const std::string& content) {
+        execute(
+            "INSERT INTO pending_vault_updates "
+            "(conversation_id, agent_id, role, mode, path, content) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, conv_id);
+                sqlite3_bind_text(stmt, 2, agent_id.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 3, role.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 4, mode.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 5, path.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 6, content.c_str(), -1, SQLITE_TRANSIENT);
+            }
+        );
+    }
+
+    // All staged updates for a conversation, oldest first (insertion order).
+    [[nodiscard]] std::vector<PendingVaultUpdate> get_pending_vault_updates(int64_t conv_id) {
+        std::vector<PendingVaultUpdate> out;
+        query(
+            "SELECT agent_id, role, mode, path, content "
+            "FROM pending_vault_updates WHERE conversation_id = ? ORDER BY id",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, conv_id);
+            },
+            [&](sqlite3_stmt* stmt) {
+                PendingVaultUpdate pu;
+                auto a = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                pu.agent_id = a ? a : "";
+                auto r = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+                pu.role = r ? r : "";
+                auto m = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+                pu.mode = m ? m : "";
+                auto p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+                pu.path = p ? p : "";
+                auto c = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+                pu.content = c ? c : "";
+                out.push_back(std::move(pu));
+            }
+        );
+        return out;
+    }
+
+    // Drop all staged updates for a conversation (after a successful flush).
+    void clear_pending_vault_updates(int64_t conv_id) {
+        execute(
+            "DELETE FROM pending_vault_updates WHERE conversation_id = ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, conv_id);
+            }
+        );
+    }
+
+    // How many updates are currently staged for a conversation.
+    [[nodiscard]] int count_pending_vault_updates(int64_t conv_id) {
+        int count = 0;
+        query(
+            "SELECT COUNT(*) FROM pending_vault_updates WHERE conversation_id = ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int64(stmt, 1, conv_id);
+            },
+            [&](sqlite3_stmt* stmt) {
+                count = sqlite3_column_int(stmt, 0);
+            }
+        );
+        return count;
     }
 
 private:

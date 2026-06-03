@@ -265,6 +265,26 @@ static void init_schema(sui::quorum::Database& db) {
         db.execute("CREATE INDEX idx_evaluations_scored "
                    "ON evaluations(scored_agent_id)");
     }
+
+    // Phase 14.1c (FIX A) — pending_vault_updates table. create_schema() above
+    // already runs CREATE TABLE IF NOT EXISTS, so this is normally a no-op;
+    // kept as an explicit migration marker for old DBs (mirrors evaluations).
+    if (!table_exists(db, "pending_vault_updates")) {
+        db.execute(
+            "CREATE TABLE pending_vault_updates ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  conversation_id INTEGER NOT NULL,"
+            "  agent_id TEXT NOT NULL,"
+            "  role TEXT NOT NULL,"
+            "  mode TEXT NOT NULL,"
+            "  path TEXT NOT NULL,"
+            "  content TEXT NOT NULL,"
+            "  created_at TEXT NOT NULL DEFAULT (datetime('now'))"
+            ")"
+        );
+        db.execute("CREATE INDEX idx_pending_vault_updates_conv "
+                   "ON pending_vault_updates(conversation_id)");
+    }
 }
 
 // Count currently active (running) tasks
@@ -1282,18 +1302,27 @@ int main(int argc, char* argv[]) {
                                   << " update(s) dropped)\n";
                     } else if (sui::quorum::brainstorm_gate_suppresses_write(
                                    task_mode, conv_gated, conv_gate_cleared)) {
-                        // Phase 14.1 — daemon-enforced brainstorm gate. The
-                        // knower (or a leader telling it to "write now") tried
-                        // to write before the human approved the gate. DROP the
-                        // write; the L3 invariant is structurally guaranteed
-                        // here, not by SKILL convention. Unconditional log so
-                        // the operator sees the held write. Once a human
-                        // responds (gate_cleared) writes apply normally.
-                        auto conv_id_for_log =
+                        // Phase 14.1c (FIX A) — daemon-enforced brainstorm gate.
+                        // The knower (or a leader telling it to "write now")
+                        // produced its VAULT_UPDATE before the human approved.
+                        // Rather than DROP it (the old bug — the reviewed note
+                        // was lost), STAGE each update; it flushes to the
+                        // knower's own vault once the gate clears (gate_cleared).
+                        // The L3 invariant is structurally guaranteed here, not
+                        // by SKILL convention. Unconditional log so the operator
+                        // sees the held write(s).
+                        auto conv_id_for_stage =
                             db.get_conversation_for_task(task_id).value_or(0);
-                        std::cout << "[conversation " << conv_id_for_log
-                                  << "] VAULT_UPDATE suppressed — awaiting human "
-                                     "approval (gated brainstorm)\n";
+                        for (const auto& vu : parsed.vault_updates) {
+                            db.stage_vault_update(conv_id_for_stage, agent_id,
+                                                  emitting_role, task_mode,
+                                                  vu.path, vu.content);
+                        }
+                        std::cout << "[conversation " << conv_id_for_stage
+                                  << "] VAULT_UPDATE staged for human approval "
+                                     "(gated brainstorm) — "
+                                  << parsed.vault_updates.size()
+                                  << " note(s) held\n";
                     } else {
                         auto applied = vault_manager.apply_all_updates_with_context(
                             agent_id, emitting_role, task_mode, cfg.agents,
@@ -1366,6 +1395,33 @@ int main(int argc, char* argv[]) {
         {
             auto conv_id_opt = db.get_conversation_for_task(task_id);
             if (conv_id_opt) {
+                // Phase 14.1c (FIX A) — FLUSH staged knower writes once the
+                // human has cleared a gated brainstorm. UNCONDITIONAL: this must
+                // run even when the current task carried no VAULT_UPDATE (the
+                // leader's response task that follows `respond "yes"` won't).
+                // Idempotent — after clear, count is 0 on subsequent loops.
+                {
+                    auto flush_conv = db.get_conversation(*conv_id_opt);
+                    if (flush_conv && flush_conv->mode == "brainstorm" &&
+                        flush_conv->gated && flush_conv->gate_cleared &&
+                        db.count_pending_vault_updates(*conv_id_opt) > 0) {
+                        auto pending =
+                            db.get_pending_vault_updates(*conv_id_opt);
+                        for (const auto& pu : pending) {
+                            sui::quorum::VaultUpdate vu{pu.path, pu.content};
+                            auto applied =
+                                vault_manager.apply_all_updates_with_context(
+                                    pu.agent_id, pu.role, pu.mode, cfg.agents,
+                                    {vu}, project_root_str.value_or(""));
+                            (void)applied;
+                        }
+                        db.clear_pending_vault_updates(*conv_id_opt);
+                        std::cout << "[conversation " << *conv_id_opt
+                                  << "] flushed " << pending.size()
+                                  << " approved knower write(s) to their vaults\n";
+                    }
+                }
+
                 // Build ParsedOutput for the engine (may be empty if task failed)
                 sui::quorum::ParsedOutput conv_parsed;
                 if (result.success && !result.output.empty()) {

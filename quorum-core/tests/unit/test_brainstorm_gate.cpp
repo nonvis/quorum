@@ -103,6 +103,19 @@ static void init_schema(sui::quorum::Database& db) {
         "  UNIQUE(cycle_id, agent_id)"
         ")"
     );
+    // Phase 14.1c (FIX A) — staged knower writes held behind the gate.
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS pending_vault_updates ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  conversation_id INTEGER NOT NULL,"
+        "  agent_id TEXT NOT NULL,"
+        "  role TEXT NOT NULL,"
+        "  mode TEXT NOT NULL,"
+        "  path TEXT NOT NULL,"
+        "  content TEXT NOT NULL,"
+        "  created_at TEXT NOT NULL DEFAULT (datetime('now'))"
+        ")"
+    );
 }
 
 struct TestHarness {
@@ -532,6 +545,94 @@ static void test_ungated_single_knower_scan_terminates() {
     check(conv && conv->state == "done", "E: scan conversation state == done");
 }
 
+// ─── G. FIX B: non-leader to:done in a GATED brainstorm routes to leader ─────
+//
+// Phase 14.1c. The live-run bug: after the human cleared the gate, a NON-leader
+// knower closed with `HANDOFF to: done` and ended the conversation early,
+// skipping later lenses. In a GATED brainstorm only the LEADER may end. Even
+// once the gate is cleared, a non-leader's to:done must bounce back to the
+// leader (so later lenses still run) — the leader is the only one that ends.
+
+static void test_reentry_nonleader_done_gated_routes_to_leader() {
+    std::cout << "\n=== G. GATED brainstorm: non-leader to:done → leader (not done) ===\n\n";
+
+    TestHarness h;
+    auto engine = h.make_engine();
+    auto conv_id = engine.start("Discuss design across lenses", 5.0, 20, "brainstorm");
+    auto pre = h.db.get_conversation(conv_id);
+    check(pre && pre->gated, "G: brainstorm is gated");
+
+    // Clear the gate directly (as if a human already approved one round), so we
+    // isolate the FIX B routing behaviour from the forced-gate (FIX 14.1b) path.
+    h.db.set_gate_cleared(conv_id, true);
+    {
+        auto c = h.db.get_conversation(conv_id);
+        check(c && c->gate_cleared, "G: gate_cleared set true (human approved)");
+    }
+
+    // Turn 1: leader → architect (discuss this lens).
+    auto t1 = h.latest_pending_task(conv_id);
+    h.complete_task(t1);
+    sui::quorum::ParsedOutput lead;
+    lead.handoff = sui::quorum::HandoffBlock{.to = "architect",
+                                             .prompt = "discuss your lens"};
+    engine.on_task_complete(t1, lead, 0.05);
+    check(h.latest_pending_agent(conv_id) == "architect", "G: architect has the ball");
+
+    // Turn 2: a NON-leader knower wrongly tries to end with HANDOFF to: done.
+    // In a gated brainstorm only the leader ends → bounce back to the leader so
+    // later lenses still run.
+    auto t2 = h.latest_pending_task(conv_id);
+    h.complete_task(t2);
+    sui::quorum::ParsedOutput nl_done;
+    nl_done.handoff = sui::quorum::HandoffBlock{.to = "done"};
+    bool a2 = engine.on_task_complete(t2, nl_done, 0.05);
+    check(a2, "G: STILL active after non-leader to:done in a gated brainstorm");
+
+    auto conv = h.db.get_conversation(conv_id);
+    check(conv && conv->state == "active",
+          "G: conversation state == active (not done)");
+    check(h.latest_pending_agent(conv_id) == "leader",
+          "G: ball routed back to the LEADER (not done)");
+}
+
+// ─── H. DB round-trip for the staged-write table (FIX A) ─────────────────────
+
+static void test_pending_vault_update_roundtrip() {
+    std::cout << "\n=== H. stage / count / get(order) / clear pending_vault_updates ===\n\n";
+
+    TestHarness h;
+    auto conv_id = h.db.create_conversation("Stage test", 5.0, 20);
+
+    h.db.stage_vault_update(conv_id, "architect", "thinker", "brainstorm",
+                            "knowledge/coupling.md", "first note body");
+    h.db.stage_vault_update(conv_id, "historian", "thinker", "brainstorm",
+                            "knowledge/history.md", "second note body");
+
+    check(h.db.count_pending_vault_updates(conv_id) == 2,
+          "H: count_pending_vault_updates == 2 after two stages");
+
+    auto pending = h.db.get_pending_vault_updates(conv_id);
+    check(pending.size() == 2, "H: get_pending_vault_updates returns 2 rows");
+    // Order by id (insertion order).
+    check(pending[0].agent_id == "architect" &&
+          pending[0].role == "thinker" &&
+          pending[0].mode == "brainstorm" &&
+          pending[0].path == "knowledge/coupling.md" &&
+          pending[0].content == "first note body",
+          "H: row 0 fields + order correct (architect first)");
+    check(pending[1].agent_id == "historian" &&
+          pending[1].path == "knowledge/history.md" &&
+          pending[1].content == "second note body",
+          "H: row 1 fields + order correct (historian second)");
+
+    h.db.clear_pending_vault_updates(conv_id);
+    check(h.db.count_pending_vault_updates(conv_id) == 0,
+          "H: count == 0 after clear_pending_vault_updates");
+    check(h.db.get_pending_vault_updates(conv_id).empty(),
+          "H: get returns empty after clear");
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -548,6 +649,8 @@ int main() {
     test_forced_gate_converts_premature_done();
     test_forced_gate_no_loop_after_clear();
     test_ungated_single_knower_scan_terminates();
+    test_reentry_nonleader_done_gated_routes_to_leader();
+    test_pending_vault_update_roundtrip();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)
               << " tests passed ---\n";

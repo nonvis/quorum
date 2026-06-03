@@ -100,6 +100,24 @@ inline void create_schema(Database& db) {
                "ON evaluations(conversation_id)");
     db.execute("CREATE INDEX IF NOT EXISTS idx_evaluations_scored "
                "ON evaluations(scored_agent_id)");
+
+    // Phase 14.1c (FIX A) — knower VAULT_UPDATEs held behind the brainstorm
+    // gate. Staged on suppression, flushed to the knower's vault once a human
+    // approves (gate_cleared). See Database::stage/get/clear/count_pending_*.
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS pending_vault_updates ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  conversation_id INTEGER NOT NULL,"
+        "  agent_id TEXT NOT NULL,"
+        "  role TEXT NOT NULL,"
+        "  mode TEXT NOT NULL,"
+        "  path TEXT NOT NULL,"
+        "  content TEXT NOT NULL,"
+        "  created_at TEXT NOT NULL DEFAULT (datetime('now'))"
+        ")"
+    );
+    db.execute("CREATE INDEX IF NOT EXISTS idx_pending_vault_updates_conv "
+               "ON pending_vault_updates(conversation_id)");
 }
 
 } // namespace sui::quorum
