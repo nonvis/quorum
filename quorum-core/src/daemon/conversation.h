@@ -109,6 +109,22 @@ inline bool auto_commit_on_completion(int64_t conv_id,
     return commit && commit->exit_code == 0;
 }
 
+// Phase 14.1 — the brainstorm-gate invariant, as a pure predicate so it can be
+// unit-tested in isolation and reused at the single VAULT_UPDATE apply site.
+//
+// Returns true iff a knower's VAULT_UPDATE must be SUPPRESSED because it is a
+// GATED brainstorm that has NOT yet passed the human-approval gate. The daemon
+// (not the LLM/SKILL) is the authority: a knower can be told to "write now"
+// before approval and the daemon will still drop the write. Once a human has
+// responded (gate_cleared == true) writes apply normally. Ungated scans
+// (gated == false — e.g. run-knower.sh --ungated single-knower passes) and
+// generic mode are NEVER suppressed by this gate. PURE: no I/O.
+inline bool brainstorm_gate_suppresses_write(const std::string& mode,
+                                             bool gated,
+                                             bool gate_cleared) {
+    return mode == "brainstorm" && gated && !gate_cleared;
+}
+
 class ConversationEngine {
 public:
     ConversationEngine(Database& db, const ConversationConfig& cfg,
@@ -137,9 +153,14 @@ public:
     // self-write their own lens's slice behind the human-approval gate).
     // Empty string falls back to cfg_.default_mode. Unknown values log a
     // warning and fall back to "generic".
+    // `gated` (Phase 14.1): tri-state via int — -1 = auto (brainstorm gates
+    // by default, generic never), 0 = force ungated (--ungated; single-knower
+    // scans write without a human), 1 = force gated. Auto keeps single-knower
+    // run-knower.sh scans (which pass --ungated) writing freely while
+    // interactive `converse --mode brainstorm` gates.
     int64_t start(const std::string& goal, double budget_usd = 5.0,
                   int max_rounds = 20, const std::string& mode = "",
-                  bool no_vault_write = false) {
+                  bool no_vault_write = false, int gated = -1) {
         reload_agents();  // Phase 9 finding #2 — refresh roster from disk
         auto conv_id = db_.create_conversation(goal, budget_usd, max_rounds);
 
@@ -164,6 +185,21 @@ public:
             "UPDATE conversations SET no_vault_write = ? WHERE id = ?",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_int(stmt, 1, no_vault_write ? 1 : 0);
+                sqlite3_bind_int64(stmt, 2, conv_id);
+            });
+
+        // Phase 14.1 — resolve & persist the brainstorm gate flag. Auto (-1):
+        // a brainstorm gates (interactive multi-lens human-approval default),
+        // generic does not. Explicit 0/1 (--ungated / future --gated) override.
+        // gate_cleared always starts 0 — only respond() flips it.
+        int resolved_gated = gated;
+        if (resolved_gated < 0) {
+            resolved_gated = (resolved_mode == "brainstorm") ? 1 : 0;
+        }
+        db_.execute(
+            "UPDATE conversations SET gated = ?, gate_cleared = 0 WHERE id = ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int(stmt, 1, resolved_gated);
                 sqlite3_bind_int64(stmt, 2, conv_id);
             });
 
@@ -203,6 +239,14 @@ public:
                       << "] --no-vault-write: VAULT_UPDATE writes will be SUPPRESSED for this conversation\n";
         }
 
+        // Phase 14.1 — operator-visible banner: knower writes are held until a
+        // human approves the gate (this is a gated brainstorm).
+        if (resolved_gated) {
+            std::cout << "[conversation " << conv_id
+                      << "] gated brainstorm: knower VAULT_UPDATE writes are HELD until you approve a "
+                         "waiting_for_human gate\n";
+        }
+
         return conv_id;
     }
 
@@ -232,13 +276,46 @@ public:
             if (!conv) return false;
         }
 
+        // Phase 14.1 — brainstorm re-entry routing. A brainstorm is hub-and-
+        // spoke: the leader routes each lens, the spoke (a NON-leader knower)
+        // discusses and returns the ball to the leader, and ONLY the leader
+        // ends (HANDOFF to: done) or gates (HANDOFF to: human). Pre-14.1 there
+        // was no path back to the leader once the team layer + default_path
+        // were removed (non-leader agents are forbidden to HANDOFF to: leader),
+        // so a multi-lens brainstorm collapsed to one lens then `done`. Here we
+        // make the roster's own promise true ("omit HANDOFF -> the ball returns
+        // to the leader"): in brainstorm mode, a non-leader's no-HANDOFF (or an
+        // explicit HANDOFF to: leader) routes the ball back to the leader. The
+        // leader is bounded by max_rounds/budget exactly as today.
+        std::string resolved_leader = cfg_.leader;
+        if (resolved_leader.empty() && !agents_.empty()) {
+            resolved_leader = agents_[0].id;
+        }
+        bool emitter_is_leader =
+            !resolved_leader.empty() && agent_id == resolved_leader;
+        bool brainstorm_mode = (conv->mode == "brainstorm");
+        bool handoff_targets_leader =
+            parsed.handoff.has_value() &&
+            !resolved_leader.empty() &&
+            parsed.handoff->to == resolved_leader;
+        bool brainstorm_reentry_to_leader =
+            brainstorm_mode && !emitter_is_leader && !resolved_leader.empty() &&
+            ( !parsed.handoff.has_value() || handoff_targets_leader );
+
         // 4. Determine next agent
         std::string next_agent;
         std::string next_prompt;
         bool is_done = false;
         bool is_human = false;
 
-        if (parsed.handoff.has_value()) {
+        if (brainstorm_reentry_to_leader) {
+            // Non-leader knower returned the ball (no HANDOFF, or HANDOFF to the
+            // leader). Route to the leader so it can gather the next lens, gate,
+            // or end. Carry any prompt the spoke set on an explicit-to-leader
+            // HANDOFF; otherwise the default continue prompt is used below.
+            next_agent = resolved_leader;
+            if (parsed.handoff.has_value()) next_prompt = parsed.handoff->prompt;
+        } else if (parsed.handoff.has_value()) {
             // HANDOFF override
             const auto& h = *parsed.handoff;
             if (h.to == "done") {
@@ -411,6 +488,11 @@ public:
         update_current_agent(conv_id, next_agent);
         increment_turn(conv_id);
 
+        if (brainstorm_reentry_to_leader) {
+            std::cout << "[conversation " << conv_id
+                      << "] brainstorm: ball returned to leader (" << next_agent
+                      << ") for next lens / gate\n";
+        }
         std::cout << "[conversation " << conv_id
                   << "] turn " << conv->round + 1
                   << " -> " << next_agent << "\n";
@@ -428,6 +510,11 @@ public:
             leader = agents_[0].id;
         }
         if (leader.empty()) return false;
+
+        // Phase 14.1 — a human responded to the waiting_for_human gate. Clear
+        // the gate so the daemon stops suppressing knower VAULT_UPDATE writes
+        // for this (gated brainstorm) conversation. No-op for ungated/generic.
+        db_.set_gate_cleared(conversation_id, true);
 
         auto session_id = db_.get_or_create_session(conversation_id, leader);
         std::string prompt = "# Human Response\n\n" + text + "\n";

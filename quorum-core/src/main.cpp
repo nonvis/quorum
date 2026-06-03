@@ -169,6 +169,7 @@ static void print_usage(const char* prog) {
               << "  --keep-alive         converse only: keep the daemon running after the conversation completes (persistent mode)\n"
               << "  --once               converse only: exit when the conversation completes (now the default; retained for back-compat)\n"
               << "  --no-vault-write     Suppress VAULT_UPDATE filesystem writes for this conversation\n"
+              << "  --ungated            converse only: opt a brainstorm out of the human-approval gate (single-knower scans); brainstorms gate by default\n"
               << "  --conversation <id>  Conversation ID for resume/close\n"
               << "  --help               Show this message\n"
               << "\nAgent create options:\n"
@@ -225,6 +226,11 @@ static void init_schema(sui::quorum::Database& db) {
     // Phase 10 Track 5 — --no-vault-write flag persistence (mirrors mode pattern)
     if (!column_exists(db, "conversations", "no_vault_write"))
         db.execute("ALTER TABLE conversations ADD COLUMN no_vault_write INTEGER NOT NULL DEFAULT 0");
+    // Phase 14.1 — daemon-enforced brainstorm gate columns (mirrors mode pattern)
+    if (!column_exists(db, "conversations", "gated"))
+        db.execute("ALTER TABLE conversations ADD COLUMN gated INTEGER NOT NULL DEFAULT 0");
+    if (!column_exists(db, "conversations", "gate_cleared"))
+        db.execute("ALTER TABLE conversations ADD COLUMN gate_cleared INTEGER NOT NULL DEFAULT 0");
 
     // Phase 7 Track 5 — system-prompt split + cache metrics
     if (!column_exists(db, "tasks", "system_prompt"))
@@ -466,6 +472,7 @@ int main(int argc, char* argv[]) {
     bool exit_on_complete = false;
     bool keep_alive = false;            // converse opt-out: stay persistent after completion
     bool conv_no_vault_write = false;   // Phase 10 Track 5
+    int conv_gated = -1;                 // Phase 14.1: -1 auto, 0 force ungated
     sui::quorum::cli::VaultDedupOptions vault_dedup_opts;
     sui::quorum::cli::VaultAuditOptions vault_audit_opts;
     std::string vault_subcmd_arg;
@@ -495,6 +502,11 @@ int main(int argc, char* argv[]) {
                 keep_alive = true;
             } else if (sub_args[i] == "--no-vault-write") {
                 conv_no_vault_write = true;
+            } else if (sub_args[i] == "--ungated") {
+                // Phase 14.1 — force gated=0. Single-knower scans
+                // (run-knower.sh) legitimately write without a human; the
+                // interactive multi-lens brainstorm gates by default.
+                conv_gated = 0;
             } else {
                 goal_text = sub_args[i]; // last positional = goal
             }
@@ -1004,7 +1016,7 @@ int main(int argc, char* argv[]) {
                 // A daemon is already running, so converse just seeds the conversation and
                 // returns; the running daemon completes it. converse runs no loop here, so
                 // exit-on-complete is moot in this branch.
-                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, mode_name, conv_no_vault_write);
+                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, mode_name, conv_no_vault_write, conv_gated);
                 std::cout << "Conversation " << id << " created.\n";
                 std::cout << "Daemon already running — it will pick up the conversation.\n";
             } else if (subcommand == "resume") {
@@ -1054,7 +1066,7 @@ int main(int argc, char* argv[]) {
             release_pid_lock(cfg.daemon.pid_file);
             return 1;
         }
-        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, mode_name, conv_no_vault_write);
+        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, mode_name, conv_no_vault_write, conv_gated);
         std::cout << "Conversation " << id << " created. Starting daemon...\n";
         if (exit_on_complete) {
             once_target_conv_id = id;
@@ -1191,11 +1203,21 @@ int main(int argc, char* argv[]) {
         // notice. The flag is set at conversation start() time and inherited by
         // resume/recover automatically.
         bool conv_no_vault_write = false;
+        // Phase 14.1 — gated-brainstorm suppression inputs. In a GATED
+        // brainstorm the daemon holds knower VAULT_UPDATE writes until a human
+        // clears the gate (gate_cleared). This is the structural enforcement of
+        // the L3 invariant — convention/SKILL text alone proved insufficient.
+        bool conv_gated = false;
+        bool conv_gate_cleared = false;
         {
             auto conv_id_opt = db.get_conversation_for_task(task_id);
             if (conv_id_opt) {
                 auto conv = db.get_conversation(*conv_id_opt);
-                if (conv) conv_no_vault_write = conv->no_vault_write;
+                if (conv) {
+                    conv_no_vault_write = conv->no_vault_write;
+                    conv_gated = conv->gated;
+                    conv_gate_cleared = conv->gate_cleared;
+                }
             }
         }
 
@@ -1256,6 +1278,20 @@ int main(int argc, char* argv[]) {
                                   << "(--no-vault-write, "
                                   << parsed.vault_updates.size()
                                   << " update(s) dropped)\n";
+                    } else if (sui::quorum::brainstorm_gate_suppresses_write(
+                                   task_mode, conv_gated, conv_gate_cleared)) {
+                        // Phase 14.1 — daemon-enforced brainstorm gate. The
+                        // knower (or a leader telling it to "write now") tried
+                        // to write before the human approved the gate. DROP the
+                        // write; the L3 invariant is structurally guaranteed
+                        // here, not by SKILL convention. Unconditional log so
+                        // the operator sees the held write. Once a human
+                        // responds (gate_cleared) writes apply normally.
+                        auto conv_id_for_log =
+                            db.get_conversation_for_task(task_id).value_or(0);
+                        std::cout << "[conversation " << conv_id_for_log
+                                  << "] VAULT_UPDATE suppressed — awaiting human "
+                                     "approval (gated brainstorm)\n";
                     } else {
                         auto applied = vault_manager.apply_all_updates_with_context(
                             agent_id, emitting_role, task_mode, cfg.agents,

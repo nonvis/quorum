@@ -27,6 +27,8 @@ struct ConversationRecord {
     std::string team;
     std::string mode{"generic"};  // execution mode: "generic" (default) or "brainstorm"
     bool no_vault_write{false};   // Phase 10 Track 5: suppress VAULT_UPDATE filesystem writes
+    bool gated{false};            // Phase 14.1: gated brainstorm — knower writes wait for approval
+    bool gate_cleared{false};     // Phase 14.1: human has approved (respond() flipped it)
 };
 
 class Database {
@@ -115,6 +117,19 @@ public:
         );
     }
 
+    // Phase 14.1 — flip the brainstorm gate to cleared (a human has approved).
+    // Called from respond(); once set, the daemon stops suppressing knower
+    // VAULT_UPDATE writes for this gated brainstorm.
+    void set_gate_cleared(int64_t conv_id, bool cleared) {
+        execute(
+            "UPDATE conversations SET gate_cleared = ? WHERE id = ?",
+            [&](sqlite3_stmt* stmt) {
+                sqlite3_bind_int(stmt, 1, cleared ? 1 : 0);
+                sqlite3_bind_int64(stmt, 2, conv_id);
+            }
+        );
+    }
+
     void complete_conversation(int64_t conv_id) {
         execute(
             "UPDATE conversations SET state = 'done', completed_at = datetime('now') WHERE id = ?",
@@ -130,7 +145,8 @@ public:
         query(
             "SELECT id, goal, state, round, max_rounds, budget_usd, spent_usd, "
             "current_agent, path_index, team, COALESCE(mode, 'generic'), "
-            "COALESCE(no_vault_write, 0) "
+            "COALESCE(no_vault_write, 0), COALESCE(gated, 0), "
+            "COALESCE(gate_cleared, 0) "
             "FROM conversations WHERE id = ?",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_int64(stmt, 1, conv_id);
@@ -154,6 +170,8 @@ public:
                 auto md = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 10));
                 rec.mode = md ? md : "generic";
                 rec.no_vault_write = sqlite3_column_int(stmt, 11) != 0;
+                rec.gated = sqlite3_column_int(stmt, 12) != 0;
+                rec.gate_cleared = sqlite3_column_int(stmt, 13) != 0;
             }
         );
         return found ? std::optional{rec} : std::nullopt;

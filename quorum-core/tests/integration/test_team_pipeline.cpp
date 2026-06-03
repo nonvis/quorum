@@ -55,7 +55,9 @@ static void init_schema(sui::quorum::Database& db) {
         "  path_index INTEGER NOT NULL DEFAULT 0,"
         "  team TEXT,"
         "  mode TEXT NOT NULL DEFAULT 'generic',"
-        "  no_vault_write INTEGER NOT NULL DEFAULT 0"
+        "  no_vault_write INTEGER NOT NULL DEFAULT 0,"
+        "  gated INTEGER NOT NULL DEFAULT 0,"
+        "  gate_cleared INTEGER NOT NULL DEFAULT 0"
         ")"
     );
     db.execute(
@@ -765,9 +767,16 @@ static void test_brainstorm_e2e() {
     }
 
     auto engine = h.make_engine();
+    // Phase 14.1 — drive a real brainstorm (mode arg is the 4th positional;
+    // the old /*team=*/ arg is gone, so the prior call silently fell back to
+    // generic). Pass --ungated semantics (gated=0) so this e2e models the
+    // inline single-pass discussion without the human gate suppressing the
+    // explicit per-knower writes it asserts. Gate-suppression has its own
+    // dedicated unit test (test_brainstorm_gate).
     auto conv_id = engine.start("Explore caching options",
                                 /*budget=*/5.0, /*max_rounds=*/20,
-                                /*team=*/"default", /*mode=*/"brainstorm");
+                                /*mode=*/"brainstorm",
+                                /*no_vault_write=*/false, /*gated=*/0);
 
     // Turn 1: leader → thinker
     auto t1 = h.get_pending_task(conv_id);

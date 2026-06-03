@@ -46,7 +46,9 @@ static void init_conversations_table(sui::quorum::Database& db) {
         "  path_index INTEGER NOT NULL DEFAULT 0,"
         "  team TEXT,"
         "  mode TEXT NOT NULL DEFAULT 'generic',"
-        "  no_vault_write INTEGER NOT NULL DEFAULT 0"
+        "  no_vault_write INTEGER NOT NULL DEFAULT 0,"
+        "  gated INTEGER NOT NULL DEFAULT 0,"
+        "  gate_cleared INTEGER NOT NULL DEFAULT 0"
         ")"
     );
 }
@@ -317,8 +319,20 @@ static void test_mode_column_migration() {
     if (!column_exists(db, "conversations", "no_vault_write")) {
         db.execute("ALTER TABLE conversations ADD COLUMN no_vault_write INTEGER NOT NULL DEFAULT 0");
     }
+    // Phase 14.1 — gated/gate_cleared are also referenced by
+    // get_conversation()'s SELECT, so apply them in this synthetic migration too.
+    if (!column_exists(db, "conversations", "gated")) {
+        db.execute("ALTER TABLE conversations ADD COLUMN gated INTEGER NOT NULL DEFAULT 0");
+    }
+    if (!column_exists(db, "conversations", "gate_cleared")) {
+        db.execute("ALTER TABLE conversations ADD COLUMN gate_cleared INTEGER NOT NULL DEFAULT 0");
+    }
     check(column_exists(db, "conversations", "mode"),
           "9: post-migration: mode column present");
+    check(column_exists(db, "conversations", "gated"),
+          "9: post-migration: gated column present");
+    check(column_exists(db, "conversations", "gate_cleared"),
+          "9: post-migration: gate_cleared column present");
 
     // 3. Existing row should now read mode = 'generic'
     auto legacy = db.get_conversation(pre_id);

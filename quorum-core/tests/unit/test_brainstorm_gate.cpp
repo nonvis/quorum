@@ -1,0 +1,473 @@
+// tests/unit/test_brainstorm_gate.cpp
+// Phase 14.1 — daemon-enforced brainstorm gate + leader re-entry routing.
+//
+// The live run of Phase 14 Gate B proved two structural failures: (1) the human
+// gate never fired because a knower wrote its VAULT_UPDATE before any approval
+// (convention/SKILL text is insufficient — the invariant must be daemon
+// enforced); and (2) the multi-lens brainstorm collapsed to one lens because a
+// non-leader knower had no path back to the leader once it produced its turn.
+//
+// This test pins the daemon-side fixes:
+//   A. `gated` defaults — brainstorm gates by default (1); --ungated forces 0;
+//      generic is never gated (0).
+//   B. respond() flips gate_cleared = 1 (the human-approval signal).
+//   C. The pure invariant brainstorm_gate_suppresses_write(): a write is
+//      SUPPRESSED iff brainstorm + gated + !gate_cleared; applied once cleared;
+//      NEVER suppressed for ungated scans or generic mode.
+//   D. Brainstorm re-entry routing — a NON-leader knower that emits NO HANDOFF
+//      (or a HANDOFF to the leader) routes the ball back to the leader, NOT to
+//      `done`. The leader is the only one that ends (to: done) or gates
+//      (to: human).
+//   E. An ungated single-knower scan (run-knower.sh shape: emit …, HANDOFF
+//      done) still terminates — its explicit `to: done` is honored.
+//
+// Run:  cd build && ctest -R test_brainstorm_gate --output-on-failure
+
+#include <cstdlib>
+#include <iostream>
+#include <string>
+
+#include <sqlite3.h>
+
+#include "storage/database.h"
+#include "daemon/conversation.h"
+#include "agent/output_parser.h"
+#include "utils/config.h"
+
+static int g_passed = 0;
+static int g_failed = 0;
+
+static void check(bool cond, const char* msg) {
+    if (!cond) {
+        std::cerr << "[FAIL] " << msg << "\n";
+        ++g_failed;
+        std::exit(1);
+    }
+    std::cout << "[PASS] " << msg << "\n";
+    ++g_passed;
+}
+
+// Schema mirrors the production conversations/tasks/agent_sessions tables,
+// INCLUDING the Phase 14.1 gated/gate_cleared columns (get_conversation() reads
+// them).
+static void init_schema(sui::quorum::Database& db) {
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS conversations ("
+        "  id INTEGER PRIMARY KEY,"
+        "  goal TEXT NOT NULL,"
+        "  state TEXT NOT NULL DEFAULT 'active',"
+        "  round INTEGER NOT NULL DEFAULT 0,"
+        "  max_rounds INTEGER NOT NULL DEFAULT 3,"
+        "  budget_usd REAL NOT NULL DEFAULT 5.0,"
+        "  spent_usd REAL NOT NULL DEFAULT 0.0,"
+        "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
+        "  completed_at TEXT,"
+        "  paused_reason TEXT,"
+        "  current_agent TEXT,"
+        "  path_index INTEGER NOT NULL DEFAULT 0,"
+        "  team TEXT,"
+        "  mode TEXT NOT NULL DEFAULT 'generic',"
+        "  no_vault_write INTEGER NOT NULL DEFAULT 0,"
+        "  gated INTEGER NOT NULL DEFAULT 0,"
+        "  gate_cleared INTEGER NOT NULL DEFAULT 0"
+        ")"
+    );
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS tasks ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  agent TEXT NOT NULL,"
+        "  task_type TEXT NOT NULL,"
+        "  status TEXT NOT NULL DEFAULT 'pending',"
+        "  prompt TEXT NOT NULL,"
+        "  result TEXT,"
+        "  token_in INTEGER,"
+        "  token_out INTEGER,"
+        "  cost REAL,"
+        "  error TEXT,"
+        "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
+        "  started_at TEXT,"
+        "  completed_at TEXT,"
+        "  conversation_id INTEGER REFERENCES conversations(id),"
+        "  session_id TEXT,"
+        "  system_prompt TEXT,"
+        "  cache_creation_input_tokens INTEGER,"
+        "  cache_read_input_tokens INTEGER"
+        ")"
+    );
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS agent_sessions ("
+        "  id          INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  cycle_id    INTEGER NOT NULL REFERENCES conversations(id),"
+        "  agent_id    TEXT NOT NULL,"
+        "  session_id  TEXT NOT NULL,"
+        "  UNIQUE(cycle_id, agent_id)"
+        ")"
+    );
+}
+
+struct TestHarness {
+    sui::quorum::Database db;
+    sui::quorum::ConversationConfig cfg;
+    std::vector<sui::quorum::AgentMetadata> agents;
+
+    TestHarness() : db(":memory:") {
+        init_schema(db);
+        cfg.leader = "leader";
+        cfg.default_max_rounds = 20;
+        cfg.default_budget_usd = 5.0;
+        // No default_path — mirrors the post-team-removal roster where routing
+        // is HANDOFF-driven and a no-HANDOFF should fall to the leader (in
+        // brainstorm) rather than to `done`.
+        agents.push_back(sui::quorum::AgentMetadata{.id = "leader",    .role = "leader"});
+        agents.push_back(sui::quorum::AgentMetadata{.id = "architect", .role = "thinker"});
+        agents.push_back(sui::quorum::AgentMetadata{.id = "historian", .role = "thinker"});
+    }
+
+    sui::quorum::ConversationEngine make_engine() {
+        return sui::quorum::ConversationEngine(db, cfg, agents);
+    }
+
+    void complete_task(int64_t task_id) {
+        db.execute(
+            "UPDATE tasks SET status = 'done', completed_at = datetime('now') WHERE id = ?",
+            [&](sqlite3_stmt* stmt) { sqlite3_bind_int64(stmt, 1, task_id); });
+    }
+
+    int64_t latest_pending_task(int64_t conv_id) {
+        return db.query_int(
+            "SELECT COALESCE(MAX(id), 0) FROM tasks WHERE conversation_id = " +
+            std::to_string(conv_id) + " AND status = 'pending'");
+    }
+
+    std::string latest_pending_agent(int64_t conv_id) {
+        std::string agent;
+        db.query(
+            "SELECT agent FROM tasks WHERE conversation_id = ? AND status = 'pending' "
+            "ORDER BY id DESC LIMIT 1",
+            [&](sqlite3_stmt* stmt) { sqlite3_bind_int64(stmt, 1, conv_id); },
+            [&](sqlite3_stmt* stmt) {
+                auto a = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                if (a) agent = a;
+            });
+        return agent;
+    }
+};
+
+// ─── A. gated defaults ───────────────────────────────────────────────────────
+
+static void test_gated_defaults() {
+    std::cout << "\n=== A. gated defaults (brainstorm=1, --ungated=0, generic=0) ===\n\n";
+
+    // A1: brainstorm (auto, gated=-1) → gated=1, gate_cleared=0
+    {
+        TestHarness h;
+        auto engine = h.make_engine();
+        auto conv_id = engine.start("Discuss design", 5.0, 20, "brainstorm");
+        auto conv = h.db.get_conversation(conv_id);
+        check(conv && conv->mode == "brainstorm", "A1: mode == brainstorm");
+        check(conv && conv->gated, "A1: brainstorm gates by default (gated=1)");
+        check(conv && !conv->gate_cleared, "A1: gate_cleared starts 0");
+    }
+    // A2: brainstorm + --ungated (gated=0) → gated=0
+    {
+        TestHarness h;
+        auto engine = h.make_engine();
+        auto conv_id = engine.start("Scan repo", 5.0, 20, "brainstorm",
+                                    /*no_vault_write=*/false, /*gated=*/0);
+        auto conv = h.db.get_conversation(conv_id);
+        check(conv && conv->mode == "brainstorm", "A2: mode == brainstorm");
+        check(conv && !conv->gated, "A2: --ungated forces gated=0 (single-knower scan)");
+    }
+    // A3: generic (auto) → gated=0
+    {
+        TestHarness h;
+        auto engine = h.make_engine();
+        auto conv_id = engine.start("Build X", 5.0, 20);  // generic
+        auto conv = h.db.get_conversation(conv_id);
+        check(conv && conv->mode == "generic", "A3: mode == generic");
+        check(conv && !conv->gated, "A3: generic is never gated (gated=0)");
+    }
+}
+
+// ─── B. respond() clears the gate ────────────────────────────────────────────
+
+static void test_respond_clears_gate() {
+    std::cout << "\n=== B. respond() sets gate_cleared = 1 ===\n\n";
+
+    TestHarness h;
+    auto engine = h.make_engine();
+    auto conv_id = engine.start("Discuss design", 5.0, 20, "brainstorm");
+
+    // Leader turn → HANDOFF to: human (gate)
+    auto t1 = h.latest_pending_task(conv_id);
+    h.complete_task(t1);
+    sui::quorum::ParsedOutput parsed;
+    parsed.handoff = sui::quorum::HandoffBlock{.to = "human",
+                                               .prompt = "approve writes?"};
+    bool active = engine.on_task_complete(t1, parsed, 0.05);
+    check(!active, "B: conversation parked at the gate (not active)");
+
+    auto pre = h.db.get_conversation(conv_id);
+    check(pre && pre->state == "waiting_for_human", "B: state == waiting_for_human");
+    check(pre && !pre->gate_cleared, "B: gate_cleared still 0 before respond");
+
+    bool ok = engine.respond(conv_id, "yes");
+    check(ok, "B: respond() accepted");
+
+    auto post = h.db.get_conversation(conv_id);
+    check(post && post->gate_cleared, "B: respond() flipped gate_cleared = 1");
+    check(post && post->state == "active", "B: conversation active again after respond");
+}
+
+// ─── C. the pure suppression invariant ───────────────────────────────────────
+
+static void test_suppression_invariant() {
+    std::cout << "\n=== C. brainstorm_gate_suppresses_write (the core invariant) ===\n\n";
+
+    using sui::quorum::brainstorm_gate_suppresses_write;
+
+    // Gated brainstorm, not cleared → SUPPRESS.
+    check(brainstorm_gate_suppresses_write("brainstorm", /*gated=*/true,
+                                           /*cleared=*/false),
+          "C: gated brainstorm + !cleared → write SUPPRESSED");
+    // Gated brainstorm, cleared → APPLY.
+    check(!brainstorm_gate_suppresses_write("brainstorm", /*gated=*/true,
+                                            /*cleared=*/true),
+          "C: gated brainstorm + cleared → write APPLIED");
+    // Ungated brainstorm (single-knower scan) → APPLY regardless of cleared.
+    check(!brainstorm_gate_suppresses_write("brainstorm", /*gated=*/false,
+                                            /*cleared=*/false),
+          "C: ungated brainstorm → write APPLIED (single-knower scan)");
+    // Generic mode → never suppressed by this gate.
+    check(!brainstorm_gate_suppresses_write("generic", /*gated=*/true,
+                                            /*cleared=*/false),
+          "C: generic mode → write APPLIED (gate is brainstorm-only)");
+    check(!brainstorm_gate_suppresses_write("generic", /*gated=*/false,
+                                            /*cleared=*/false),
+          "C: generic ungated → write APPLIED");
+}
+
+// ─── C2. end-to-end suppression then apply across the gate ───────────────────
+//
+// Walk a gated brainstorm conversation through the daemon's get_conversation()
+// view that the apply site reads: before respond() the predicate suppresses;
+// after respond() it applies. This pins the *conversation-state* wiring (start
+// → gate → respond) to the predicate, not just the predicate in isolation.
+
+static void test_suppression_across_gate_e2e() {
+    std::cout << "\n=== C2. suppression holds pre-approval, releases post-approval ===\n\n";
+
+    using sui::quorum::brainstorm_gate_suppresses_write;
+
+    TestHarness h;
+    auto engine = h.make_engine();
+    auto conv_id = engine.start("Discuss design", 5.0, 20, "brainstorm");
+
+    // Pre-approval: a knower "write now" would be suppressed.
+    {
+        auto c = h.db.get_conversation(conv_id);
+        check(c && brainstorm_gate_suppresses_write(c->mode, c->gated, c->gate_cleared),
+              "C2: pre-approval — knower VAULT_UPDATE SUPPRESSED");
+    }
+
+    // Run to the gate, then approve.
+    auto t1 = h.latest_pending_task(conv_id);
+    h.complete_task(t1);
+    sui::quorum::ParsedOutput gate;
+    gate.handoff = sui::quorum::HandoffBlock{.to = "human", .prompt = "approve?"};
+    engine.on_task_complete(t1, gate, 0.05);
+    engine.respond(conv_id, "yes");
+
+    // Post-approval: the same knower write now APPLIES.
+    {
+        auto c = h.db.get_conversation(conv_id);
+        check(c && !brainstorm_gate_suppresses_write(c->mode, c->gated, c->gate_cleared),
+              "C2: post-approval — knower VAULT_UPDATE APPLIED");
+    }
+}
+
+// ─── D. brainstorm re-entry routing (ball returns to leader) ─────────────────
+
+static void test_reentry_no_handoff_routes_to_leader() {
+    std::cout << "\n=== D1. brainstorm non-leader no-HANDOFF → leader (not done) ===\n\n";
+
+    TestHarness h;
+    auto engine = h.make_engine();
+    auto conv_id = engine.start("Where is the most coupling?", 5.0, 20, "brainstorm");
+
+    // Turn 1: leader → architect (discuss).
+    auto t1 = h.latest_pending_task(conv_id);
+    h.complete_task(t1);
+    sui::quorum::ParsedOutput lead;
+    lead.handoff = sui::quorum::HandoffBlock{.to = "architect",
+                                             .prompt = "DISCUSS coupling — no write"};
+    bool a1 = engine.on_task_complete(t1, lead, 0.05);
+    check(a1, "D1: active after leader → architect");
+    check(h.latest_pending_agent(conv_id) == "architect", "D1: architect has the ball");
+
+    // Turn 2: architect discusses, emits NO HANDOFF. Pre-14.1 this went to
+    // `done` (collapse). Now the ball must return to the leader.
+    auto t2 = h.latest_pending_task(conv_id);
+    h.complete_task(t2);
+    sui::quorum::ParsedOutput arch;  // no handoff
+    bool a2 = engine.on_task_complete(t2, arch, 0.05);
+    check(a2, "D1: STILL active after architect no-HANDOFF (no collapse to done)");
+
+    auto conv = h.db.get_conversation(conv_id);
+    check(conv && conv->state == "active", "D1: conversation state == active");
+    check(h.latest_pending_agent(conv_id) == "leader",
+          "D1: ball returned to the LEADER (re-entry), not done");
+}
+
+static void test_reentry_handoff_to_leader_routes_to_leader() {
+    std::cout << "\n=== D2. brainstorm non-leader HANDOFF→leader → leader ===\n\n";
+
+    TestHarness h;
+    auto engine = h.make_engine();
+    auto conv_id = engine.start("Discuss", 5.0, 20, "brainstorm");
+
+    auto t1 = h.latest_pending_task(conv_id);
+    h.complete_task(t1);
+    sui::quorum::ParsedOutput lead;
+    lead.handoff = sui::quorum::HandoffBlock{.to = "historian", .prompt = "discuss"};
+    engine.on_task_complete(t1, lead, 0.05);
+
+    auto t2 = h.latest_pending_task(conv_id);
+    h.complete_task(t2);
+    // Historian explicitly tries to hand back to the leader.
+    sui::quorum::ParsedOutput hist;
+    hist.handoff = sui::quorum::HandoffBlock{.to = "leader",
+                                             .prompt = "done discussing, back to you"};
+    bool a2 = engine.on_task_complete(t2, hist, 0.05);
+    check(a2, "D2: active after historian HANDOFF→leader");
+    check(h.latest_pending_agent(conv_id) == "leader",
+          "D2: ball routed to the leader");
+}
+
+static void test_reentry_explicit_other_agent_unchanged() {
+    std::cout << "\n=== D3. brainstorm non-leader HANDOFF→other knower unchanged ===\n\n";
+
+    TestHarness h;
+    auto engine = h.make_engine();
+    auto conv_id = engine.start("Discuss", 5.0, 20, "brainstorm");
+
+    auto t1 = h.latest_pending_task(conv_id);
+    h.complete_task(t1);
+    sui::quorum::ParsedOutput lead;
+    lead.handoff = sui::quorum::HandoffBlock{.to = "architect", .prompt = "discuss"};
+    engine.on_task_complete(t1, lead, 0.05);
+
+    auto t2 = h.latest_pending_task(conv_id);
+    h.complete_task(t2);
+    // Architect hands off to a SPECIFIC OTHER non-leader — must be honored
+    // (re-entry only fires for no-HANDOFF or HANDOFF-to-leader).
+    sui::quorum::ParsedOutput arch;
+    arch.handoff = sui::quorum::HandoffBlock{.to = "historian",
+                                             .prompt = "your lens next"};
+    bool a2 = engine.on_task_complete(t2, arch, 0.05);
+    check(a2, "D3: active after architect → historian");
+    check(h.latest_pending_agent(conv_id) == "historian",
+          "D3: explicit handoff to another knower is honored (not redirected to leader)");
+}
+
+static void test_leader_can_still_end_and_gate() {
+    std::cout << "\n=== D4. leader still ends (to: done) and gates (to: human) ===\n\n";
+
+    // Leader → done terminates even in brainstorm.
+    {
+        TestHarness h;
+        auto engine = h.make_engine();
+        auto conv_id = engine.start("Discuss", 5.0, 20, "brainstorm");
+        auto t1 = h.latest_pending_task(conv_id);
+        h.complete_task(t1);
+        sui::quorum::ParsedOutput done;
+        done.handoff = sui::quorum::HandoffBlock{.to = "done"};
+        bool a = engine.on_task_complete(t1, done, 0.05);
+        check(!a, "D4: leader HANDOFF→done ends the brainstorm");
+        auto conv = h.db.get_conversation(conv_id);
+        check(conv && conv->state == "done", "D4: state == done");
+    }
+    // Leader → human parks at the gate.
+    {
+        TestHarness h;
+        auto engine = h.make_engine();
+        auto conv_id = engine.start("Discuss", 5.0, 20, "brainstorm");
+        auto t1 = h.latest_pending_task(conv_id);
+        h.complete_task(t1);
+        sui::quorum::ParsedOutput gate;
+        gate.handoff = sui::quorum::HandoffBlock{.to = "human", .prompt = "approve?"};
+        bool a = engine.on_task_complete(t1, gate, 0.05);
+        check(!a, "D4: leader HANDOFF→human parks the brainstorm");
+        auto conv = h.db.get_conversation(conv_id);
+        check(conv && conv->state == "waiting_for_human", "D4: state == waiting_for_human");
+    }
+}
+
+// ─── E. ungated single-knower scan still terminates ──────────────────────────
+//
+// run-knower.sh shape: a SINGLE knower runs an ungated brainstorm and emits its
+// artifact + HANDOFF done. The explicit `to: done` must terminate even though
+// the emitter is a non-leader (terminal handoff is honored; re-entry only fires
+// for no-HANDOFF / HANDOFF-to-leader). And because the scan is ungated, the
+// write would NOT be suppressed.
+
+static void test_ungated_single_knower_scan_terminates() {
+    std::cout << "\n=== E. ungated single-knower scan: HANDOFF done terminates + writes ===\n\n";
+
+    TestHarness h;
+    auto engine = h.make_engine();
+    // Ungated brainstorm (gated=0), as run-knower.sh launches it.
+    auto conv_id = engine.start("Map the interconnections, emit map, HANDOFF done",
+                                5.0, 20, "brainstorm",
+                                /*no_vault_write=*/false, /*gated=*/0);
+    auto conv0 = h.db.get_conversation(conv_id);
+    check(conv0 && !conv0->gated, "E: scan is ungated (gated=0)");
+    check(conv0 && !sui::quorum::brainstorm_gate_suppresses_write(
+                       conv0->mode, conv0->gated, conv0->gate_cleared),
+          "E: ungated scan write would NOT be suppressed");
+
+    // The first agent IS the leader (start dispatches to leader). For a
+    // single-knower scan run-knower.sh's roster has the knower as leader; here
+    // we just assert the explicit `to: done` terminates from any emitter.
+    auto t1 = h.latest_pending_task(conv_id);
+    h.complete_task(t1);
+    // Route to a knower first (simulating the knower turn), which then HANDOFFs
+    // done with its artifact.
+    sui::quorum::ParsedOutput lead;
+    lead.handoff = sui::quorum::HandoffBlock{.to = "architect",
+                                             .prompt = "produce the map, HANDOFF done"};
+    engine.on_task_complete(t1, lead, 0.05);
+
+    auto t2 = h.latest_pending_task(conv_id);
+    h.complete_task(t2);
+    sui::quorum::ParsedOutput scan;
+    scan.handoff = sui::quorum::HandoffBlock{.to = "done"};
+    // (In production the VAULT_UPDATE is applied at the main.cpp apply site;
+    // here we assert the routing half — terminal handoff honored — which is the
+    // engine's responsibility.)
+    bool a2 = engine.on_task_complete(t2, scan, 0.05);
+    check(!a2, "E: knower HANDOFF→done terminates the ungated scan");
+    auto conv = h.db.get_conversation(conv_id);
+    check(conv && conv->state == "done", "E: scan conversation state == done");
+}
+
+// ─── main ────────────────────────────────────────────────────────────────────
+
+int main() {
+    std::cout << "=== Brainstorm Gate + Re-entry Routing Tests (Phase 14.1) ===\n";
+
+    test_gated_defaults();
+    test_respond_clears_gate();
+    test_suppression_invariant();
+    test_suppression_across_gate_e2e();
+    test_reentry_no_handoff_routes_to_leader();
+    test_reentry_handoff_to_leader_routes_to_leader();
+    test_reentry_explicit_other_agent_unchanged();
+    test_leader_can_still_end_and_gate();
+    test_ungated_single_knower_scan_terminates();
+
+    std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)
+              << " tests passed ---\n";
+
+    return g_failed > 0 ? 1 : 0;
+}

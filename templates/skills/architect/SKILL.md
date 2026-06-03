@@ -98,10 +98,13 @@ off the task instruction, **not** the mode:
 - **Discussion-participant task** — the task asks you to *explore, weigh in
   on, or discuss* a question, with **no** instruction to produce/refresh/write
   your artifact. → Contribute your structural analysis (components, edges,
-  coupling, change-impact) as plain reasoning + a SUMMARY, then HANDOFF back.
-  **Emit NO `VAULT_UPDATE`** — knowledge writes in a brainstorm are
-  human-gated; the leader will hand you an explicit write-now instruction
-  *after* the human approves, and only then do you write.
+  coupling, change-impact) as plain reasoning + a SUMMARY, then **end your turn
+  with NO HANDOFF** — the daemon returns the ball to the leader (do NOT
+  `HANDOFF to: leader`; just omit the HANDOFF block). **Emit NO
+  `VAULT_UPDATE`** — knowledge writes in a gated brainstorm are human-gated and
+  the daemon will **suppress** any early write; the leader hands you an
+  explicit write-now instruction *after* the human approves, and only then do
+  you write.
 
 When that write-now instruction does arrive, **synthesize the slice from the
 discussion's conclusion** (the edges/relationships the team actually settled

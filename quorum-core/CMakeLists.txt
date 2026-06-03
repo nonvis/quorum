@@ -138,6 +138,12 @@ target_include_directories(test_brainstorm_doer_reject PRIVATE src)
 target_link_libraries(test_brainstorm_doer_reject PRIVATE SQLite::SQLite3)
 add_test(NAME test_brainstorm_doer_reject COMMAND test_brainstorm_doer_reject)
 
+# Phase 14.1 — daemon-enforced brainstorm gate + leader re-entry routing
+add_executable(test_brainstorm_gate tests/unit/test_brainstorm_gate.cpp)
+target_include_directories(test_brainstorm_gate PRIVATE src)
+target_link_libraries(test_brainstorm_gate PRIVATE SQLite::SQLite3)
+add_test(NAME test_brainstorm_gate COMMAND test_brainstorm_gate)
+
 add_executable(test_phase_plan_checkoff tests/unit/test_phase_plan_checkoff.cpp)
 target_include_directories(test_phase_plan_checkoff PRIVATE src)
 target_link_libraries(test_phase_plan_checkoff PRIVATE SQLite::SQLite3)

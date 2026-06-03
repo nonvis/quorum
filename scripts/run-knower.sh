@@ -15,6 +15,12 @@
 # --mode brainstorm guarantees the agents are read-only (Read/Grep/Glob only —
 # no Bash, no writes), so the target repos are never mutated.
 #
+# --ungated (Phase 14.1): this is a SINGLE-KNOWER scan that legitimately writes
+# its vault artifact with no human in the loop. The daemon-enforced brainstorm
+# gate (which holds knower VAULT_UPDATE writes until a human approves) applies
+# only to interactive multi-lens `converse --mode brainstorm` runs, which gate
+# by default. --ungated opts this automated scan out so it writes freely.
+#
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
@@ -84,6 +90,7 @@ echo ""
 (
     cd "$PROJECT_DIR" && exec "$DAEMON" converse \
         --mode brainstorm \
+        --ungated \
         --budget "$BUDGET" \
         "$GOAL"
 ) &

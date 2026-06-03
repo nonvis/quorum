@@ -123,10 +123,12 @@ off the task instruction, **not** the mode:
   on, or discuss* a question ("what changed lately / where did we leave off"),
   with **no** instruction to produce/refresh/write your artifact. →
   Contribute your what-happened-when recall (dated timeline, where-I-left-off)
-  as plain reasoning + a SUMMARY, then HANDOFF back. **Emit NO `VAULT_UPDATE`**
-  — knowledge writes in a brainstorm are human-gated; the leader will hand you
-  an explicit write-now instruction *after* the human approves, and only then
-  do you write.
+  as plain reasoning + a SUMMARY, then **end your turn with NO HANDOFF** — the
+  daemon returns the ball to the leader (do NOT `HANDOFF to: leader`; just omit
+  the HANDOFF block). **Emit NO `VAULT_UPDATE`** — knowledge writes in a gated
+  brainstorm are human-gated and the daemon will **suppress** any early write;
+  the leader hands you an explicit write-now instruction *after* the human
+  approves, and only then do you write.
 
 When that write-now instruction does arrive, **synthesize the slice from the
 discussion's conclusion** (the activity/where-I-left-off the team actually
