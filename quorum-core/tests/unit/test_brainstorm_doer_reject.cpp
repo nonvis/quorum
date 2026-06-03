@@ -99,7 +99,6 @@ struct TestHarness {
         init_schema(db);
         cfg.leader = "leader";
         cfg.default_max_rounds = 20;
-        cfg.default_budget_usd = 5.0;
 
         // Roles matter here: the brainstorm guard keys off role == "doer".
         agents.push_back(sui::quorum::AgentMetadata{.id = "leader", .role = "leader"});
@@ -151,7 +150,7 @@ static void test_brainstorm_rejects_doer_handoff() {
     auto engine = h.make_engine();
 
     // Start in brainstorm mode.
-    auto conv_id = engine.start("Discuss the design", 5.0, 20, "brainstorm");
+    auto conv_id = engine.start("Discuss the design", 20, "brainstorm");
     auto conv0 = h.db.get_conversation(conv_id);
     check(conv0 && conv0->mode == "brainstorm", "A: conversation mode == brainstorm");
 
@@ -186,7 +185,7 @@ static void test_generic_still_dispatches_doer() {
     auto engine = h.make_engine();
 
     // Default (generic) mode — the guard must NOT fire.
-    auto conv_id = engine.start("Build X", 5.0, 20);
+    auto conv_id = engine.start("Build X", 20);
     auto conv0 = h.db.get_conversation(conv_id);
     check(conv0 && conv0->mode == "generic", "B: conversation mode == generic");
 

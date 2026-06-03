@@ -84,7 +84,7 @@ static void test_create_conversation_defaults() {
     init_conversations_table(db);
     init_tasks_table(db);
 
-    auto id = db.create_conversation("Analyze mm-bot", 5.0, 3);
+    auto id = db.create_conversation("Analyze mm-bot", 3);
     check(id > 0, "1: returned id > 0");
 
     auto rec = db.get_conversation(id);
@@ -105,7 +105,7 @@ static void test_update_state() {
     sui::quorum::Database db(":memory:");
     init_conversations_table(db);
 
-    auto id = db.create_conversation("Test goal", 5.0, 3);
+    auto id = db.create_conversation("Test goal", 3);
 
     db.update_conversation_state(id, "thinking");
     auto rec = db.get_conversation(id);
@@ -124,7 +124,7 @@ static void test_update_spent_accumulation() {
     sui::quorum::Database db(":memory:");
     init_conversations_table(db);
 
-    auto id = db.create_conversation("Budget test", 5.0, 3);
+    auto id = db.create_conversation("Budget test", 3);
 
     db.update_conversation_spent(id, 0.50);
     auto rec = db.get_conversation(id);
@@ -143,7 +143,7 @@ static void test_pause_with_reason() {
     sui::quorum::Database db(":memory:");
     init_conversations_table(db);
 
-    auto id = db.create_conversation("Pause test", 5.0, 3);
+    auto id = db.create_conversation("Pause test", 3);
 
     db.pause_conversation(id, "budget exceeded");
 
@@ -173,7 +173,7 @@ static void test_complete_conversation() {
     sui::quorum::Database db(":memory:");
     init_conversations_table(db);
 
-    auto id = db.create_conversation("Complete test", 5.0, 3);
+    auto id = db.create_conversation("Complete test", 3);
 
     db.complete_conversation(id);
 
@@ -203,7 +203,7 @@ static void test_task_conversation_link() {
     init_conversations_table(db);
     init_tasks_table(db);
 
-    auto conv_id = db.create_conversation("Link test", 5.0, 3);
+    auto conv_id = db.create_conversation("Link test", 3);
 
     // Insert a task with conversation_id set
     db.execute(
@@ -306,7 +306,7 @@ static void test_mode_column_migration() {
           "9: pre-migration: mode column absent");
 
     // Insert a row under the old schema
-    auto pre_id = db.create_conversation("legacy goal", 5.0, 3);
+    auto pre_id = db.create_conversation("legacy goal", 3);
     check(pre_id > 0, "9: pre-migration: legacy row inserted");
 
     // 2. Run the migrations (matches src/main.cpp init_schema migration).
@@ -341,7 +341,7 @@ static void test_mode_column_migration() {
           "9: legacy row has mode = 'generic' after ALTER");
 
     // 4. New INSERT without explicit mode → default 'generic'
-    auto new_id = db.create_conversation("post-migration goal", 5.0, 3);
+    auto new_id = db.create_conversation("post-migration goal", 3);
     auto new_rec = db.get_conversation(new_id);
     check(new_rec.has_value(), "9: new row readable");
     check(new_rec->mode == "generic",

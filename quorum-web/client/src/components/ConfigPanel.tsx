@@ -16,7 +16,6 @@ export function ConfigPanel({ onClose }: { onClose: () => void }) {
         log_level: c.daemon.log_level ?? "info",
         window_budget_usd: String(c.budget.window_budget_usd ?? ""),
         window_hours: String(c.budget.window_hours ?? ""),
-        default_budget_usd: String(c.conversations.default_budget_usd ?? ""),
         default_max_turns: String(c.conversations.default_max_turns ?? ""),
         leader: c.conversations.leader ?? "",
         default_path: c.conversations.default_path ?? "",
@@ -29,7 +28,7 @@ export function ConfigPanel({ onClose }: { onClose: () => void }) {
     try {
       const updates: Record<string, string | number | boolean> = {};
       for (const [key, value] of Object.entries(form)) {
-        if (["window_budget_usd", "window_hours", "default_budget_usd", "default_max_turns"].includes(key)) {
+        if (["window_budget_usd", "window_hours", "default_max_turns"].includes(key)) {
           const num = parseFloat(value);
           if (!isNaN(num)) updates[key] = num;
         } else {
@@ -143,7 +142,6 @@ export function ConfigPanel({ onClose }: { onClose: () => void }) {
           <h3 className="text-zinc-500 text-xs uppercase tracking-wide mb-2">Conversations</h3>
           <Field label="Leader" field="leader" />
           <Field label="Default Path" field="default_path" />
-          <Field label="Default Budget (USD)" field="default_budget_usd" type="number" />
           <Field label="Max Turns" field="default_max_turns" type="number" />
         </div>
 

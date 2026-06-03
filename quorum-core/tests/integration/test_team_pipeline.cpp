@@ -105,7 +105,6 @@ struct TestHarness {
         init_schema(db);
         cfg.leader = "leader";
         cfg.default_max_rounds = 20;
-        cfg.default_budget_usd = 5.0;
 
         agents.push_back(sui::quorum::AgentMetadata{
             .id = "leader", .name = "Leader",
@@ -275,7 +274,7 @@ static void test_A_full_default_path_cycle() {
 
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("Build a REST API", 5.0, 20);
+    auto conv_id = engine.start("Build a REST API", 20);
 
     // Turn 1: leader HANDOFFs to thinker carrying the "Task 1:" prefix
     auto t1 = h.get_pending_task(conv_id);
@@ -358,7 +357,7 @@ static void test_B_handoff_override_mid_path() {
     h.cfg.default_path = {"leader", "thinker", "doer", "recap"};
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("Build a web app", 5.0, 20);
+    auto conv_id = engine.start("Build a web app", 20);
 
     // Leader: HANDOFF to doer, skipping thinker
     auto t1 = h.get_pending_task(conv_id);
@@ -400,7 +399,7 @@ static void test_C_human_interaction_mid_flow() {
     TestHarness h;
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("Build something", 5.0, 20);
+    auto conv_id = engine.start("Build something", 20);
 
     // Leader: HANDOFF to human
     auto t1 = h.get_pending_task(conv_id);
@@ -455,7 +454,7 @@ static void test_E_roster_in_prompts() {
     sui::quorum::ContextAssembler assembler;
     auto engine = h.make_engine_with_assembler(&assembler);
 
-    auto conv_id = engine.start("Build something", 5.0, 20);
+    auto conv_id = engine.start("Build something", 20);
 
     // Inspect the leader's task prompt (stored in DB)
     auto t1 = h.get_pending_task(conv_id);
@@ -485,7 +484,7 @@ static void test_F_session_ids_consistent() {
     TestHarness h;
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("Build X", 5.0, 20);
+    auto conv_id = engine.start("Build X", 20);
 
     // Turn 1: leader -> doer
     auto t1 = h.get_pending_task(conv_id);
@@ -547,7 +546,7 @@ static void test_H_max_turns_pause() {
     auto engine = h.make_engine();
 
     // max_rounds=3: start sets round=1, completions increment
-    auto conv_id = engine.start("Build X", 5.0, 3);
+    auto conv_id = engine.start("Build X", 3);
 
     // Completion 1: round=1 < 3 -> active
     auto t1 = h.get_pending_task(conv_id);
@@ -593,7 +592,7 @@ static void test_I_mixed_blocks() {
     TestHarness h;
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("Analyze codebase", 5.0, 20);
+    auto conv_id = engine.start("Analyze codebase", 20);
 
     auto t1 = h.get_pending_task(conv_id);
     std::string output =
@@ -634,7 +633,7 @@ static void test_J_empty_output() {
         h.cfg.default_path = {"leader", "thinker", "doer"};
         auto engine = h.make_engine();
 
-        auto conv_id = engine.start("Build X", 5.0, 20);
+        auto conv_id = engine.start("Build X", 20);
         auto t1 = h.get_pending_task(conv_id);
         auto r1 = simulate_turn(h, engine, t1.id,
             "I looked at the code but I'm not sure what to do.", 0.10);
@@ -650,7 +649,7 @@ static void test_J_empty_output() {
         // No default_path set (empty vector)
         auto engine = h.make_engine();
 
-        auto conv_id = engine.start("Build X", 5.0, 20);
+        auto conv_id = engine.start("Build X", 20);
         auto t1 = h.get_pending_task(conv_id);
         auto r1 = simulate_turn(h, engine, t1.id,
             "I looked at the code but I'm not sure what to do.", 0.10);
@@ -774,7 +773,7 @@ static void test_brainstorm_e2e() {
     // explicit per-knower writes it asserts. Gate-suppression has its own
     // dedicated unit test (test_brainstorm_gate).
     auto conv_id = engine.start("Explore caching options",
-                                /*budget=*/5.0, /*max_rounds=*/20,
+                                /*max_rounds=*/20,
                                 /*mode=*/"brainstorm",
                                 /*no_vault_write=*/false, /*gated=*/0);
 

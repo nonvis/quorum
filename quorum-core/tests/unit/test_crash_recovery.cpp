@@ -92,7 +92,6 @@ struct TestHarness {
         init_schema(db);
         cfg.leader = "leader";
         cfg.default_max_rounds = 20;
-        cfg.default_budget_usd = 5.0;
 
         agents.push_back(sui::quorum::AgentMetadata{.id = "leader"});
         agents.push_back(sui::quorum::AgentMetadata{.id = "thinker"});
@@ -200,7 +199,7 @@ static void test_stale_task_recovered() {
     TestHarness h;
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("test goal", 5.0, 20);
+    auto conv_id = engine.start("test goal", 20);
     auto task1 = h.get_pending_task(conv_id);
     check(task1.id > 0, "A: initial leader task created");
 
@@ -248,7 +247,7 @@ static void test_no_recover_closed_conversation() {
     TestHarness h;
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("test goal", 5.0, 20);
+    auto conv_id = engine.start("test goal", 20);
     auto task1 = h.get_pending_task(conv_id);
 
     // Close the conversation
@@ -278,8 +277,8 @@ static void test_multiple_conversations_recovered() {
     auto engine = h.make_engine();
 
     // Start two conversations
-    auto conv1 = engine.start("goal 1", 5.0, 20);
-    auto conv2 = engine.start("goal 2", 5.0, 20);
+    auto conv1 = engine.start("goal 1", 20);
+    auto conv2 = engine.start("goal 2", 20);
 
     // For each: get pending task, mark active, then mark failed
     auto task1 = h.get_pending_task(conv1);
@@ -326,7 +325,7 @@ static void test_done_conversation_not_recovered() {
     TestHarness h;
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("test goal", 5.0, 20);
+    auto conv_id = engine.start("test goal", 20);
     auto task1 = h.get_pending_task(conv_id);
 
     // Mark task active then failed (simulating crash)
@@ -370,7 +369,7 @@ static void test_recovery_prompt_contains_agent_name() {
     TestHarness h;
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("test goal", 5.0, 20);
+    auto conv_id = engine.start("test goal", 20);
 
     // Get and complete leader task with HANDOFF to doer
     auto task1 = h.get_pending_task(conv_id);

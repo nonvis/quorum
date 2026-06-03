@@ -93,7 +93,6 @@ struct TestHarness {
         init_schema(db);
         cfg.leader = "leader";
         cfg.default_max_rounds = 20;
-        cfg.default_budget_usd = 5.0;
 
         agents.push_back(sui::quorum::AgentMetadata{.id = "leader"});
         agents.push_back(sui::quorum::AgentMetadata{.id = "thinker"});
@@ -161,7 +160,7 @@ static void test_start_creates_leader_task() {
     TestHarness h;
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("Build X", 5.0, 20);
+    auto conv_id = engine.start("Build X", 20);
     check(conv_id > 0, "A: conv_id > 0");
 
     auto task = h.get_pending_task(conv_id);
@@ -183,7 +182,7 @@ static void test_handoff_routing() {
     TestHarness h;
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("Build X", 5.0, 20);
+    auto conv_id = engine.start("Build X", 20);
     auto task1 = h.get_pending_task(conv_id);
     h.complete_task(task1.id);
 
@@ -206,7 +205,7 @@ static void test_handoff_done() {
     TestHarness h;
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("Build X", 5.0, 20);
+    auto conv_id = engine.start("Build X", 20);
     auto task1 = h.get_pending_task(conv_id);
     h.complete_task(task1.id);
 
@@ -229,7 +228,7 @@ static void test_handoff_human() {
     TestHarness h;
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("Build X", 5.0, 20);
+    auto conv_id = engine.start("Build X", 20);
     auto task1 = h.get_pending_task(conv_id);
     h.complete_task(task1.id);
 
@@ -255,7 +254,7 @@ static void test_respond_to_human() {
     auto engine = h.make_engine();
 
     // Setup: start → handoff to human
-    auto conv_id = engine.start("Build X", 5.0, 20);
+    auto conv_id = engine.start("Build X", 20);
     auto task1 = h.get_pending_task(conv_id);
     h.complete_task(task1.id);
 
@@ -287,7 +286,7 @@ static void test_default_path_routing() {
     h.cfg.default_path = {"leader", "thinker", "doer", "scribe"};
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("Build X", 5.0, 20);
+    auto conv_id = engine.start("Build X", 20);
 
     // Complete leader (path_index=0) → should go to thinker (index 1)
     auto task1 = h.get_pending_task(conv_id);
@@ -318,7 +317,7 @@ static void test_default_path_end_done() {
     h.cfg.default_path = {"leader", "doer"};
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("Build X", 5.0, 20);
+    auto conv_id = engine.start("Build X", 20);
 
     // Complete leader → doer
     auto task1 = h.get_pending_task(conv_id);
@@ -345,7 +344,7 @@ static void test_handoff_overrides_default_path() {
     h.cfg.default_path = {"leader", "thinker", "doer"};
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("Build X", 5.0, 20);
+    auto conv_id = engine.start("Build X", 20);
 
     // Complete leader with HANDOFF to scribe (not next in path)
     auto task1 = h.get_pending_task(conv_id);
@@ -369,7 +368,7 @@ static void test_unknown_agent_fallback() {
     TestHarness h;
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("Build X", 5.0, 20);
+    auto conv_id = engine.start("Build X", 20);
     auto task1 = h.get_pending_task(conv_id);
     h.complete_task(task1.id);
 
@@ -393,7 +392,7 @@ static void test_max_turns_exceeded() {
 
     // max_turns=2: start() → round=1, first on_task_complete → round=2 + creates task,
     // second on_task_complete → round=2 >= max=2 → pause
-    auto conv_id = engine.start("Build X", 5.0, 2);
+    auto conv_id = engine.start("Build X", 2);
 
     // Turn 1 complete → creates turn 2
     auto task1 = h.get_pending_task(conv_id);
@@ -433,7 +432,7 @@ static void test_session_resume_within_cycle() {
     TestHarness h;
     auto engine = h.make_engine();
 
-    auto conv_id = engine.start("Build X", 5.0, 20);
+    auto conv_id = engine.start("Build X", 20);
 
     // Leader gets initial task with session S1
     auto task1 = h.get_pending_task(conv_id);

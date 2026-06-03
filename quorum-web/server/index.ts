@@ -559,7 +559,6 @@ app.get("/api/config", (c) => {
     // Parse conversations section
     const leader = yaml.match(/^\s+leader:\s*(.+)/m)?.[1]?.trim() ?? null;
     const defaultPath = yaml.match(/^\s+default_path:\s*(.+)/m)?.[1]?.trim() ?? null;
-    const convBudget = parseFloat(yaml.match(/^\s+default_budget_usd:\s*(.+)/m)?.[1] ?? "0") || null;
     const maxRounds = parseInt(yaml.match(/^\s+default_max_rounds:\s*(.+)/m)?.[1] ?? "0") || null;
 
     // Parse agents
@@ -569,7 +568,7 @@ app.get("/api/config", (c) => {
       config_path: config.configPath,
       daemon: { target_dir: targetDir, pid_file: pidFile, data_dir: dataDir, log_level: logLevel },
       budget: { window_budget_usd: windowBudget, window_hours: windowHours },
-      conversations: { leader, default_path: defaultPath, default_budget_usd: convBudget, default_max_turns: maxRounds },
+      conversations: { leader, default_path: defaultPath, default_max_turns: maxRounds },
       agents: agentConfigs,
     });
   } catch {
@@ -577,7 +576,7 @@ app.get("/api/config", (c) => {
       config_path: config.configPath,
       daemon: { target_dir: null, pid_file: null, data_dir: null, log_level: null },
       budget: { window_budget_usd: null, window_hours: null },
-      conversations: { leader: null, default_path: null, default_budget_usd: null, default_max_turns: null },
+      conversations: { leader: null, default_path: null, default_max_turns: null },
       agents: [],
     });
   }
@@ -595,7 +594,6 @@ app.post("/api/config", async (c) => {
       log_level: "log_level",
       window_budget_usd: "window_budget_usd",
       window_hours: "window_hours",
-      default_budget_usd: "default_budget_usd",
       default_max_turns: "default_max_rounds",
       leader: "leader",
       default_path: "default_path",
@@ -754,27 +752,6 @@ app.post("/api/resume/:id", async (c) => {
   console.log(`[resume] spawning daemon for conversation ${id}`);
   spawnDaemon("resume", "--conversation", id);
   return c.json({ success: true });
-});
-
-app.post("/api/conversations/:id/budget", async (c) => {
-  const id = Number(c.req.param("id"));
-  const body = await c.req.json<{ budget_usd: number }>();
-  if (!body.budget_usd || body.budget_usd <= 0) {
-    return c.json({ error: "budget_usd must be positive" }, 400);
-  }
-  dbWrite("UPDATE conversations SET budget_usd = ? WHERE id = ?", [body.budget_usd, id]);
-
-  // If conversation was paused due to budget, auto-resume
-  const conv = freshQuery<{ state: string; paused_reason: string | null }>(
-    "SELECT state, paused_reason FROM conversations WHERE id = ?",
-    [id]
-  );
-  if (conv[0]?.state === "paused" && conv[0]?.paused_reason?.includes("budget")) {
-    console.log(`[budget] conversation ${id} budget increased to $${body.budget_usd}, auto-resuming`);
-    spawnDaemon("resume", "--conversation", String(id));
-  }
-
-  return c.json({ success: true, budget_usd: body.budget_usd });
 });
 
 // Raise a conversation's max_rounds (the real per-conversation limiter — the

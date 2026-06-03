@@ -183,11 +183,11 @@ public:
     // scans write without a human), 1 = force gated. Auto keeps single-knower
     // run-knower.sh scans (which pass --ungated) writing freely while
     // interactive `converse --mode brainstorm` gates.
-    int64_t start(const std::string& goal, double budget_usd = 5.0,
+    int64_t start(const std::string& goal,
                   int max_rounds = 20, const std::string& mode = "",
                   bool no_vault_write = false, int gated = -1) {
         reload_agents();  // Phase 9 finding #2 — refresh roster from disk
-        auto conv_id = db_.create_conversation(goal, budget_usd, max_rounds);
+        auto conv_id = db_.create_conversation(goal, max_rounds);
 
         // Resolve mode: explicit arg > config default > "generic"
         std::string resolved_mode = mode.empty() ? cfg_.default_mode : mode;

@@ -221,7 +221,6 @@ static void test_C_db_persistence() {
     sui::quorum::ConversationConfig cfg;
     cfg.leader = "leader";
     cfg.default_max_rounds = 20;
-    cfg.default_budget_usd = 5.0;
 
     std::vector<sui::quorum::AgentMetadata> agents;
     agents.push_back(sui::quorum::AgentMetadata{.id = "leader"});
@@ -229,8 +228,8 @@ static void test_C_db_persistence() {
     sui::quorum::ConversationEngine engine(db, cfg, agents);
 
     // Start two conversations: one with flag clear, one set.
-    auto id_clear = engine.start("goal-clear", 5.0, 20, "", false);
-    auto id_set   = engine.start("goal-set",   5.0, 20, "", true);
+    auto id_clear = engine.start("goal-clear", 20, "", false);
+    auto id_set   = engine.start("goal-set", 20, "", true);
 
     auto conv_clear = db.get_conversation(id_clear);
     auto conv_set   = db.get_conversation(id_set);

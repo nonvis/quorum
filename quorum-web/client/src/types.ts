@@ -81,7 +81,6 @@ export interface ProjectConfig {
   conversations: {
     leader: string | null;
     default_path: string | null;
-    default_budget_usd: number | null;
     default_max_turns: number | null;
   };
   agents: string[];

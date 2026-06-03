@@ -127,7 +127,6 @@ struct TestHarness {
         init_schema(db);
         cfg.leader = "leader";
         cfg.default_max_rounds = 20;
-        cfg.default_budget_usd = 5.0;
         // No default_path — mirrors the post-team-removal roster where routing
         // is HANDOFF-driven and a no-HANDOFF should fall to the leader (in
         // brainstorm) rather than to `done`.
@@ -188,7 +187,7 @@ static void test_gated_defaults() {
     {
         TestHarness h;
         auto engine = h.make_engine();
-        auto conv_id = engine.start("Discuss design", 5.0, 20, "brainstorm");
+        auto conv_id = engine.start("Discuss design", 20, "brainstorm");
         auto conv = h.db.get_conversation(conv_id);
         check(conv && conv->mode == "brainstorm", "A1: mode == brainstorm");
         check(conv && conv->gated, "A1: brainstorm gates by default (gated=1)");
@@ -198,7 +197,7 @@ static void test_gated_defaults() {
     {
         TestHarness h;
         auto engine = h.make_engine();
-        auto conv_id = engine.start("Scan repo", 5.0, 20, "brainstorm",
+        auto conv_id = engine.start("Scan repo", 20, "brainstorm",
                                     /*no_vault_write=*/false, /*gated=*/0);
         auto conv = h.db.get_conversation(conv_id);
         check(conv && conv->mode == "brainstorm", "A2: mode == brainstorm");
@@ -208,7 +207,7 @@ static void test_gated_defaults() {
     {
         TestHarness h;
         auto engine = h.make_engine();
-        auto conv_id = engine.start("Build X", 5.0, 20);  // generic
+        auto conv_id = engine.start("Build X", 20);  // generic
         auto conv = h.db.get_conversation(conv_id);
         check(conv && conv->mode == "generic", "A3: mode == generic");
         check(conv && !conv->gated, "A3: generic is never gated (gated=0)");
@@ -222,7 +221,7 @@ static void test_respond_clears_gate() {
 
     TestHarness h;
     auto engine = h.make_engine();
-    auto conv_id = engine.start("Discuss design", 5.0, 20, "brainstorm");
+    auto conv_id = engine.start("Discuss design", 20, "brainstorm");
 
     // Leader turn → HANDOFF to: human (gate)
     auto t1 = h.latest_pending_task(conv_id);
@@ -287,7 +286,7 @@ static void test_suppression_across_gate_e2e() {
 
     TestHarness h;
     auto engine = h.make_engine();
-    auto conv_id = engine.start("Discuss design", 5.0, 20, "brainstorm");
+    auto conv_id = engine.start("Discuss design", 20, "brainstorm");
 
     // Pre-approval: a knower "write now" would be suppressed.
     {
@@ -319,7 +318,7 @@ static void test_reentry_no_handoff_routes_to_leader() {
 
     TestHarness h;
     auto engine = h.make_engine();
-    auto conv_id = engine.start("Where is the most coupling?", 5.0, 20, "brainstorm");
+    auto conv_id = engine.start("Where is the most coupling?", 20, "brainstorm");
 
     // Turn 1: leader → architect (discuss).
     auto t1 = h.latest_pending_task(conv_id);
@@ -350,7 +349,7 @@ static void test_reentry_handoff_to_leader_routes_to_leader() {
 
     TestHarness h;
     auto engine = h.make_engine();
-    auto conv_id = engine.start("Discuss", 5.0, 20, "brainstorm");
+    auto conv_id = engine.start("Discuss", 20, "brainstorm");
 
     auto t1 = h.latest_pending_task(conv_id);
     h.complete_task(t1);
@@ -375,7 +374,7 @@ static void test_reentry_explicit_other_agent_unchanged() {
 
     TestHarness h;
     auto engine = h.make_engine();
-    auto conv_id = engine.start("Discuss", 5.0, 20, "brainstorm");
+    auto conv_id = engine.start("Discuss", 20, "brainstorm");
 
     auto t1 = h.latest_pending_task(conv_id);
     h.complete_task(t1);
@@ -406,7 +405,7 @@ static void test_leader_can_still_end_and_gate() {
     {
         TestHarness h;
         auto engine = h.make_engine();
-        auto conv_id = engine.start("Discuss", 5.0, 20, "brainstorm");
+        auto conv_id = engine.start("Discuss", 20, "brainstorm");
         auto t1 = h.latest_pending_task(conv_id);
         h.complete_task(t1);
         sui::quorum::ParsedOutput done;
@@ -421,7 +420,7 @@ static void test_leader_can_still_end_and_gate() {
     {
         TestHarness h;
         auto engine = h.make_engine();
-        auto conv_id = engine.start("Discuss", 5.0, 20, "brainstorm");
+        auto conv_id = engine.start("Discuss", 20, "brainstorm");
         auto t1 = h.latest_pending_task(conv_id);
         h.complete_task(t1);
         sui::quorum::ParsedOutput gate;
@@ -448,7 +447,7 @@ static void test_forced_gate_converts_premature_done() {
 
     TestHarness h;
     auto engine = h.make_engine();
-    auto conv_id = engine.start("Discuss design", 5.0, 20, "brainstorm");
+    auto conv_id = engine.start("Discuss design", 20, "brainstorm");
     auto pre = h.db.get_conversation(conv_id);
     check(pre && pre->gated && !pre->gate_cleared,
           "F1: gated brainstorm, gate not yet cleared");
@@ -475,7 +474,7 @@ static void test_forced_gate_no_loop_after_clear() {
 
     TestHarness h;
     auto engine = h.make_engine();
-    auto conv_id = engine.start("Discuss design", 5.0, 20, "brainstorm");
+    auto conv_id = engine.start("Discuss design", 20, "brainstorm");
 
     // Premature to:done → forced gate.
     auto t1 = h.latest_pending_task(conv_id);
@@ -525,7 +524,7 @@ static void test_ungated_single_knower_scan_terminates() {
     auto engine = h.make_engine();
     // Ungated brainstorm (gated=0), as run-knower.sh launches it.
     auto conv_id = engine.start("Map the interconnections, emit map, HANDOFF done",
-                                5.0, 20, "brainstorm",
+                                20, "brainstorm",
                                 /*no_vault_write=*/false, /*gated=*/0);
     auto conv0 = h.db.get_conversation(conv_id);
     check(conv0 && !conv0->gated, "E: scan is ungated (gated=0)");
@@ -571,7 +570,7 @@ static void test_reentry_nonleader_done_gated_routes_to_leader() {
 
     TestHarness h;
     auto engine = h.make_engine();
-    auto conv_id = engine.start("Discuss design across lenses", 5.0, 20, "brainstorm");
+    auto conv_id = engine.start("Discuss design across lenses", 20, "brainstorm");
     auto pre = h.db.get_conversation(conv_id);
     check(pre && pre->gated, "G: brainstorm is gated");
 
@@ -615,7 +614,7 @@ static void test_pending_vault_update_roundtrip() {
     std::cout << "\n=== H. stage / count / get(order) / clear pending_vault_updates ===\n\n";
 
     TestHarness h;
-    auto conv_id = h.db.create_conversation("Stage test", 5.0, 20);
+    auto conv_id = h.db.create_conversation("Stage test", 20);
 
     h.db.stage_vault_update(conv_id, "architect", "thinker", "brainstorm",
                             "knowledge/coupling.md", "first note body");
@@ -675,7 +674,7 @@ static void test_respond_approve_keeps_and_closes() {
     std::cout << "\n=== I2. respond approve: staged kept + leader told to close ===\n\n";
     TestHarness h;
     auto engine = h.make_engine();
-    auto conv_id = engine.start("Capture two notes", 5.0, 20, "brainstorm");
+    auto conv_id = engine.start("Capture two notes", 20, "brainstorm");
     h.db.stage_vault_update(conv_id, "architect", "thinker", "brainstorm",
                             "knowledge/ref-x.md", "x content");
     auto t1 = h.latest_pending_task(conv_id);
@@ -701,7 +700,7 @@ static void test_respond_reject_discards() {
     std::cout << "\n=== I3. respond reject: staged discarded, nothing lands ===\n\n";
     TestHarness h;
     auto engine = h.make_engine();
-    auto conv_id = engine.start("Capture", 5.0, 20, "brainstorm");
+    auto conv_id = engine.start("Capture", 20, "brainstorm");
     h.db.stage_vault_update(conv_id, "architect", "thinker", "brainstorm",
                             "knowledge/ref-y.md", "y content");
     auto t1 = h.latest_pending_task(conv_id);

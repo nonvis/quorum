@@ -52,22 +52,18 @@ fi
 case "$KNOWER" in
     cartographer)
         ARTIFACT="$PROJECT_DIR/.quorum/vaults/cartographer/knowledge/ref-project-index.md"
-        BUDGET="2.0"
         GOAL="Produce/refresh the project layout index per your SKILL: read .quorum/cartographer/layout.json + the root CLAUDE.md (honor it), emit knowledge/ref-project-index.md, HANDOFF done."
         ;;
     architect)
         ARTIFACT="$PROJECT_DIR/.quorum/vaults/architect/knowledge/ref-architecture-map.md"
-        BUDGET="3.0"
         GOAL="Map the component interconnections per your SKILL: read the cartographer index + CLAUDE.md, recover edges with file evidence, emit knowledge/ref-architecture-map.md, HANDOFF done."
         ;;
     historian)
         ARTIFACT="$PROJECT_DIR/.quorum/vaults/historian/knowledge/ref-decisions.md"
-        BUDGET="2.5"
         GOAL="Produce the decision history per your historian SKILL: read .quorum/historian/decisions-raw.json + CLAUDE.md (honor it), recognize significant decisions (merged-to-main PRs first-class), track pivots/supersession with PR/commit provenance, surface open PRs as in-flight, emit knowledge/ref-decisions.md, HANDOFF done."
         ;;
     recap)
         ARTIFACT="$PROJECT_DIR/.quorum/vaults/recap/knowledge/ref-recap.md"
-        BUDGET="2.5"
         GOAL="Produce/refresh the recap per your recap SKILL: read .quorum/recap/timeline-raw.json + .quorum/recap/messages-dump.md + .quorum/recap/linear-dump.md (if present) + CLAUDE.md (honor it); weave git commits + merged-in-window PRs + timestamped messages into ONE condensed dated component-grouped timeline; draft the where-i-left-off section (operator owns the next-step line); keep the Linear status overlay SEPARATE and only if the query/goal names Linear; never fabricate (git is the check); emit knowledge/ref-recap.md, HANDOFF done."
         ;;
     *)
@@ -78,7 +74,7 @@ esac
 
 echo "==> running $KNOWER (read-only brainstorm pass) ..."
 echo "    artifact : $ARTIFACT"
-echo "    budget   : \$$BUDGET   mode: brainstorm (read-only)"
+echo "    mode: brainstorm (read-only)"
 echo ""
 
 # ── Run converse (happy path: it exits on its own when the conversation is
@@ -91,7 +87,6 @@ echo ""
     cd "$PROJECT_DIR" && exec "$DAEMON" converse \
         --mode brainstorm \
         --ungated \
-        --budget "$BUDGET" \
         "$GOAL"
 ) &
 CONVERSE_PID=$!

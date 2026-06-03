@@ -125,7 +125,7 @@ static void test_session_id_round_trip() {
     sui::quorum::Database db(":memory:");
     init_schema(db);
 
-    auto conv_id = db.create_conversation("test goal", 5.0, 3);
+    auto conv_id = db.create_conversation("test goal", 3);
 
     auto session_id = sui::quorum::generate_uuid();
     db.execute(
@@ -192,7 +192,7 @@ static void test_prior_usage_detection() {
     sui::quorum::Database db(":memory:");
     init_schema(db);
 
-    auto conv_id = db.create_conversation("test goal", 5.0, 3);
+    auto conv_id = db.create_conversation("test goal", 3);
 
     // Task 1: done with session_id = "sess-abc"
     db.execute(
@@ -237,7 +237,7 @@ static void test_no_prior_usage_for_new_session() {
     sui::quorum::Database db(":memory:");
     init_schema(db);
 
-    auto conv_id = db.create_conversation("test goal", 5.0, 3);
+    auto conv_id = db.create_conversation("test goal", 3);
 
     // Task 1: active (not done yet) with session_id = "sess-xyz"
     db.execute(

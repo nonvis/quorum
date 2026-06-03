@@ -153,7 +153,6 @@ static void print_usage(const char* prog) {
               << "  " << prog << " benchmark --role <r> --keep-tempdir         Skip tempdir cleanup; print path for inspection\n"
               << "  " << prog << " status                                    List conversations\n"
               << "  " << prog << " --config <path>                            Start daemon\n"
-              << "  " << prog << " --config <path> converse --budget 3.0 \"g\"  Custom budget\n"
               << "  " << prog << " --config <path> resume --conversation <id> Resume paused\n"
               << "  " << prog << " --config <path> close --conversation <id>  Close conversation\n"
               << "  " << prog << " --config <path> respond --conversation <id> \"text\"  Respond to human request\n"
@@ -164,7 +163,6 @@ static void print_usage(const char* prog) {
               << "\nOptions:\n"
               << "  --config <path>      Path to config YAML (optional if .quorum/ exists in project)\n"
               << "  --verbose            Enable verbose logging\n"
-              << "  --budget <usd>       Per-conversation budget (default: 5.0)\n"
               << "  --max-rounds <n>     Max revision rounds (default: 3)\n"
               << "  --mode <generic|brainstorm>  Conversation mode (default: generic)\n"
               << "  --keep-alive         converse only: keep the daemon running after the conversation completes (persistent mode)\n"
@@ -478,7 +476,6 @@ int main(int argc, char* argv[]) {
     }
 
     // Parse subcommand-specific flags
-    double conv_budget = -1.0;        // sentinel — will use config default
     int conv_max_rounds = -1;         // sentinel — will use config default
     int64_t conv_id_arg = 0;
     std::string goal_text;
@@ -506,9 +503,7 @@ int main(int argc, char* argv[]) {
 
     if (subcommand == "converse") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
-            if (sub_args[i] == "--budget" && i + 1 < sub_args.size()) {
-                conv_budget = std::stod(sub_args[++i]);
-            } else if (sub_args[i] == "--max-rounds" && i + 1 < sub_args.size()) {
+            if (sub_args[i] == "--max-rounds" && i + 1 < sub_args.size()) {
                 conv_max_rounds = std::stoi(sub_args[++i]);
             } else if (sub_args[i] == "--mode" && i + 1 < sub_args.size()) {
                 mode_name = sub_args[++i];
@@ -900,7 +895,6 @@ int main(int argc, char* argv[]) {
     }
 
     // Apply conversation defaults from config (sentinels -> config values)
-    if (conv_budget < 0) conv_budget = cfg.conversations.default_budget_usd;
     if (conv_max_rounds < 0) conv_max_rounds = cfg.conversations.default_max_rounds;
 
     // Ensure data directory exists
@@ -1038,7 +1032,7 @@ int main(int argc, char* argv[]) {
                 // A daemon is already running, so converse just seeds the conversation and
                 // returns; the running daemon completes it. converse runs no loop here, so
                 // exit-on-complete is moot in this branch.
-                auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, mode_name, conv_no_vault_write, conv_gated);
+                auto id = conversation_engine.start(goal_text, conv_max_rounds, mode_name, conv_no_vault_write, conv_gated);
                 std::cout << "Conversation " << id << " created.\n";
                 std::cout << "Daemon already running — it will pick up the conversation.\n";
             } else if (subcommand == "resume") {
@@ -1088,7 +1082,7 @@ int main(int argc, char* argv[]) {
             release_pid_lock(cfg.daemon.pid_file);
             return 1;
         }
-        auto id = conversation_engine.start(goal_text, conv_budget, conv_max_rounds, mode_name, conv_no_vault_write, conv_gated);
+        auto id = conversation_engine.start(goal_text, conv_max_rounds, mode_name, conv_no_vault_write, conv_gated);
         std::cout << "Conversation " << id << " created. Starting daemon...\n";
         if (exit_on_complete) {
             once_target_conv_id = id;

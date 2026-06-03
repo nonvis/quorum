@@ -58,15 +58,6 @@ export async function resumeConversation(id: number) {
   return res.json();
 }
 
-export async function updateBudget(id: number, budget_usd: number) {
-  const res = await fetch(`${BASE}/conversations/${id}/budget`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ budget_usd }),
-  });
-  return res.json();
-}
-
 // Raise a conversation's max_rounds (real per-conversation limiter) and resume
 // if it was paused.
 export async function updateMaxRounds(id: number, max_rounds: number) {

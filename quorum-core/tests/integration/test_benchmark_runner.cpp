@@ -124,7 +124,6 @@ struct Harness {
         init_schema(db);
         cfg.leader = "leader";
         cfg.default_max_rounds = 20;
-        cfg.default_budget_usd = 5.0;
 
         agents.push_back(sui::quorum::AgentMetadata{
             .id = "leader", .name = "Leader",
@@ -288,7 +287,7 @@ static void test_rubric_override_wins() {
     h.cfg.default_path = {"leader", "doer", "evaluator"};
 
     auto engine = h.make_engine();
-    auto conv_id = engine.start("Build the thing", 5.0, 20);
+    auto conv_id = engine.start("Build the thing", 20);
 
     // Turn 1: leader -> doer
     auto t1 = h.pending_task(conv_id);

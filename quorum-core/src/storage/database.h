@@ -77,14 +77,14 @@ public:
 
     // ── Conversation CRUD ──────────────────────────────────────────────────
 
-    int64_t create_conversation(const std::string& goal, double budget_usd, int max_rounds) {
+    int64_t create_conversation(const std::string& goal, int max_rounds) {
+        // budget_usd column omitted — takes its schema DEFAULT (5.0).
         execute(
-            "INSERT INTO conversations (goal, state, round, max_rounds, budget_usd) "
-            "VALUES (?, 'active', 0, ?, ?)",
+            "INSERT INTO conversations (goal, state, round, max_rounds) "
+            "VALUES (?, 'active', 0, ?)",
             [&](sqlite3_stmt* stmt) {
                 sqlite3_bind_text(stmt, 1, goal.c_str(), -1, SQLITE_TRANSIENT);
                 sqlite3_bind_int(stmt, 2, max_rounds);
-                sqlite3_bind_double(stmt, 3, budget_usd);
             }
         );
         return last_insert_id();

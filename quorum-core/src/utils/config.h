@@ -70,7 +70,6 @@ struct BudgetConfig {
 struct ConversationConfig {
     bool enabled = true;
     int default_max_rounds = 20;       // max turns per conversation
-    double default_budget_usd = 5.0;
     std::string default_mode{"generic"};  // "generic" (default) or "brainstorm"
     std::string leader;                // leader agent id (required for team mode)
     std::vector<std::string> default_path;  // optional default routing sequence
@@ -357,9 +356,6 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
             if (key == "enabled") cfg.conversations.enabled = (val == "true");
             else if (key == "default_max_rounds") {
                 try { cfg.conversations.default_max_rounds = std::stoi(val); } catch (...) {}
-            }
-            else if (key == "default_budget_usd") {
-                try { cfg.conversations.default_budget_usd = std::stod(val); } catch (...) {}
             }
             else if (key == "default_mode") {
                 if (val == "generic" || val == "brainstorm") {
