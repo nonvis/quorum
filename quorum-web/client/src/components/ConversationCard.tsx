@@ -7,17 +7,65 @@ import { StateBadge } from "./StateBadge";
 import { TaskTimeline } from "./TaskTimeline";
 import { RespondControls } from "./RespondControls";
 
-// Quorum protocol blocks are wrapped in fenced code blocks (```HANDOFF, etc.)
-// which Markdown renders as literal code — hiding the inner markdown
-// formatting. Pre-extract HANDOFF blocks so we can render their prompt body
-// with full Markdown support.
+// Quorum protocol blocks are fenced code blocks (```HANDOFF / ```VAULT_UPDATE)
+// which Markdown would render as literal code — hiding the inner content. We
+// pre-extract them and render the bodies with full Markdown support.
 type Segment =
   | { kind: "prose"; text: string }
-  | { kind: "handoff"; to: string; prompt: string };
+  | { kind: "handoff"; to: string; prompt: string }
+  | { kind: "vault"; path: string; content: string };
+
+// Parse a keyed protocol-block body: a `<keyName>:` line and a `<bodyName>: |`
+// (or inline) multi-line field. Shared by HANDOFF (to/prompt) and VAULT_UPDATE
+// (path/content) — both use the same `key: val` + `body: |` indented shape.
+function parseKeyedBlock(
+  inner: string,
+  keyName: string,
+  bodyName: string,
+): { key: string; body: string } {
+  const lines = inner.split("\n");
+  let key = "";
+  let body = "";
+  let collecting = false;
+  let indent = 0;
+  const keyRe = new RegExp(`^\\s*${keyName}:\\s*(.+)$`);
+  const bodyRe = new RegExp(`^\\s*${bodyName}:\\s*(.*)$`);
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i];
+    if (!collecting) {
+      const km = ln.match(keyRe);
+      if (km && !key) {
+        key = km[1].trim();
+        continue;
+      }
+      const bm = ln.match(bodyRe);
+      if (bm) {
+        const rest = bm[1].trim();
+        if (rest === "|") {
+          // Canonical multi-line form: indented body follows.
+          collecting = true;
+          indent = 2;
+        } else {
+          // Plain/inline form — body starts on this line.
+          body = rest;
+          collecting = true;
+          indent = 0;
+        }
+      }
+    } else {
+      let line = ln;
+      if (indent > 0 && line.startsWith(" ".repeat(indent))) {
+        line = line.slice(indent);
+      }
+      body += (body.length > 0 ? "\n" : "") + line;
+    }
+  }
+  return { key, body };
+}
 
 function parseSegments(text: string): Segment[] {
   const segments: Segment[] = [];
-  const re = /```HANDOFF\s*\n([\s\S]*?)\n?```/g;
+  const re = /```(HANDOFF|VAULT_UPDATE)\s*\n([\s\S]*?)\n?```/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
@@ -25,45 +73,13 @@ function parseSegments(text: string): Segment[] {
       const prose = text.slice(last, m.index);
       if (prose.trim().length > 0) segments.push({ kind: "prose", text: prose });
     }
-    const inner = m[1];
-    const lines = inner.split("\n");
-    let to = "";
-    let body = "";
-    let collecting = false;
-    let indent = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const ln = lines[i];
-      if (!collecting) {
-        const toMatch = ln.match(/^\s*to:\s*(.+)$/);
-        if (toMatch && !to) {
-          to = toMatch[1].trim();
-          continue;
-        }
-        const pMatch = ln.match(/^\s*prompt:\s*(.*)$/);
-        if (pMatch) {
-          const rest = pMatch[1].trim();
-          if (rest === "|") {
-            // Canonical multi-line form: 2-space indented body follows
-            collecting = true;
-            indent = 2;
-          } else {
-            // Plain form (single-line or pre-fix multi-line) — start body
-            // with whatever's after `prompt:` on the same line, then keep
-            // appending subsequent lines verbatim.
-            body = rest;
-            collecting = true;
-            indent = 0;
-          }
-        }
-      } else {
-        let line = ln;
-        if (indent > 0 && line.startsWith(" ".repeat(indent))) {
-          line = line.slice(indent);
-        }
-        body += (body.length > 0 ? "\n" : "") + line;
-      }
+    if (m[1] === "HANDOFF") {
+      const { key, body } = parseKeyedBlock(m[2], "to", "prompt");
+      segments.push({ kind: "handoff", to: key, prompt: body });
+    } else {
+      const { key, body } = parseKeyedBlock(m[2], "path", "content");
+      segments.push({ kind: "vault", path: key, content: body });
     }
-    segments.push({ kind: "handoff", to, prompt: body });
     last = re.lastIndex;
   }
   if (last < text.length) {
@@ -71,6 +87,20 @@ function parseSegments(text: string): Segment[] {
     if (tail.trim().length > 0) segments.push({ kind: "prose", text: tail });
   }
   return segments;
+}
+
+// A leader turn created by `quorum respond` carries the operator's reply as a
+// `# Human Response` section inside the assembled prompt. Pull it out so the
+// card can show "you responded: <text>" on that task.
+function extractHumanResponse(prompt: string | null | undefined): string | null {
+  if (!prompt) return null;
+  const marker = "# Human Response";
+  const idx = prompt.indexOf(marker);
+  if (idx < 0) return null;
+  const after = prompt.slice(idx + marker.length).replace(/^\s*\n+/, "");
+  // The response is short; stop at the next heading / hr / end.
+  const m = after.match(/^([\s\S]*?)(?:\n#{1,6}\s|\n---|\s*$)/);
+  return (m ? m[1] : after).trim() || null;
 }
 
 function HandoffBox({ to, prompt }: { to: string; prompt: string }) {
@@ -82,6 +112,20 @@ function HandoffBox({ to, prompt }: { to: string; prompt: string }) {
       </div>
       <div className="md-content p-3 bg-zinc-950">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{prompt}</ReactMarkdown>
+      </div>
+    </div>
+  );
+}
+
+function VaultBox({ path, content }: { path: string; content: string }) {
+  return (
+    <div className="my-2 border border-emerald-800/60 rounded overflow-hidden">
+      <div className="bg-emerald-900/30 px-3 py-1.5 text-xs text-emerald-300 border-b border-emerald-800/60 flex items-center gap-2">
+        <span>📝 VAULT note</span>
+        <span className="text-emerald-200 font-mono break-all">{path}</span>
+      </div>
+      <div className="md-content p-3 bg-zinc-950 max-h-96 overflow-auto">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
       </div>
     </div>
   );
@@ -113,6 +157,7 @@ function TaskItem({
   };
 
   const segments = task.result ? parseSegments(task.result) : [];
+  const humanResponse = extractHumanResponse(task.prompt);
 
   return (
     <div className="text-sm">
@@ -132,6 +177,12 @@ function TaskItem({
           {task.cost != null && <span className="font-mono">${task.cost.toFixed(2)}</span>}
         </div>
       </div>
+      {humanResponse && (
+        <div className="mb-2 flex items-baseline gap-2 bg-emerald-950/30 border border-emerald-800 rounded p-2 text-sm">
+          <span className="text-emerald-400 text-xs font-medium shrink-0">🧑 you responded:</span>
+          <span className="text-zinc-100 whitespace-pre-wrap break-words">{humanResponse}</span>
+        </div>
+      )}
       {!isCollapsed && task.result && (
         <>
           <div
@@ -148,8 +199,10 @@ function TaskItem({
                 <ReactMarkdown key={i} remarkPlugins={[remarkGfm]}>
                   {seg.text}
                 </ReactMarkdown>
-              ) : (
+              ) : seg.kind === "handoff" ? (
                 <HandoffBox key={i} to={seg.to} prompt={seg.prompt} />
+              ) : (
+                <VaultBox key={i} path={seg.path} content={seg.content} />
               )
             )}
           </div>
