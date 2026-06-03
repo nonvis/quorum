@@ -32,7 +32,7 @@ quorum converse "Analyze mm-bot spread performance"
 quorum converse --mode brainstorm "Where should we draw module boundaries?"
 
 # With budget and turn limits
-quorum converse --budget 3.0 --max-rounds 5 "goal"
+quorum converse --max-rounds 5 "goal"
 
 # Suppress vault writes for an experimental run (no knowledge pollution)
 quorum converse --no-vault-write "explore X without shaping future runs"

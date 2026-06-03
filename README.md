@@ -85,7 +85,7 @@ quorum converse "Analyze mm-bot spread performance"
 quorum converse --mode brainstorm "What should our caching strategy look like?"
 
 # With custom budget and turn limit
-quorum converse --budget 3.0 --max-rounds 5 "goal"
+quorum converse --max-rounds 5 "goal"
 
 # Lifecycle
 quorum status                                # list conversations
