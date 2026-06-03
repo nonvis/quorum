@@ -274,8 +274,20 @@ export function ConversationCard({
     fetchConversation(c.id).then((data) => setTasks(data.tasks));
   }, [c.id, c.state, c.round]);
 
+  // While actively running, poll tasks so the in-flight task shows live — a
+  // pending->active->done transition doesn't change conversation-level state,
+  // so the round-keyed effect above won't catch it on its own.
+  useEffect(() => {
+    if (c.state !== "active") return;
+    const id = setInterval(() => {
+      fetchConversation(c.id).then((data) => setTasks(data.tasks));
+    }, 2000);
+    return () => clearInterval(id);
+  }, [c.id, c.state]);
+
   const showRespond = c.state === "waiting_for_human";
   const gateMessage = showRespond ? lastHumanGateMessage(tasks) : null;
+  const activeTask = tasks.find((t) => t.status === "active");
 
   return (
     <div
@@ -314,8 +326,13 @@ export function ConversationCard({
 
       {/* Task timeline (always visible) */}
       {tasks.length > 0 && (
-        <div className="mt-3">
+        <div className="mt-3 flex items-center gap-3 flex-wrap">
           <TaskTimeline tasks={tasks} />
+          {activeTask && (
+            <span className="text-blue-400 text-xs animate-pulse whitespace-nowrap">
+              ▶ {activeTask.agent} working… <span className="text-zinc-500">(task #{activeTask.id})</span>
+            </span>
+          )}
         </div>
       )}
 

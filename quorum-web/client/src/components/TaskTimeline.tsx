@@ -22,7 +22,11 @@ export function TaskTimeline({ tasks }: { tasks: Task[] }) {
       {tasks.map((task, i) => (
         <span key={task.id} className="flex items-center gap-1">
           {i > 0 && <span className="text-zinc-600 mx-1">{"\u2192"}</span>}
-          <span className={statusColor[task.status] || "text-zinc-500"}>
+          <span
+            className={`${statusColor[task.status] || "text-zinc-500"}${
+              task.status === "active" ? " animate-pulse font-medium" : ""
+            }`}
+          >
             {statusIcon[task.status] || "?"} {task.agent}
           </span>
           {task.cost != null && (
