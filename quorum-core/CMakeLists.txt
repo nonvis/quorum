@@ -272,6 +272,14 @@ add_executable(test_autopilot_parity tests/unit/test_autopilot_parity.cpp)
 target_include_directories(test_autopilot_parity PRIVATE src)
 add_test(NAME test_autopilot_parity COMMAND test_autopilot_parity)
 
+# Phase 14 Track 3: quorum knower refresh CLI — pure parts (arg validation,
+# name validation, setup-gate, project-resolution reuse) + the generic-mode
+# completion recommendation string (conversation.h → links SQLite).
+add_executable(test_knower_refresh tests/unit/test_knower_refresh.cpp)
+target_include_directories(test_knower_refresh PRIVATE src)
+target_link_libraries(test_knower_refresh PRIVATE SQLite::SQLite3)
+add_test(NAME test_knower_refresh COMMAND test_knower_refresh)
+
 add_executable(test_invoker_cache_fields tests/unit/test_invoker_cache_fields.cpp)
 target_include_directories(test_invoker_cache_fields PRIVATE src)
 add_test(NAME test_invoker_cache_fields COMMAND test_invoker_cache_fields)

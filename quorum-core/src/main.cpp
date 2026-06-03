@@ -35,6 +35,7 @@
 #include "cli/ask.h"
 #include "cli/supervisor_init.h"
 #include "cli/scribe_record.h"
+#include "cli/knower_refresh.h"
 #include "utils/discover.h"
 
 namespace fs = std::filesystem;
@@ -147,6 +148,8 @@ static void print_usage(const char* prog) {
               << "                                          Curate scribe output into .quorum/librarian/ (Pitch / Decision Log / Roadmap)\n"
               << "  " << prog << " ask \"<question>\" [--project <path|name>] [--agent <name>]\n"
               << "                                          Ask a project's manager (or a specific --agent) a question, read-only\n"
+              << "  " << prog << " knower refresh [--all | --knower <name>] [--project <path|name>]\n"
+              << "                                          Re-run the read-only knower scan(s) so the knower vaults re-survey the codebase\n"
               << "  " << prog << " benchmark --role <r> --task <name>          Run one synthetic benchmark for a role-specialty\n"
               << "  " << prog << " benchmark --role <r>                        Run all benchmarks for a role-specialty (aggregate)\n"
               << "  " << prog << " benchmark --role <r> --dry-run              Smoke-test setup; skip the daemon spawn\n"
@@ -478,6 +481,8 @@ int main(int argc, char* argv[]) {
     std::string supervisor_subcmd_arg;
     sui::quorum::cli::ScribeRecordOptions scribe_record_opts;      // Phase 13
     std::string scribe_subcmd_arg;
+    sui::quorum::cli::KnowerRefreshOptions knower_refresh_opts;    // Phase 14 T3
+    std::string knower_subcmd_arg;
 
     if (subcommand == "converse") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
@@ -662,6 +667,27 @@ int main(int argc, char* argv[]) {
             std::cerr << "Usage: quorum scribe record [--project <path>] [--block <file>]\n";
             return 1;
         }
+    } else if (subcommand == "knower") {
+        // Phase 14 Track 3 — `quorum knower refresh [--knower <name>] [--all]
+        //                     [--project <path|name>]`.
+        for (size_t i = 0; i < sub_args.size(); ++i) {
+            if (knower_subcmd_arg.empty() && sub_args[i] == "refresh") {
+                knower_subcmd_arg = sub_args[i];
+            } else if (sub_args[i] == "--knower" && i + 1 < sub_args.size()) {
+                knower_refresh_opts.knower = sub_args[++i];
+            } else if (sub_args[i] == "--all") {
+                knower_refresh_opts.all = true;
+            } else if (sub_args[i] == "--project" && i + 1 < sub_args.size()) {
+                knower_refresh_opts.project = sub_args[++i];
+            }
+        }
+        if (knower_subcmd_arg.empty()) {
+            std::cerr << "ERROR: knower requires a sub-subcommand (refresh)\n";
+            std::cerr << "Usage: quorum knower refresh [--all | --knower <"
+                      << sui::quorum::cli::knower_refresh_detail::valid_knowers_list()
+                      << ">] [--project <path|name>]\n";
+            return 1;
+        }
     } else if (!subcommand.empty() && subcommand != "status") {
         std::cerr << "Unknown subcommand: " << subcommand << "\n";
         print_usage(argv[0]);
@@ -808,6 +834,24 @@ int main(int argc, char* argv[]) {
             // else: run_scribe_record defaults to cwd and reports if no .quorum/.
         }
         return sui::quorum::cli::run_scribe_record(scribe_record_opts);
+    }
+
+    // Phase 14 Track 3 — `quorum knower refresh`. No --config needed: re-runs the
+    // read-only knower scan pass(es) against the target project (default cwd, or
+    // --project <path|name>) by shelling out to scripts/run-knower.sh. Resolve the
+    // quorum repo root from argv[0] (same self-relative trick as init: the binary
+    // is <repo>/build/quorum_daemon, and `make install` symlinks the CLI to it, so
+    // fs::canonical resolves through the symlink back into <repo>) so the script is
+    // findable even when invoked via the installed `quorum` name.
+    if (subcommand == "knower" && knower_subcmd_arg == "refresh") {
+        try {
+            knower_refresh_opts.quorum_root =
+                fs::canonical(fs::path(argv[0]))
+                    .parent_path().parent_path().string();
+        } catch (...) {
+            knower_refresh_opts.quorum_root.clear();  // best-effort; see header
+        }
+        return sui::quorum::cli::run_knower_refresh(knower_refresh_opts);
     }
 
     // Agent list/modify/history don't need --config -- they work with .quorum/ directly

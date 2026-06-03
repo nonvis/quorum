@@ -70,6 +70,35 @@ Two levels of concurrency: **parallel *within* a major task** (the fan-out),
 **sequential *across* major tasks** (record-keep, then advance). Never run major
 tasks in parallel.
 
+## End-of-flight knower refresh (auto — do this when the flight plan completes)
+
+When the **last** major task is `[x]` (the flight plan is complete), the
+subagents have shipped code, so the project's **knower vaults are now stale**.
+Knowers are the sole accumulators (Decision #46); autopilot accumulates by
+**refreshing the affected knowers** — and because you are already an autonomous,
+unattended long run, you **run this automatically** (unlike generic mode, which
+only recommends it). Do this **before** the final checkpoint + graceful
+morning-halt:
+
+```bash
+quorum knower refresh --project <root> --all
+```
+
+- Run `--all` (cartographer → architect → historian → recap, in that order; the
+  architect reads the cartographer's index) unless the flight touched only one
+  lens — then refresh just the **affected** knower(s):
+  - layout / new-files / moved-modules change → `--knower cartographer`
+  - cross-module wiring / new edges → `--knower architect`
+  - merged decisions / PRs → `--knower historian`
+  - "what changed / where we left off" → `--knower recap` (refresh always when in doubt)
+- Each pass is a read-only `converse --mode brainstorm` scan that self-writes the
+  knower's `knowledge/ref-*.md`. It spends tokens but mutates no source.
+- If a refresh fails (budget/timeout), note it in the morning review
+  `blocked-on:` and continue to checkpoint — never crash the halt on a refresh
+  failure.
+
+Then proceed to the final checkpoint + morning review (the graceful stop).
+
 ## Output Parity (do NOT bypass — this is the core correctness rule)
 
 A **scribe** run under autopilot must accumulate `.quorum/learnings.md`
@@ -115,7 +144,7 @@ STOP (after checkpointing + writing the morning review) when any of these fire:
 
 | Stop because | Action |
 |---|---|
-| flight plan complete | final checkpoint (all `[x]`) + morning review → done |
+| flight plan complete | **end-of-flight `quorum knower refresh`** → final checkpoint (all `[x]`) + morning review → done |
 | context near-full | checkpoint + morning review → graceful STOP |
 | 5h window exhausted | STOP at the window edge |
 | needs a human decision | STOP, leave the question in the morning review `blocked-on:` |
@@ -148,4 +177,8 @@ items" experience — produced by you, recorded durably.
 - **No DB, no HANDOFF.** Native Task subagents + the checkpoint file + the
   records. (HANDOFF is the daemon engine's mechanism, not yours.)
 - **Parallel within, sequential across.** Never parallelize major tasks.
+- **Refresh knowers at end-of-flight.** When the flight plan completes, run
+  `quorum knower refresh --project <root> --all` (or the affected knowers) before
+  the final checkpoint — autopilot accumulates by refreshing knowers (Decision
+  #46), automatically (you are an autonomous run).
 - **Checkpoint before every stop.** A clean resume depends on it.

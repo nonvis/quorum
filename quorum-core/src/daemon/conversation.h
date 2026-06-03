@@ -34,6 +34,27 @@ inline std::string current_date_iso() {
 
 enum class ConvState { active, waiting_for_human, done, closed, paused };
 
+// Phase 14 Track 3 (Decision L1 / OQ1) — generic-mode completion recommendation.
+//
+// On a GENERIC conversation completing, knowledge accumulates by REFRESHING the
+// affected knowers (knowers are the sole accumulators, Decision #46). Per OQ1,
+// generic mode RECOMMENDS only — it never auto-spends tokens. This builds the
+// one-line recommendation + the exact `quorum knower refresh` command the
+// operator should run. `project` is a path/name for the --project flag (cwd-
+// relative paths get a generic placeholder note). PURE: string assembly only.
+inline std::string generic_refresh_recommendation(int64_t conv_id,
+                                                   const std::string& project) {
+    std::string p = (project.empty() || project == ".")
+                        ? std::string("<project>")
+                        : project;
+    return "[conversation " + std::to_string(conv_id) +
+           "] the codebase may have changed — refresh the knowers so they "
+           "re-survey it:\n"
+           "    quorum knower refresh --project " + p + " --all\n"
+           "    (or a single lens: quorum knower refresh --project " + p +
+           " --knower <cartographer|architect|historian|recap>)\n";
+}
+
 class ConversationEngine {
 public:
     ConversationEngine(Database& db, const ConversationConfig& cfg,
@@ -250,6 +271,25 @@ public:
                           << "] checkoff: " << flipped
                           << " plan line(s) updated\n";
             }
+
+            // Phase 14 Track 3 (OQ1) — generic-mode knowledge accumulation.
+            // On generic completion the doer has (likely) shipped code, so the
+            // knower vaults are now stale. Per OQ1 we RECOMMEND a refresh + print
+            // the exact command; we do NOT auto-run it (no surprise token spend).
+            // Brainstorm completion stays silent: the participating knowers
+            // already self-wrote behind the human gate.
+            {
+                std::string done_mode;
+                if (auto conv_done = db_.get_conversation(conv_id)) {
+                    done_mode = conv_done->mode;
+                }
+                if (done_mode != "brainstorm") {  // generic (default) only
+                    std::string proj = cfg_.target_dir;
+                    if (proj.empty() || proj == ".") proj = project_root_;
+                    std::cout << generic_refresh_recommendation(conv_id, proj);
+                }
+            }
+
             std::cout << "[conversation " << conv_id << "] done\n";
             return false;
         }
