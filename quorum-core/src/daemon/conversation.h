@@ -125,6 +125,31 @@ inline bool brainstorm_gate_suppresses_write(const std::string& mode,
     return mode == "brainstorm" && gated && !gate_cleared;
 }
 
+// Phase 14.1d — interpret a gated-brainstorm gate response. The human reached
+// the gate to decide on the staged knower writes; a response REJECTS the
+// capture only on an explicit negative, otherwise it is an approval (the
+// default — they came to approve). Pure + case-insensitive; used by respond()
+// to decide commit-vs-discard and to phrase the leader's close-out prompt.
+inline bool brainstorm_response_rejects(const std::string& text) {
+    std::string t;
+    t.reserve(text.size());
+    for (char c : text) t += (c >= 'A' && c <= 'Z') ? char(c + 32) : c;
+    size_t a = t.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos) return false;  // empty → not a rejection
+    size_t b = t.find_last_not_of(" \t\r\n");
+    t = t.substr(a, b - a + 1);
+    if (t == "no" || t == "n" || t == "nope" || t == "reject" ||
+        t == "rejected" || t == "cancel" || t == "stop" || t == "discard")
+        return true;
+    if (t.rfind("no,", 0) == 0 || t.rfind("no ", 0) == 0 ||
+        t.rfind("don't", 0) == 0 || t.rfind("do not", 0) == 0 ||
+        t.rfind("reject", 0) == 0)
+        return true;
+    return t.find("discard") != std::string::npos ||
+           t.find("don't save") != std::string::npos ||
+           t.find("do not save") != std::string::npos;
+}
+
 class ConversationEngine {
 public:
     ConversationEngine(Database& db, const ConversationConfig& cfg,
@@ -575,9 +600,44 @@ public:
         // for this (gated brainstorm) conversation. No-op for ungated/generic.
         db_.set_gate_cleared(conversation_id, true);
 
-        auto session_id = db_.get_or_create_session(conversation_id, leader);
         std::string prompt = "# Human Response\n\n" + text + "\n";
 
+        // Phase 14.1d — gated-brainstorm gate result. At the gate the knowers'
+        // VAULT_UPDATEs were STAGED, not written; clearing the gate makes the
+        // daemon FLUSH them on its next loop. Two fixes here, only when notes
+        // are actually staged:
+        //   (1) a rejection would otherwise still flush (commit) the staged
+        //       notes — so on an explicit "no" we DISCARD them so nothing lands;
+        //   (2) on approval the leader used to re-dispatch the knowers to
+        //       "write now", doubling cost and overwriting the approved content
+        //       — so we tell it the writes are already committed and to close.
+        if (conv->mode == "brainstorm" && conv->gated) {
+            int staged = db_.count_pending_vault_updates(conversation_id);
+            if (staged > 0) {
+                if (brainstorm_response_rejects(text)) {
+                    db_.clear_pending_vault_updates(conversation_id);  // nothing lands
+                    prompt +=
+                        "\n---\nGate result: REJECTED. The " +
+                        std::to_string(staged) +
+                        " staged knowledge note(s) were DISCARDED — nothing was "
+                        "written to the vaults. Do NOT re-dispatch the knowers to "
+                        "rewrite the same notes. Briefly acknowledge and close with "
+                        "`HANDOFF to: done`, unless the human's message above asks "
+                        "for a different action.\n";
+                } else {
+                    prompt +=
+                        "\n---\nGate result: APPROVED. The " +
+                        std::to_string(staged) +
+                        " staged knowledge note(s) are being committed to the knower "
+                        "vaults automatically by the daemon — that write is DONE. Do "
+                        "NOT re-dispatch the knowers to write again. Briefly "
+                        "acknowledge and close the brainstorm with `HANDOFF to: "
+                        "done`.\n";
+                }
+            }
+        }
+
+        auto session_id = db_.get_or_create_session(conversation_id, leader);
         create_task(conversation_id, leader, "turn", prompt, session_id);
         db_.update_conversation_state(conversation_id, "active");
         update_current_agent(conversation_id, leader);

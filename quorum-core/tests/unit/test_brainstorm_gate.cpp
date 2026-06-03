@@ -164,6 +164,19 @@ struct TestHarness {
             });
         return agent;
     }
+
+    std::string latest_task_prompt(int64_t conv_id) {
+        std::string prompt;
+        db.query(
+            "SELECT prompt FROM tasks WHERE conversation_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            [&](sqlite3_stmt* stmt) { sqlite3_bind_int64(stmt, 1, conv_id); },
+            [&](sqlite3_stmt* stmt) {
+                auto p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                if (p) prompt = p;
+            });
+        return prompt;
+    }
 };
 
 // ─── A. gated defaults ───────────────────────────────────────────────────────
@@ -633,6 +646,80 @@ static void test_pending_vault_update_roundtrip() {
           "H: get returns empty after clear");
 }
 
+// ─── I. respond(): gated-brainstorm approval vs rejection (Phase 14.1d) ──────
+//
+// Beyond staging, the live run exposed two respond()-side problems: (1) on
+// approval the leader RE-DISPATCHED the knowers to "write now" (doubling cost,
+// overwriting the approved content) — respond() now tells it the writes are
+// already committed and to close; (2) any response cleared the gate and so
+// flushed the staged writes, so an explicit "no" still committed — respond()
+// now DISCARDS the staged notes on rejection.
+
+static void test_response_rejects_helper() {
+    std::cout << "\n=== I1. brainstorm_response_rejects (pure) ===\n\n";
+    using sui::quorum::brainstorm_response_rejects;
+    check(!brainstorm_response_rejects("yes"), "I1: 'yes' is not a rejection");
+    check(!brainstorm_response_rejects("looks good, save it"),
+          "I1: approval phrase is not a rejection");
+    check(!brainstorm_response_rejects(""), "I1: empty defaults to approve (not reject)");
+    check(brainstorm_response_rejects("no"), "I1: 'no' rejects");
+    check(brainstorm_response_rejects("No"), "I1: 'No' rejects (case-insensitive)");
+    check(brainstorm_response_rejects("n"), "I1: 'n' rejects");
+    check(brainstorm_response_rejects("no, drop the cartographer one"),
+          "I1: 'no, ...' rejects");
+    check(brainstorm_response_rejects("please discard these"), "I1: 'discard' rejects");
+    check(brainstorm_response_rejects("do not save"), "I1: 'do not save' rejects");
+}
+
+static void test_respond_approve_keeps_and_closes() {
+    std::cout << "\n=== I2. respond approve: staged kept + leader told to close ===\n\n";
+    TestHarness h;
+    auto engine = h.make_engine();
+    auto conv_id = engine.start("Capture two notes", 5.0, 20, "brainstorm");
+    h.db.stage_vault_update(conv_id, "architect", "thinker", "brainstorm",
+                            "knowledge/ref-x.md", "x content");
+    auto t1 = h.latest_pending_task(conv_id);
+    h.complete_task(t1);
+    sui::quorum::ParsedOutput gate;
+    gate.handoff = sui::quorum::HandoffBlock{.to = "human", .prompt = "approve?"};
+    engine.on_task_complete(t1, gate, 0.05);
+    check(h.db.count_pending_vault_updates(conv_id) == 1, "I2: 1 note staged at gate");
+
+    bool ok = engine.respond(conv_id, "yes");
+    check(ok, "I2: respond accepted");
+    check(h.db.count_pending_vault_updates(conv_id) == 1,
+          "I2: approval RETAINS staged note (daemon flushes it, not respond)");
+    auto prompt = h.latest_task_prompt(conv_id);
+    check(prompt.find("APPROVED") != std::string::npos,
+          "I2: leader prompt says APPROVED");
+    check(prompt.find("Do NOT re-dispatch") != std::string::npos &&
+          prompt.find("HANDOFF to: done") != std::string::npos,
+          "I2: leader told to close, not re-dispatch the knowers");
+}
+
+static void test_respond_reject_discards() {
+    std::cout << "\n=== I3. respond reject: staged discarded, nothing lands ===\n\n";
+    TestHarness h;
+    auto engine = h.make_engine();
+    auto conv_id = engine.start("Capture", 5.0, 20, "brainstorm");
+    h.db.stage_vault_update(conv_id, "architect", "thinker", "brainstorm",
+                            "knowledge/ref-y.md", "y content");
+    auto t1 = h.latest_pending_task(conv_id);
+    h.complete_task(t1);
+    sui::quorum::ParsedOutput gate;
+    gate.handoff = sui::quorum::HandoffBlock{.to = "human", .prompt = "approve?"};
+    engine.on_task_complete(t1, gate, 0.05);
+    check(h.db.count_pending_vault_updates(conv_id) == 1, "I3: 1 note staged at gate");
+
+    bool ok = engine.respond(conv_id, "no");
+    check(ok, "I3: respond accepted");
+    check(h.db.count_pending_vault_updates(conv_id) == 0,
+          "I3: rejection DISCARDS the staged note (nothing will flush)");
+    auto prompt = h.latest_task_prompt(conv_id);
+    check(prompt.find("DISCARDED") != std::string::npos,
+          "I3: leader prompt says DISCARDED");
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -651,6 +738,9 @@ int main() {
     test_ungated_single_knower_scan_terminates();
     test_reentry_nonleader_done_gated_routes_to_leader();
     test_pending_vault_update_roundtrip();
+    test_response_rejects_helper();
+    test_respond_approve_keeps_and_closes();
+    test_respond_reject_discards();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)
               << " tests passed ---\n";
