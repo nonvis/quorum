@@ -7,7 +7,7 @@
 ```
 Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
     |
-    |-- Conversation Engine (team mode — ball-passing via HANDOFF blocks)
+    |-- Conversation Engine (conversation mode — HANDOFF ball-passing)
     |-- Budget Enforcer (hourly caps, sequential dispatch)
     +-- Scheduler (periodic tasks)
          |
@@ -21,7 +21,7 @@ Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
 
 ## Execution
 
-**Team Mode only.** Old modes (Task Queue, Conversation analyst, Conversation executor) were replaced by team mode in Phase 2.
+**Conversation mode only.** Old pipelines (Task Queue, Conversation analyst, Conversation executor) were replaced by the daemon's multi-agent conversation (generic/brainstorm) in Phase 2.
 
 `quorum_daemon converse "goal"` starts a conversation. The leader agent routes work to other agents via HANDOFF blocks. Each agent responds and hands off to the next agent in the chain.
 
@@ -148,7 +148,7 @@ quorum scribe record [--block <file>]      # apply a LEARNINGS_UPDATE block (out
 | File | Purpose |
 |------|---------|
 | main.cpp | Entry point, CLI subcommand parse + dispatch, daemon task-dispatch loop |
-| daemon/conversation.h | Conversation engine — team-mode ball-passing |
+| daemon/conversation.h | Conversation engine — HANDOFF ball-passing |
 | daemon/scheduler.h | Periodic task scheduling |
 | agent/invoker.h | claude -p subprocess, session resume, agent-class tool policy. Mode-aware: brainstorm forces analyst tools regardless of role. |
 | agent/output_parser.h | HANDOFF / VAULT_UPDATE / SUMMARY / LEARNINGS_UPDATE / CURATION_UPDATE / DECISION_LOG_APPEND / EVALUATION blocks |
@@ -170,7 +170,7 @@ quorum scribe record [--block <file>]      # apply a LEARNINGS_UPDATE block (out
 | unit/test_handoff_parser.cpp | HANDOFF block parsing (9 cases, 22 assertions) |
 | unit/test_session_resume.cpp | UUID format, uniqueness, -r flag |
 | unit/test_invoker_mode.cpp | Mode-aware tool policy (5 cases) — analyst stays analyst, executor stays executor in generic; both clamped to analyst in brainstorm. |
-| integration/test_team_pipeline.cpp | Team-mode pipeline + brainstorm e2e (#19 cross-vault scribe distribution, #20 read-only doer in brainstorm). |
+| integration/test_team_pipeline.cpp | Conversation pipeline + brainstorm e2e (#19 cross-vault scribe distribution, #20 read-only doer in brainstorm). |
 | unit/test_scribe_write_discipline.cpp | `.quorum/learnings.md` bootstrap / append-only / canonical headers |
 | unit/test_librarian_curate.cpp, test_librarian_pipeline.cpp | Curation parse → validate → diff → apply |
 | unit/test_ask.cpp | `quorum ask` pure helpers (project resolve, manager-prompt assembly) |

@@ -48,7 +48,7 @@ Both engines reuse the same specialties, rubrics, and scribe/librarian knowledge
 ```
 Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
     |
-    |-- Conversation Engine (team mode — ball-passing via HANDOFF)
+    |-- Conversation Engine (conversation mode — HANDOFF ball-passing)
     |-- Budget Enforcer (hourly caps, sequential dispatch)
     +-- Scheduler (periodic tasks — health checks, vault snapshots)
          |
