@@ -119,6 +119,15 @@ function lastHumanGateMessage(tasks: Task[]): string | null {
   return null;
 }
 
+// Elapsed mm:ss since a SQLite UTC timestamp ("YYYY-MM-DD HH:MM:SS").
+function fmtElapsed(startedAt: string | null | undefined, nowMs: number): string {
+  if (!startedAt) return "";
+  const start = Date.parse(startedAt.replace(" ", "T") + "Z");
+  if (isNaN(start)) return "";
+  const s = Math.max(0, Math.floor((nowMs - start) / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
 function HandoffBox({ to, prompt }: { to: string; prompt: string }) {
   return (
     <div className="my-2 border border-zinc-700 rounded overflow-hidden">
@@ -259,6 +268,7 @@ export function ConversationCard({
   const [tasks, setTasks] = useState<Task[]>([]);
   const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<number>>(new Set());
   const [budgetInput, setBudgetInput] = useState("");
+  const [now, setNow] = useState(() => Date.now());
   const c = conversation;
 
   const toggleTask = (id: number) => {
@@ -288,6 +298,14 @@ export function ConversationCard({
   const showRespond = c.state === "waiting_for_human";
   const gateMessage = showRespond ? lastHumanGateMessage(tasks) : null;
   const activeTask = tasks.find((t) => t.status === "active");
+
+  // Tick a 1s clock while a task is in flight, for the elapsed timer.
+  useEffect(() => {
+    if (!activeTask) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [activeTask?.id]);
 
   return (
     <div
@@ -329,8 +347,9 @@ export function ConversationCard({
         <div className="mt-3 flex items-center gap-3 flex-wrap">
           <TaskTimeline tasks={tasks} />
           {activeTask && (
-            <span className="text-blue-400 text-xs animate-pulse whitespace-nowrap">
-              ▶ {activeTask.agent} working… <span className="text-zinc-500">(task #{activeTask.id})</span>
+            <span className="text-blue-400 text-xs whitespace-nowrap">
+              <span className="animate-pulse">▶ {activeTask.agent} working…</span>{" "}
+              <span className="font-mono text-zinc-400">{fmtElapsed(activeTask.started_at ?? activeTask.created_at, now)}</span>
             </span>
           )}
         </div>
