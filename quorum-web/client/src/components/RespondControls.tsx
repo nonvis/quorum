@@ -1,4 +1,6 @@
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { respondToLeader } from "../api";
 
 export function RespondControls({
@@ -30,7 +32,9 @@ export function RespondControls({
       {leaderMessage && (
         <div className="bg-blue-950/30 border border-blue-800 rounded p-3">
           <div className="text-blue-400 text-xs font-medium mb-1">Leader asks:</div>
-          <p className="text-zinc-300 text-sm whitespace-pre-wrap">{leaderMessage}</p>
+          <div className="md-content text-zinc-300 text-sm max-h-72 overflow-auto">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{leaderMessage}</ReactMarkdown>
+          </div>
         </div>
       )}
       <textarea

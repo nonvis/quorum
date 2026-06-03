@@ -103,6 +103,22 @@ function extractHumanResponse(prompt: string | null | undefined): string | null 
   return (m ? m[1] : after).trim() || null;
 }
 
+// The leader's gate question lives in the last `HANDOFF to: human` block across
+// the conversation's task results. Pull its prompt so the respond panel can show
+// what's being asked, instead of the (often empty) paused_reason.
+function lastHumanGateMessage(tasks: Task[]): string | null {
+  for (let i = tasks.length - 1; i >= 0; i--) {
+    const result = tasks[i]?.result;
+    if (!result) continue;
+    const segs = parseSegments(result);
+    for (let j = segs.length - 1; j >= 0; j--) {
+      const s = segs[j];
+      if (s.kind === "handoff" && s.to === "human") return s.prompt;
+    }
+  }
+  return null;
+}
+
 function HandoffBox({ to, prompt }: { to: string; prompt: string }) {
   return (
     <div className="my-2 border border-zinc-700 rounded overflow-hidden">
@@ -259,6 +275,7 @@ export function ConversationCard({
   }, [c.id, c.state, c.round]);
 
   const showRespond = c.state === "waiting_for_human";
+  const gateMessage = showRespond ? lastHumanGateMessage(tasks) : null;
 
   return (
     <div
@@ -307,7 +324,7 @@ export function ConversationCard({
         <div className="mt-3" onClick={(e) => e.stopPropagation()}>
           <RespondControls
             conversationId={c.id}
-            leaderMessage={c.paused_reason}
+            leaderMessage={gateMessage ?? c.paused_reason}
             onAction={onAction}
           />
         </div>
