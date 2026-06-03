@@ -213,7 +213,7 @@ static void test_skill_file_in_yaml() {
     fs::current_path(tmp);
 
     sui::quorum::cli::AgentCreateParams p;
-    p.role = "scribe";
+    p.role = "thinker";
     p.name = "skill-agent";
     p.project = "test-proj";
     p.data_dir = data_dir;
@@ -260,7 +260,7 @@ static void test_skill_home_fallback() {
     fs::current_path(tmp);
 
     sui::quorum::cli::AgentCreateParams p;
-    p.role = "scribe";
+    p.role = "thinker";
     p.name = "home-skill-agent";
     p.project = "test-proj";
     p.data_dir = data_dir;
@@ -330,8 +330,8 @@ static void test_evaluator_universal_rules() {
 
     auto rules = sui::quorum::cli::universal_rules_for_role("evaluator");
 
-    check(rules.find("HANDOFF to scribe") != std::string::npos,
-          "H: rules contain 'HANDOFF to scribe'");
+    check(rules.find("HANDOFF to done") != std::string::npos,
+          "H: rules contain 'HANDOFF to done' (Phase 14: no scribe)");
     check(rules.find("Do NOT modify") != std::string::npos,
           "H: rules contain 'Do NOT modify'");
     check(rules.find("Preserve and use the task number") != std::string::npos,

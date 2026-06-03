@@ -81,7 +81,7 @@ struct AgentMetadata {
     std::string id;
     std::string name;
     std::string description;                     // human-readable for roster
-    std::string role;                            // archetype: leader, thinker, doer, scribe, librarian, evaluator
+    std::string role;                            // archetype: leader, thinker, doer, evaluator (knowers are thinkers + a specialty SKILL)
     std::string agent_class = "analyst";  // "analyst" or "executor"
     std::string config_path;
     std::string vault_path;

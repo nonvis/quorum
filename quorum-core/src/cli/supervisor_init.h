@@ -25,7 +25,7 @@
 // only, no claude tokens), so they are unit-tested directly
 // (tests/unit/test_supervisor_init.cpp).
 //
-// Header-only, matches the cli/librarian_curate.h / cli/ask.h convention.
+// Header-only, matches the cli/ask.h convention.
 
 #include <algorithm>
 #include <cstdio>
@@ -40,7 +40,7 @@
 
 #include <unistd.h>
 
-#include "vault/scribe_writer.h"   // detail::atomic_write_text, detail::read_file_text
+#include "utils/file_io.h"   // detail::atomic_write_text, detail::read_file_text
 
 namespace sui::quorum::cli {
 
@@ -178,17 +178,22 @@ namespace detail {
     }
     out += "\n";
 
-    // Record-keeping (output parity) — scribe only. Curation is manual.
-    out += "## Record-keeping (scribe — OUTPUT PARITY, do not bypass)\n\n";
-    out += "- scribe → pipe each scribe LEARNINGS_UPDATE block to\n";
-    out += "  `quorum scribe record --project " + project_root + "`\n";
-    out += "  (same write the daemon uses, so `.quorum/learnings.md` "
-           "accumulates identically)\n\n";
-    out += "Curation is NOT run by autopilot. The librarian-curate command is a "
-           "manual,\n";
-    out += "out-of-band operator action — run it yourself when you want to hone "
-           "the curated\n";
-    out += "layer under `.quorum/librarian/`. The supervisor never fires it.\n\n";
+    // Record-keeping (Phase 14) — knowers are the sole accumulators. At
+    // end-of-flight, refresh the affected knowers so their vault surveys
+    // re-survey the changed codebase (the daemon's generic path recommends the
+    // same; autopilot auto-runs it).
+    out += "## Record-keeping (knower refresh — end of flight)\n\n";
+    out += "- The knowers are the sole accumulators. There is no scribe and no "
+           "learnings.md.\n";
+    out += "- At end-of-flight, refresh the affected knowers so their surveys "
+           "re-survey the changed code:\n";
+    out += "  `quorum knower refresh --project " + project_root + " --all`\n";
+    out += "  (or a single lens: `--knower <cartographer|architect|historian|"
+           "recap>`)\n\n";
+    out += "Humans read project state on demand via `quorum ask` (knower "
+           "surveys + live code) or\n";
+    out += "`quorum ask --agent recap`. There is no separate curated layer to "
+           "maintain.\n\n";
 
     // Stop conditions — the four bullets per spec.
     out += "## Stop conditions\n\n";

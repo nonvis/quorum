@@ -2,12 +2,13 @@
 
 // daemon/phase_plan_checkoff.h
 //
-// Deterministic backstop for the scribe's phase-plan checkoff. The scribe
-// agent is supposed to flip `- [ ] Task N: ...` to `- [x] Task N: ... (date)`
-// when a conversation cycle finishes, but LLM-driven steps drift. This helper
-// runs at conversation completion: it pulls every task prompt for the
-// conversation out of the DB, regex-extracts task numbers, and rewrites the
-// matching plan-file lines in-place via an atomic tmp+rename.
+// Deterministic backstop for phase-plan checkoff. An agent is supposed to flip
+// `- [ ] Task N: ...` to `- [x] Task N: ... (date)` when a conversation cycle
+// finishes, but LLM-driven steps drift. This helper runs at conversation
+// completion: it pulls every task prompt for the conversation out of the DB,
+// regex-extracts task numbers, and rewrites the matching plan-file lines
+// in-place via an atomic tmp+rename. (Phase 14: this bookkeeping lives in the
+// daemon, alongside the auto-commit backstop — the scribe role was retired.)
 //
 // Failure mode is silent — any IO/parse/regex error returns 0 and the
 // conversation completion path is unaffected.

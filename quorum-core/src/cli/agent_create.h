@@ -35,16 +35,13 @@ inline std::string universal_rules_for_role(const std::string& role) {
     std::string rules;
     rules += "\n## Universal Rules\n\n";
     rules += "1. **Never HANDOFF to yourself.** Complete your work in one turn.\n";
-    if (role != "leader" && role != "scribe") {
+    if (role != "leader") {
         rules += "2. **Never HANDOFF to leader.** You don't route — just do your work and pass forward.\n";
     }
     rules += "3. **HANDOFF must be the very last thing in your response.** Standalone fenced code block.\n";
     rules += "4. **Complete your work in a single turn.**\n";
     rules += "5. **Always include a SUMMARY block** before your HANDOFF.\n";
-    if (role == "scribe") {
-        rules += "6. **When done, HANDOFF to done** — always. This signals conversation completion.\n";
-        rules += "7. **Preserve and use the task number.** Your incoming HANDOFF prompt starts with \"Task N:\" — use that N when checking off the phase plan.\n";
-    } else if (role == "leader") {
+    if (role == "leader") {
         rules += "6. **When routing, HANDOFF to architect** (or thinker, depending on team config).\n";
         rules += "7. **Include the task number** in your HANDOFF prompt: \"Task N: <description>\".\n";
     } else if (role == "thinker") {
@@ -52,11 +49,11 @@ inline std::string universal_rules_for_role(const std::string& role) {
         rules += "7. **Do NOT start the next task** — only do the one you were given.\n";
         rules += "8. **Preserve the task number.** Your HANDOFF prompt must start with the same \"Task N:\" prefix you received.\n";
     } else if (role == "evaluator") {
-        rules += "6. **When done, HANDOFF to scribe** — or to done if no scribe in team.\n";
+        rules += "6. **When done, HANDOFF to done.** This signals conversation completion.\n";
         rules += "7. **Do NOT modify the work being evaluated.** You are read-only by design.\n";
         rules += "8. **Preserve and use the task number.** Your incoming HANDOFF prompt starts with \"Task N:\" — use that N when referencing what you scored.\n";
     } else {
-        rules += "6. **When done, HANDOFF to evaluator if evaluator is in your team, otherwise to scribe.** Do NOT hand off to leader or architect.\n";
+        rules += "6. **When done, HANDOFF to evaluator if evaluator is in your team, otherwise to done.** Do NOT hand off to leader or architect.\n";
         rules += "7. **Do NOT start the next task** — only do the one you were given.\n";
         rules += "8. **Preserve the task number.** Your HANDOFF prompt must start with the same \"Task N:\" prefix you received.\n";
     }
@@ -223,13 +220,13 @@ inline std::string generate_context_md(
 inline int create_agent(const AgentCreateParams& p) {
     // 1. Validate role
     static const std::vector<std::string> valid_roles = {
-        "leader", "thinker", "doer", "scribe", "librarian", "evaluator"
+        "leader", "thinker", "doer", "evaluator"
     };
     bool role_valid = false;
     for (const auto& r : valid_roles) if (r == p.role) { role_valid = true; break; }
     if (!role_valid) {
         std::cerr << "ERROR: invalid role '" << p.role << "'. "
-                  << "Valid: leader, thinker, doer, scribe, librarian, evaluator\n";
+                  << "Valid: leader, thinker, doer, evaluator\n";
         return 1;
     }
 
@@ -381,13 +378,13 @@ inline int modify_agent(const AgentCreateParams& overrides) {
     if (!overrides.role.empty() && overrides.role != existing->role) {
         // Validate role
         static const std::vector<std::string> valid_roles = {
-            "leader", "thinker", "doer", "scribe", "librarian", "evaluator"
+            "leader", "thinker", "doer", "evaluator"
         };
         bool role_valid = false;
         for (const auto& r : valid_roles) if (r == overrides.role) { role_valid = true; break; }
         if (!role_valid) {
             std::cerr << "ERROR: invalid role '" << overrides.role << "'. "
-                      << "Valid: leader, thinker, doer, scribe, librarian, evaluator\n";
+                      << "Valid: leader, thinker, doer, evaluator\n";
             return 1;
         }
         existing->role = overrides.role;

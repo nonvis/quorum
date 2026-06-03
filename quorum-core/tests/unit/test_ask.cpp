@@ -8,11 +8,11 @@
 //       (b) a dir WITHOUT .quorum/ returns "" with a non-empty err
 //       (c) name-convention: with HOME pointed at a temp dir and
 //           <tmpHOME>/nonvis/foo/.quorum present, resolving "foo" finds it
-//   (B) assemble_manager_prompt:
+//   (B) assemble_manager_prompt (Phase 14: sources the KNOWER VAULTS):
 //       (a) the prompt contains the question
-//       (b) seeded Pitch/00 - Introduction.md + 00 - Decision Log.md content
-//           appears in the prompt
-//       (c) with NO curated files present it still returns a non-empty prompt
+//       (b) seeded knower ref-*.md content (a cartographer + historian ref)
+//           appears in the prompt, labelled by source vault
+//       (c) with NO knower vaults present it still returns a non-empty prompt
 //           containing the question (graceful degrade), no crash
 //   (C) agent path (PURE):
 //       (a) assemble_agent_prompt embeds the skill sentinel + the knowledge
@@ -157,51 +157,71 @@ static void test_B_assemble(const fs::path& tdir) {
     const std::string question =
         "What is the project's stance on durable independent storage?";
 
-    // (a)+(b): seeded curated layer.
+    // (a)+(b): seeded KNOWER VAULTS (Phase 14: the sole accumulators). The
+    // manager prompt derives from the knower ref-*.md surveys, NOT a curated
+    // librarian layer.
     {
         auto proj = tdir / "B_seeded";
         fs::create_directories(proj / ".quorum");
-        // Curated layer lives under <proj>/.quorum/librarian/ (curated_base).
-        auto curated = proj / ".quorum" / "librarian";
-        write_file(curated / "Pitch" / "00 - Introduction.md",
-                   "# Pitch\n\n## What we're building\n\n"
-                   "PITCH_INTRO_MARKER: provenance-on-Sui protocol.\n");
-        write_file(curated / "00 - Decision Log.md",
-                   "# Decision Log\n\n### 2026-05-19 — Provenance is the moat\n\n"
-                   "DECISION_LOG_MARKER: durable-storage claim dropped.\n");
+        // Cartographer survey (the WHERE lens).
+        write_file(proj / ".quorum" / "vaults" / "cartographer" / "knowledge" /
+                       "ref-project-index.md",
+                   "---\nsummary: provenance-on-Sui layout marker\n---\n"
+                   "# Project index\n\n"
+                   "CARTOGRAPHER_MARKER: the SAL/Walrus seam is at src/sal/.\n");
+        // Historian survey (the WHY lens).
+        write_file(proj / ".quorum" / "vaults" / "historian" / "knowledge" /
+                       "ref-decisions.md",
+                   "# Decisions\n\n### 2026-05-19 — Provenance is the moat\n\n"
+                   "HISTORIAN_MARKER: durable-storage claim dropped.\n");
 
         auto prompt = sui::quorum::cli::assemble_manager_prompt(proj.string(),
                                                                 question);
         check(!prompt.empty(), "B(a): prompt non-empty");
         check(prompt.find(question) != std::string::npos,
               "B(a): prompt contains the question");
-        check(prompt.find("PITCH_INTRO_MARKER: provenance-on-Sui protocol.")
+        // Both knower refs are listed in the inventory (by filename + vault).
+        check(prompt.find("ref-project-index.md") != std::string::npos,
+              "B(b): cartographer ref listed in knower digest");
+        check(prompt.find("ref-decisions.md") != std::string::npos,
+              "B(b): historian ref listed in knower digest");
+        check(prompt.find("vault: cartographer") != std::string::npos,
+              "B(b): cartographer source vault labelled");
+        check(prompt.find("vault: historian") != std::string::npos,
+              "B(b): historian source vault labelled");
+        // The cartographer ref carries a `summary:` so its preview is shown;
+        // the historian ref has none, so a head excerpt (its marker) appears.
+        check(prompt.find("provenance-on-Sui layout marker")
                   != std::string::npos,
-              "B(b): Pitch/Introduction content appears in prompt");
-        check(prompt.find("DECISION_LOG_MARKER: durable-storage claim dropped.")
+              "B(b): cartographer summary preview appears in prompt");
+        check(prompt.find("HISTORIAN_MARKER: durable-storage claim dropped.")
                   != std::string::npos,
-              "B(b): Decision Log content appears in prompt");
+              "B(b): historian ref head excerpt appears in prompt");
         // Manager persona present.
         check(prompt.find("You are the manager of this project")
                   != std::string::npos,
               "B(b): manager persona present");
+        // No curated-layer / learnings vocabulary leaks into the new prompt.
+        check(prompt.find("learnings.md") == std::string::npos,
+              "B(b): no learnings.md reference (scribe retired)");
+        check(prompt.find(".quorum/librarian") == std::string::npos,
+              "B(b): no curated librarian layer reference (librarian retired)");
     }
 
-    // (c): NO curated files present -> still non-empty, contains question.
+    // (c): NO knower vaults present -> still non-empty, contains question,
+    // graceful-degrade marker for the empty knower digest.
     {
         auto proj = tdir / "B_empty";
-        fs::create_directories(proj / ".quorum");  // .quorum exists; no curated files
+        fs::create_directories(proj / ".quorum");  // .quorum exists; no vaults
 
         auto prompt = sui::quorum::cli::assemble_manager_prompt(proj.string(),
                                                                 question);
-        check(!prompt.empty(), "B(c): prompt non-empty with no curated files");
+        check(!prompt.empty(), "B(c): prompt non-empty with no knower vaults");
         check(prompt.find(question) != std::string::npos,
               "B(c): prompt still contains the question (graceful degrade)");
-        // Graceful-degrade markers for missing curated files.
-        check(prompt.find("(not present)") != std::string::npos,
-              "B(c): missing curated files marked '(not present)'");
-        check(prompt.find("(no learnings.md yet)") != std::string::npos,
-              "B(c): missing learnings marked '(no learnings.md yet)'");
+        check(prompt.find("no knower-vault ref-*.md notes found")
+                  != std::string::npos,
+              "B(c): empty knower digest marked gracefully");
     }
 }
 

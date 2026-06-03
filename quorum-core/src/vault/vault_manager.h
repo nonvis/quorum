@@ -28,8 +28,9 @@ namespace sui::quorum {
 // The context_assembler READS from vaults. This class handles WRITES —
 // applying VaultUpdate blocks parsed from agent output.
 
-// Result of classifying a VAULT_UPDATE path against the own-vault rule
-// plus the brainstorm-mode scribe cross-write exception.
+// Result of classifying a VAULT_UPDATE path against the own-vault rule.
+// (Phase 14 retired the brainstorm-mode scribe cross-write exception; writes
+// are own-vault only in all modes.)
 //
 // In every accepted case, `target_agent` is the agent whose vault should
 // receive the write and `relative_path` is the path inside that vault
@@ -148,27 +149,21 @@ public:
         return success_count;
     }
 
-    // ── Phase 6 Track 3 — own-vault rule + scribe brainstorm exception ─────────
+    // ── Own-vault rule (Phase 6 Track 3 / Phase 14) ────────────────────────────
 
     // Pure classifier for VAULT_UPDATE paths.
     //
     // The own-vault rule (from the analyst CONTEXT.md prompt block):
-    //   `path:` MUST start with `knowledge/` or `inbox/` and writes go to
-    //   the EMITTING agent's vault. This is the only rule for `mode == "generic"`
-    //   regardless of role.
+    //   `path:` MUST start with `knowledge/` or `inbox/` and writes go to the
+    //   EMITTING agent's vault. This holds in BOTH modes for every role.
     //
-    // The single exception (Phase 6 Track 3): when `mode == "brainstorm"` AND
-    // `emitting_agent_role == "scribe"`, the scribe MAY emit
-    //
-    //     path: <agent-id>/knowledge/<file>.md
-    //
-    // to cross-write into ANOTHER team member's vault. The agent-id prefix
-    // must match an entry in `team_agents`. Unknown agent IDs are rejected
-    // (caller logs to stderr, does NOT crash the conversation).
-    //
-    // All other roles (leader/thinker/doer) remain own-vault-bound
-    // even in brainstorm mode. This is deliberate — the scribe is the ONE
-    // curator role for cross-vault writes.
+    // Phase 14 retired the scribe — the sole former exception to this rule. The
+    // brainstorm accumulation doctrine is now "participating knowers self-write
+    // their OWN lens's slice" (own-vault), so there is no cross-vault curator.
+    // Any path that is NOT own-shape is rejected (the caller logs to stderr and
+    // does NOT crash the conversation). `emitting_agent_role` and
+    // `conversation_mode` are retained in the signature for the caller's
+    // diagnostic logging but no longer gate acceptance.
     //
     // Pure function: no filesystem access, no I/O. Tested in
     // test_vault_update_brainstorm.cpp.
@@ -179,6 +174,9 @@ public:
         std::string_view conversation_mode,
         const std::vector<AgentMetadata>& team_agents)
     {
+        (void)emitting_agent_role;
+        (void)conversation_mode;
+        (void)team_agents;
         VaultPathClassification c;
 
         if (path.empty()) {
@@ -207,58 +205,10 @@ public:
             return c;
         }
 
-        // Not own-shape — only the scribe-in-brainstorm exception can rescue it.
-        const bool is_brainstorm = (conversation_mode == "brainstorm");
-        const bool is_scribe     = (emitting_agent_role == "scribe");
-
-        if (!is_brainstorm) {
-            c.reason = "cross-vault path not allowed in generic mode";
-            return c;
-        }
-        if (!is_scribe) {
-            c.reason = "cross-vault path is scribe-only (role=" +
-                       std::string(emitting_agent_role) + ")";
-            return c;
-        }
-
-        // Parse the agent-id prefix: <agent-id>/<remainder>
-        auto slash = path.find('/');
-        if (slash == std::string_view::npos || slash == 0) {
-            c.reason = "cross-vault path missing <agent-id>/ prefix";
-            return c;
-        }
-        auto target_id  = path.substr(0, slash);
-        auto remainder  = path.substr(slash + 1);
-
-        // Remainder MUST itself be an own-vault-shape path inside the target
-        // agent's vault. Cross-write is for collaborative knowledge curation,
-        // not for slipping out of the knowledge/ + inbox/ envelope entirely.
-        const bool remainder_ok =
-            (remainder.size() > 10 && remainder.substr(0, 10) == "knowledge/") ||
-            (remainder.size() >  6 && remainder.substr(0,  6) == "inbox/");
-        if (!remainder_ok) {
-            c.reason = "cross-vault remainder must start with knowledge/ or inbox/";
-            return c;
-        }
-
-        // Verify <agent-id> is a known team member.
-        bool known = false;
-        for (const auto& a : team_agents) {
-            if (a.id == target_id) { known = true; break; }
-        }
-        if (!known) {
-            c.reason = "unknown agent id in cross-vault path: " +
-                       std::string(target_id);
-            return c;
-        }
-
-        // The scribe writing into its OWN vault via the cross-vault shape is
-        // accepted (degenerate cross-vault); we still flag it as cross_vault
-        // so the caller log makes the path-shape visible.
-        c.accepted       = true;
-        c.target_agent   = std::string(target_id);
-        c.relative_path  = std::string(remainder);
-        c.is_cross_vault = true;
+        // Not own-shape — rejected for all roles in all modes. The scribe
+        // cross-vault exception was retired in Phase 14.
+        c.reason = "VAULT_UPDATE path must start with knowledge/ or inbox/ "
+                   "(own-vault only; cross-vault writes are not permitted)";
         return c;
     }
 
@@ -269,23 +219,11 @@ public:
     // warning is emitted to stderr and the function returns false WITHOUT
     // throwing — this preserves the "don't crash the conversation" contract.
     //
-    // The destination is `<vault-root>/<target_agent>/<relative_path>`.
-    // For own-vault writes target_agent == emitting_agent_id (existing
-    // behavior). For the scribe-in-brainstorm exception, target_agent is
-    // another team member's id.
-    //
-    // Phase 8 Track 7 (#30) — ref auto-promotion to project scope.
-    // When the accepted update is a brainstorm-mode scribe cross-write of
-    // a `ref-*.md` (basename prefix) AND `project_root` is non-empty, the
-    // daemon ALSO copies the same content into
-    // `<project_root>/.quorum/knowledge/<basename>` so the entire team can
-    // search-retrieve it via the project-wide knowledge scope. Behavior
-    // notes:
-    //   - rules (`rule-*.md`) are NOT auto-promoted (deliberately scoped).
-    //   - if a project-scope copy already exists with DIFFERENT content,
-    //     a stderr warning is emitted and the auto-copy is SKIPPED (no
-    //     overwrite). Identical content is a no-op (silently re-written).
-    //   - the auto-copy failure does NOT fail the parent cross-write.
+    // The destination is `<vault-root>/<target_agent>/<relative_path>`. Phase
+    // 14: target_agent is always emitting_agent_id (own-vault only; the scribe
+    // cross-vault curator + its ref auto-promotion were retired). `project_root`
+    // is retained in the signature for call-site compatibility but no longer
+    // drives any promotion.
     [[nodiscard]] bool apply_vault_update_with_context(
         std::string_view emitting_agent_id,
         std::string_view emitting_agent_role,
@@ -294,6 +232,7 @@ public:
         const VaultUpdate& update,
         std::string_view project_root = {}) const
     {
+        (void)project_root;
         auto c = classify_vault_path(update.path, emitting_agent_id,
                                      emitting_agent_role, conversation_mode,
                                      team_agents);
@@ -309,81 +248,14 @@ public:
 
         VaultUpdate routed = update;
         routed.path = c.relative_path;
-        bool ok = apply_vault_update(c.target_agent, routed);
-        if (!ok) return false;
-
-        // Phase 8 Track 7 (#30): auto-promote brainstorm scribe ref cross-writes
-        // to project scope so the team can search them via the project tier.
-        // Conditions: brainstorm mode, scribe role, cross-vault path, and the
-        // basename starts with "ref-". Rules and plain-named notes are NOT
-        // promoted (they're either deliberately scoped or narrative-only).
-        const bool brainstorm_scribe_cross =
-            c.is_cross_vault &&
-            (conversation_mode == "brainstorm") &&
-            (emitting_agent_role == "scribe") &&
-            !project_root.empty();
-        if (brainstorm_scribe_cross) {
-            auto basename = std::filesystem::path(c.relative_path)
-                .filename().string();
-            const bool is_ref =
-                basename.size() > 4 && basename.substr(0, 4) == "ref-";
-            if (is_ref) {
-                auto project_dir = std::filesystem::path(std::string(project_root))
-                    / ".quorum" / "knowledge";
-                auto project_target = project_dir / basename;
-
-                std::error_code ec;
-                std::filesystem::create_directories(project_dir, ec);
-                if (ec) {
-                    std::cerr << "vault_manager: ref auto-promote skipped — "
-                              << "could not create " << project_dir.string()
-                              << ": " << ec.message() << "\n";
-                } else if (std::filesystem::exists(project_target, ec)) {
-                    // If existing content differs, warn and skip (no overwrite).
-                    std::ifstream in(project_target);
-                    std::string existing(
-                        (std::istreambuf_iterator<char>(in)),
-                        std::istreambuf_iterator<char>());
-                    if (existing != update.content) {
-                        std::cerr << "vault_manager: ref auto-promote skipped — "
-                                  << project_target.string()
-                                  << " exists with different content "
-                                  << "(emitting agent: " << emitting_agent_id
-                                  << ", source path: " << update.path << ")\n";
-                    }
-                    // identical content: no-op
-                } else {
-                    std::ofstream out(project_target, std::ios::trunc);
-                    if (!out.is_open()) {
-                        std::cerr << "vault_manager: ref auto-promote failed — "
-                                  << "could not open " << project_target.string()
-                                  << " for write\n";
-                    } else {
-                        out << update.content;
-                        if (!out.good()) {
-                            std::cerr << "vault_manager: ref auto-promote write "
-                                      << "error for " << project_target.string()
-                                      << "\n";
-                        } else {
-                            std::cerr << "vault_manager: ref auto-promoted to "
-                                      << "project scope: " << project_target.string()
-                                      << " (from " << emitting_agent_id
-                                      << "'s cross-write to " << update.path << ")\n";
-                        }
-                    }
-                }
-            }
-        }
-
-        return ok;
+        return apply_vault_update(c.target_agent, routed);
     }
 
     // Apply multiple VaultUpdates with conversation context. Returns count of
     // successful writes (rejected updates are skipped, NOT counted).
     //
-    // `project_root` is optional and only used by the brainstorm-scribe ref
-    // auto-promotion path (#30). Passing an empty string disables promotion
-    // (existing test call sites continue to work unchanged).
+    // `project_root` is retained for call-site compatibility (Phase 14 retired
+    // the ref auto-promotion path it used to drive).
     [[nodiscard]] size_t apply_all_updates_with_context(
         std::string_view emitting_agent_id,
         std::string_view emitting_agent_role,

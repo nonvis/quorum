@@ -216,11 +216,6 @@ add_executable(test_frontmatter_scoring tests/unit/test_frontmatter_scoring.cpp)
 target_include_directories(test_frontmatter_scoring PRIVATE src)
 add_test(NAME test_frontmatter_scoring COMMAND test_frontmatter_scoring)
 
-# Phase 11 Track 4 — ## Project Pitch injection (scribe-respects-Pitch loop)
-add_executable(test_assembler_pitch tests/unit/test_assembler_pitch.cpp)
-target_include_directories(test_assembler_pitch PRIVATE src)
-add_test(NAME test_assembler_pitch COMMAND test_assembler_pitch)
-
 # Phase 10 Track 3 — quorum vault dedup CLI
 add_executable(test_vault_dedup tests/unit/test_vault_dedup.cpp)
 target_include_directories(test_vault_dedup PRIVATE src)
@@ -237,26 +232,6 @@ target_include_directories(test_no_vault_write PRIVATE src)
 target_link_libraries(test_no_vault_write PRIVATE SQLite::SQLite3)
 add_test(NAME test_no_vault_write COMMAND test_no_vault_write)
 
-# Phase 10 Track 10: scribe write-discipline (handoff protocol v0.1)
-add_executable(test_scribe_write_discipline tests/unit/test_scribe_write_discipline.cpp)
-target_include_directories(test_scribe_write_discipline PRIVATE src)
-add_test(NAME test_scribe_write_discipline COMMAND test_scribe_write_discipline)
-
-# Phase 11: librarian-as-curator engine (pitch-protocol v0.1)
-add_executable(test_librarian_curate tests/unit/test_librarian_curate.cpp)
-target_include_directories(test_librarian_curate PRIVATE src)
-add_test(NAME test_librarian_curate COMMAND test_librarian_curate)
-
-# Phase 11 Batch B: librarian curate pipeline (parse -> validate -> diff -> apply)
-add_executable(test_librarian_pipeline tests/unit/test_librarian_pipeline.cpp)
-target_include_directories(test_librarian_pipeline PRIVATE src)
-add_test(NAME test_librarian_pipeline COMMAND test_librarian_pipeline)
-
-# Phase 11 (pitch-protocol v0.4): knower-vaults-as-source for Pitch/Roadmap lanes
-add_executable(test_librarian_knower_source tests/unit/test_librarian_knower_source.cpp)
-target_include_directories(test_librarian_knower_source PRIVATE src)
-add_test(NAME test_librarian_knower_source COMMAND test_librarian_knower_source)
-
 # Phase 12: quorum ask CLI (ask the manager, read-only) — pure helpers
 add_executable(test_ask tests/unit/test_ask.cpp)
 target_include_directories(test_ask PRIVATE src)
@@ -266,11 +241,6 @@ add_test(NAME test_ask COMMAND test_ask)
 add_executable(test_supervisor_init tests/unit/test_supervisor_init.cpp)
 target_include_directories(test_supervisor_init PRIVATE src)
 add_test(NAME test_supervisor_init COMMAND test_supervisor_init)
-
-# Phase 13 Track 4: autopilot output parity — scribe record == daemon, byte-identical
-add_executable(test_autopilot_parity tests/unit/test_autopilot_parity.cpp)
-target_include_directories(test_autopilot_parity PRIVATE src)
-add_test(NAME test_autopilot_parity COMMAND test_autopilot_parity)
 
 # Phase 14 Track 3: quorum knower refresh CLI — pure parts (arg validation,
 # name validation, setup-gate, project-resolution reuse) + the generic-mode

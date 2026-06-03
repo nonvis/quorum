@@ -31,10 +31,8 @@
 #include "cli/skills.h"
 #include "cli/vault_dedup.h"
 #include "cli/vault_audit.h"
-#include "cli/librarian_curate.h"
 #include "cli/ask.h"
 #include "cli/supervisor_init.h"
-#include "cli/scribe_record.h"
 #include "cli/knower_refresh.h"
 #include "utils/discover.h"
 
@@ -144,8 +142,6 @@ static void print_usage(const char* prog) {
               << "                                          Cluster near-duplicate rule-*.md/ref-*.md files\n"
               << "  " << prog << " vault audit [--vault <path>] [--days N] [--global]\n"
               << "                                          List stale (last_reviewed > N days) and expired rule/ref files\n"
-              << "  " << prog << " librarian curate [--project <path>] [--dry-run] [--apply] [--model <m>]\n"
-              << "                                          Curate scribe output into .quorum/librarian/ (Pitch / Decision Log / Roadmap)\n"
               << "  " << prog << " ask \"<question>\" [--project <path|name>] [--agent <name>]\n"
               << "                                          Ask a project's manager (or a specific --agent) a question, read-only\n"
               << "  " << prog << " knower refresh [--all | --knower <name>] [--project <path|name>]\n"
@@ -176,7 +172,7 @@ static void print_usage(const char* prog) {
               << "  --conversation <id>  Conversation ID for resume/close\n"
               << "  --help               Show this message\n"
               << "\nAgent create options:\n"
-              << "  --role <role>        Agent role (leader|thinker|doer|scribe|librarian)\n"
+              << "  --role <role>        Agent role (leader|thinker|doer|evaluator)\n"
               << "  --name <name>        Agent ID\n"
               << "  --project <name>     Project subfolder in configs/agents/ (optional with .quorum/)\n"
               << "  --description <d>    Agent description (optional)\n"
@@ -474,13 +470,9 @@ int main(int argc, char* argv[]) {
     sui::quorum::cli::VaultAuditOptions vault_audit_opts;
     std::string vault_subcmd_arg;
     bool vault_path_explicit = false;
-    sui::quorum::cli::LibrarianCurateOptions librarian_curate_opts;  // Phase 11
-    std::string librarian_subcmd_arg;
     sui::quorum::cli::AskOptions ask_opts;  // Phase 12 — `quorum ask`
     sui::quorum::cli::SupervisorInitOptions supervisor_init_opts;  // Phase 13
     std::string supervisor_subcmd_arg;
-    sui::quorum::cli::ScribeRecordOptions scribe_record_opts;      // Phase 13
-    std::string scribe_subcmd_arg;
     sui::quorum::cli::KnowerRefreshOptions knower_refresh_opts;    // Phase 14 T3
     std::string knower_subcmd_arg;
 
@@ -597,29 +589,6 @@ int main(int argc, char* argv[]) {
             std::cerr << "       quorum vault audit [--vault <path>] [--global] [--days N]\n";
             return 1;
         }
-    } else if (subcommand == "librarian") {
-        for (size_t i = 0; i < sub_args.size(); ++i) {
-            if (librarian_subcmd_arg.empty() && sub_args[i] == "curate") {
-                librarian_subcmd_arg = sub_args[i];
-            } else if (sub_args[i] == "--project" && i + 1 < sub_args.size()) {
-                librarian_curate_opts.project_path = sub_args[++i];
-            } else if (sub_args[i] == "--dry-run") {
-                librarian_curate_opts.dry_run = true;
-            } else if (sub_args[i] == "--apply") {
-                librarian_curate_opts.apply_all = true;
-            } else if (sub_args[i] == "--model" && i + 1 < sub_args.size()) {
-                librarian_curate_opts.model = sub_args[++i];
-            }
-        }
-        if (librarian_subcmd_arg.empty()) {
-            std::cerr << "ERROR: librarian requires a sub-subcommand (curate)\n";
-            std::cerr << "Usage: quorum librarian curate [--project <path>] [--dry-run] [--apply] [--model <m>]\n";
-            return 1;
-        }
-        if (librarian_curate_opts.dry_run && librarian_curate_opts.apply_all) {
-            std::cerr << "ERROR: --dry-run and --apply are mutually exclusive\n";
-            return 1;
-        }
     } else if (subcommand == "ask") {
         // Phase 12 — `quorum ask "<question>" [--project <path|name>]
         //             [--agent <name>]`.
@@ -648,23 +617,6 @@ int main(int argc, char* argv[]) {
         if (supervisor_subcmd_arg.empty()) {
             std::cerr << "ERROR: supervisor requires a sub-subcommand (init)\n";
             std::cerr << "Usage: quorum supervisor init [--project <path>] [--force]\n";
-            return 1;
-        }
-    } else if (subcommand == "scribe") {
-        // Phase 13 — `quorum scribe record [--project <path>] [--block <file>]`.
-        // Applies a LEARNINGS_UPDATE block via the daemon's own write (parity).
-        for (size_t i = 0; i < sub_args.size(); ++i) {
-            if (scribe_subcmd_arg.empty() && sub_args[i] == "record") {
-                scribe_subcmd_arg = sub_args[i];
-            } else if (sub_args[i] == "--project" && i + 1 < sub_args.size()) {
-                scribe_record_opts.project_path = sub_args[++i];
-            } else if (sub_args[i] == "--block" && i + 1 < sub_args.size()) {
-                scribe_record_opts.block_file = sub_args[++i];
-            }
-        }
-        if (scribe_subcmd_arg.empty()) {
-            std::cerr << "ERROR: scribe requires a sub-subcommand (record)\n";
-            std::cerr << "Usage: quorum scribe record [--project <path>] [--block <file>]\n";
             return 1;
         }
     } else if (subcommand == "knower") {
@@ -785,23 +737,6 @@ int main(int argc, char* argv[]) {
         // --global case falls through to config load below.
     }
 
-    // Phase 11 — `quorum librarian curate`. No --config needed: operates on the
-    // target project root (default cwd, or --project <path>). Resolves the
-    // project root, bootstraps the skeleton, invokes the librarian, and applies
-    // its blocks behind the operator gate.
-    if (subcommand == "librarian" && librarian_subcmd_arg == "curate") {
-        if (librarian_curate_opts.project_path.empty()) {
-            auto root = sui::quorum::discover_project_root();
-            if (root) librarian_curate_opts.project_path = *root;
-            // else: run_librarian_curate defaults to cwd.
-        }
-        // Curation is a light distill+route job (validated on Sonnet), so it
-        // defaults to --model sonnet. An explicit --model <m> still overrides.
-        if (librarian_curate_opts.model.empty())
-            librarian_curate_opts.model = "sonnet";
-        return sui::quorum::cli::run_librarian_curate(librarian_curate_opts);
-    }
-
     // Phase 12 — `quorum ask "<question>" [--project <path|name>]`. No --config
     // needed: read-only single-shot leader invocation against the target project
     // (default cwd, or --project <path|name>). run_ask resolves the project
@@ -822,18 +757,6 @@ int main(int argc, char* argv[]) {
             // else: run_supervisor_init defaults to cwd and reports if no .quorum/.
         }
         return sui::quorum::cli::run_supervisor_init(supervisor_init_opts);
-    }
-
-    // Phase 13 — `quorum scribe record`. No --config needed: applies a
-    // LEARNINGS_UPDATE block through the SAME parse+write the daemon uses
-    // (output parity). Reads the block from --block <file> or stdin.
-    if (subcommand == "scribe" && scribe_subcmd_arg == "record") {
-        if (scribe_record_opts.project_path.empty()) {
-            auto root = sui::quorum::discover_project_root();
-            if (root) scribe_record_opts.project_path = *root;
-            // else: run_scribe_record defaults to cwd and reports if no .quorum/.
-        }
-        return sui::quorum::cli::run_scribe_record(scribe_record_opts);
     }
 
     // Phase 14 Track 3 — `quorum knower refresh`. No --config needed: re-runs the
@@ -1308,8 +1231,7 @@ int main(int argc, char* argv[]) {
             if (!agent_id.empty()) {
                 auto parsed = output_parser.parse(result.output);
 
-                // Resolve emitting agent's role for vault path classification
-                // (Phase 6 Track 3 — scribe-in-brainstorm cross-vault exception).
+                // Resolve emitting agent's role for vault path classification.
                 std::string emitting_role;
                 for (const auto& a : cfg.agents) {
                     if (a.id == agent_id) {
@@ -1318,14 +1240,12 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                // Apply vault updates with conversation context. The
-                // classifier inside vault_manager enforces:
-                //   - generic mode: own-vault only (path starts with
-                //     knowledge/ or inbox/)
-                //   - brainstorm + scribe: own-vault OR cross-vault
-                //     (path: <agent-id>/knowledge/<file>.md or
-                //      path: <agent-id>/inbox/<file>.md)
-                //   - all other (mode × role) combinations: own-vault only
+                // Apply vault updates with conversation context. The classifier
+                // inside vault_manager enforces own-vault-only writes in BOTH
+                // modes: a VAULT_UPDATE path must start with knowledge/ or
+                // inbox/ and lands in the EMITTING agent's vault. (Phase 14:
+                // knowers self-write their own lens's slice — own-vault — behind
+                // the brainstorm human gate; there is no cross-vault curator.)
                 if (!parsed.vault_updates.empty()) {
                     if (conv_no_vault_write) {
                         // Phase 10 Track 5 — suppression branch. Unconditional
@@ -1337,9 +1257,6 @@ int main(int argc, char* argv[]) {
                                   << parsed.vault_updates.size()
                                   << " update(s) dropped)\n";
                     } else {
-                        // Phase 8 Track 7 (#30): pass project_root so brainstorm
-                        // scribe ref cross-writes get auto-promoted to project
-                        // scope (.quorum/knowledge/) for team-wide searchability.
                         auto applied = vault_manager.apply_all_updates_with_context(
                             agent_id, emitting_role, task_mode, cfg.agents,
                             parsed.vault_updates,
@@ -1350,54 +1267,6 @@ int main(int argc, char* argv[]) {
                                       << " vault updates applied for " << agent_id
                                       << " (mode=" << task_mode
                                       << ", role=" << emitting_role << ")\n";
-                        }
-                    }
-                }
-
-                // Phase 10 Track 10 v0.2 — apply LEARNINGS_UPDATE blocks.
-                // Parser surfaces zero-or-more ScribeLearningsEntry on
-                // parsed.learnings_updates; each lands in
-                // <project_root>/.quorum/learnings.md via the daemon-side
-                // primitive apply_scribe_learnings_update() (header-only,
-                // pulled transitively through output_parser.h). The scribe
-                // is analyst-class at runtime (no Edit/Write) so this is
-                // the only path to write learnings.md. Suppression respects
-                // the same --no-vault-write flag as VAULT_UPDATE for
-                // semantic consistency (any on-disk vault mutation off).
-                if (!parsed.learnings_updates.empty()) {
-                    if (conv_no_vault_write) {
-                        std::cout << "[dispatch] task " << task_id
-                                  << " — LEARNINGS_UPDATE suppressed "
-                                  << "(--no-vault-write, "
-                                  << parsed.learnings_updates.size()
-                                  << " entry(ies) dropped)\n";
-                    } else {
-                        const auto& root = project_root_str.value_or("");
-                        if (root.empty()) {
-                            std::cerr << "[dispatch] task " << task_id
-                                      << " — LEARNINGS_UPDATE skipped (no "
-                                      << "project root; daemon started "
-                                      << "outside a quorum project)\n";
-                        } else {
-                            for (const auto& entry : parsed.learnings_updates) {
-                                auto r = sui::quorum::apply_scribe_learnings_update(
-                                    root, entry);
-                                if (!r.ok) {
-                                    std::cerr << "[dispatch] task " << task_id
-                                              << " — LEARNINGS_UPDATE write "
-                                              << "FAILED: " << r.reason << "\n";
-                                } else if (r.bootstrapped) {
-                                    std::cout << "[dispatch] task " << task_id
-                                              << " — LEARNINGS_UPDATE "
-                                              << "bootstrapped "
-                                              << ".quorum/learnings.md\n";
-                                } else if (verbose) {
-                                    std::cout << "[dispatch] task " << task_id
-                                              << " — LEARNINGS_UPDATE "
-                                              << "appended to "
-                                              << ".quorum/learnings.md\n";
-                                }
-                            }
                         }
                     }
                 }

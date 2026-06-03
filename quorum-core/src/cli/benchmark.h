@@ -3,8 +3,8 @@
 // Phase 8 Track 5 — `quorum benchmark` subcommand.
 //
 // Drives the synthetic benchmark suite for a role-specialty against the
-// standard team pipeline (leader -> <role-specialty> doer -> evaluator ->
-// scribe), then surfaces the evaluator's score from the evaluations table.
+// standard team pipeline (leader -> <role-specialty> doer -> evaluator),
+// then surfaces the evaluator's score from the evaluations table.
 //
 // Usage:
 //   quorum benchmark --role move-dev --task move-counter
@@ -18,11 +18,11 @@
 //   3. mkdir tempdir (unique per-pid + per-task), copy expected/ into it
 //      if present (starter files for the agent to modify).
 //   4. Programmatically run `init_project()` inside the tempdir.
-//   5. Scaffold three additional agents via `create_agent(no_ai=true)`:
-//      a doer with id == role-specialty, an evaluator, and a scribe.
-//   6. Append `conversations.default_path: [leader, <role>, evaluator, scribe]`
-//      to the generated .quorum/config.yaml so the daemon routes the four-agent
-//      pipeline deterministically (no HANDOFF needed).
+//   5. Scaffold two additional agents via `create_agent(no_ai=true)`:
+//      a doer with id == role-specialty, and an evaluator.
+//   6. Append `conversations.default_path: [leader, <role>, evaluator]`
+//      to the generated .quorum/config.yaml so the daemon routes the
+//      three-agent pipeline deterministically (no HANDOFF needed).
 //   7. Resolve the rubric via `resolve_rubric()`. Bail if absent.
 //   8. Spawn `<self> converse --once <goal>`. The daemon loop
 //      runs to completion (state == done) and exits.
@@ -295,12 +295,13 @@ run_one_benchmark(const std::string& role_specialty,
         }
     }
 
-    // 7. Scaffold doer + evaluator + scribe agents (no-AI mode for speed).
-    //    `quorum init` now provisions a full default roster (leader + thinker +
-    //    scribe + 4 knowers), so some of these — notably `scribe` — already
-    //    exist on disk. Treat a pre-existing agent YAML as success (skip) so
-    //    the four-agent pipeline still resolves: leader + scribe come from
-    //    init, the role-specialty doer + evaluator are added here.
+    // 7. Scaffold doer + evaluator agents (no-AI mode for speed).
+    //    `quorum init` now provisions a default roster (leader + thinker +
+    //    4 knowers), so `leader` already exists on disk. Treat a pre-existing
+    //    agent YAML as success (skip) so the three-agent pipeline still
+    //    resolves: leader comes from init, the role-specialty doer + the
+    //    evaluator are added here. (Phase 14 retired the scribe terminal — the
+    //    evaluator now HANDOFFs to `done`.)
     auto scaffold = [&](const std::string& role,
                         const std::string& name) -> bool {
         if (fs::exists(fs::path(".quorum") / "agents" / (name + ".yaml"))) {
@@ -353,22 +354,17 @@ run_one_benchmark(const std::string& role_specialty,
         }
     }
 
-    if (!scaffold("scribe", "scribe")) {
-        std::cerr << "ERROR: failed to scaffold scribe agent\n";
-        cleanup();
-        return std::nullopt;
-    }
-
     // 8. Append the deterministic routing path to the generated config.yaml.
     //    The parser reads `conversations.default_path`; with no HANDOFF the
-    //    daemon walks [leader, <role>, evaluator, scribe] in order. The
+    //    daemon walks [leader, <role>, evaluator] in order, then completes
+    //    (Phase 14: the evaluator HANDOFFs to `done`; no scribe terminal). The
     //    `conversations:` section already exists (init writes it indented two
     //    spaces), so this `  default_path:` key nests correctly under it.
     {
         std::ofstream out(tempdir / ".quorum" / "config.yaml",
                           std::ios::app);
         out << "  default_path: [leader, " << role_specialty
-            << ", evaluator, scribe]\n";
+            << ", evaluator]\n";
     }
 
     if (dry_run) {

@@ -16,7 +16,6 @@
 
 #include "utils/config.h"
 #include "utils/frontmatter.h"
-#include "vault/librarian_curator.h"  // detail::curated_base (curated layer location)
 
 namespace sui::quorum {
 
@@ -686,16 +685,15 @@ public:
         // Phase 9 Track 1 — ## Vault Inventory
         //
         // Lists every rule-*.md and ref-*.md the agent's resolution scope can
-        // see (project + role + agent vault, plus teammate vaults for the
-        // brainstorm-mode scribe). Keeps the agent from defaulting to "create
-        // new file" when an existing one would be the right VAULT_UPDATE
-        // target.
+        // see (project + role + agent vault). Keeps the agent from defaulting
+        // to "create new file" when an existing one would be the right
+        // VAULT_UPDATE target. (Phase 14 retired the scribe's cross-vault
+        // teammate-inventory listing along with the cross-vault write path.)
         //
         // Phase 9 Track 3 — line format:
         //   `- <name> [t1, t2] (<scope>) — <human mtime>`
         // Bracketed tag list is omitted entirely when the file's frontmatter
-        // has no tags (or for cross-vault metadata-only entries where we
-        // intentionally don't parse content).
+        // has no tags.
         //
         // Sourced from `rules_for_inventory` (the pre-eviction copy) and
         // `all_refs` so cap-evicted rules still appear in the inventory.
@@ -717,43 +715,6 @@ public:
             for (const auto& r : all_refs) {
                 inventory.push_back({r.path.filename().string(),
                                      r.scope_label, r.mtime, r.tags});
-            }
-
-            // Brainstorm-mode scribe cross-vault: list rules + refs in
-            // teammate vaults the scribe can cross-write into. Teammate
-            // vaults are sibling dirs of `vault_dir` under <base>/vaults/.
-            // Only filenames + mtimes are read (no content) — inventory is
-            // metadata-only.
-            if (agent_role == "scribe" && conversation_mode == "brainstorm") {
-                auto vault_path = std::filesystem::path(vault_dir);
-                auto vaults_root = vault_path.parent_path();
-                if (std::filesystem::exists(vaults_root) &&
-                    std::filesystem::is_directory(vaults_root)) {
-                    for (const auto& sib : std::filesystem::directory_iterator(vaults_root)) {
-                        if (!sib.is_directory()) continue;
-                        auto other_name = sib.path().filename().string();
-                        if (other_name == agent_name) continue;
-                        auto other_knowledge = sib.path() / "knowledge";
-                        if (!std::filesystem::exists(other_knowledge) ||
-                            !std::filesystem::is_directory(other_knowledge)) continue;
-                        std::string other_label = "vault: " + other_name;
-                        for (const auto& kentry : std::filesystem::directory_iterator(other_knowledge)) {
-                            if (!kentry.is_regular_file()) continue;
-                            auto kind = classify_knowledge_filename(
-                                kentry.path().filename().string());
-                            if (kind != KnowledgeKind::Rule &&
-                                kind != KnowledgeKind::Reference) continue;
-                            // Cross-vault entries are metadata-only (no
-                            // content read), so tags stay empty — the
-                            // emit loop will skip the [tags] bracket for
-                            // these lines.
-                            inventory.push_back({kentry.path().filename().string(),
-                                                 other_label,
-                                                 kentry.last_write_time(),
-                                                 {}});
-                        }
-                    }
-                }
             }
 
             if (!inventory.empty()) {
@@ -796,51 +757,6 @@ public:
                               " additional files omitted from inventory — "
                               "most-recent " + std::to_string(kInventoryCap) +
                               " listed]\n";
-                }
-                prompt += "\n";
-            }
-        }
-
-        // Phase 11 Track 4 — ## Project Pitch (scribe-respects-Pitch loop)
-        //
-        // The librarian (Phase 11) curates scribe output into the curated
-        // aspirational layer under .quorum/librarian/ (Pitch/00 -
-        // Introduction.md + 01 - Anti-goals.md).
-        // The scribe consults that Pitch as source-of-truth when deciding
-        // keep/discard/update/restructure of its own rule-*/ref-* knowledge
-        // (pitch-protocol.md v0.1).
-        //
-        // Scope: scribe-only. The Pitch is the scribe's curation compass; other
-        // roles (doer/architect/etc.) don't make vault-curation decisions, so
-        // injecting it for them would only dilute their prompts. We gate on
-        // `agent_role == "scribe"` (same role-gate pattern as the brainstorm
-        // cross-vault inventory block above) AND on project_root being set AND
-        // on the Pitch files actually existing. Additive only: emits nothing
-        // when any gate fails (no empty "## Project Pitch" header).
-        if (agent_role == "scribe" && !project_root.empty()) {
-            auto curated = sui::quorum::detail::curated_base(project_root);
-            auto intro = curated / "Pitch" / "00 - Introduction.md";
-            auto anti = curated / "Pitch" / "01 - Anti-goals.md";
-
-            auto building = extract_pitch_section(intro, "What we're building");
-            auto direction = extract_pitch_section(intro, "Current direction");
-            auto anti_goals = extract_pitch_section(anti, "Anti-goals");
-
-            if (!building.empty() || !direction.empty() || !anti_goals.empty()) {
-                prompt += "## Project Pitch\n\n";
-                prompt += "Curated source-of-truth for project direction "
-                          "(see pitch-protocol.md). Consult this before a "
-                          "VAULT_UPDATE that keeps/updates/restructures a "
-                          "rule-*/ref-*: knowledge that no longer aligns with "
-                          "this direction is a discard/flag candidate.\n\n";
-                if (!building.empty()) {
-                    prompt += "- **What we're building:** " + building + "\n";
-                }
-                if (!direction.empty()) {
-                    prompt += "- **Current direction:** " + direction + "\n";
-                }
-                if (!anti_goals.empty()) {
-                    prompt += "- **Anti-goals:** " + anti_goals + "\n";
                 }
                 prompt += "\n";
             }
@@ -1001,88 +917,6 @@ private:
         if (delta_hr < 24) return std::to_string(delta_hr) + "h ago";
         auto delta_day = delta_hr / 24;
         return std::to_string(delta_day) + "d ago";
-    }
-
-    // Phase 11 Track 4 — extract a named "## <section>" body from a Pitch
-    // markdown file and condense it to a single whitespace-collapsed line,
-    // capped at `max_chars` with a trailing "…" marker when truncated.
-    //
-    // Returns empty string when the file or the section is absent (caller
-    // treats empty as "nothing to inject", mirroring the inventory's
-    // emit-nothing-when-empty discipline). The section body is everything
-    // between the `## <section>` heading and the next `## ` heading or EOF.
-    [[nodiscard]] static std::string extract_pitch_section(
-        const std::filesystem::path& file,
-        const std::string& section,
-        size_t max_chars = 400) {
-        if (!std::filesystem::exists(file)) return {};
-        auto content = read_file(file);
-        if (content.empty()) return {};
-
-        const std::string heading = "## " + section;
-        // Find the heading at the start of a line.
-        size_t hpos = std::string::npos;
-        size_t scan = 0;
-        const size_t n = content.size();
-        while (scan < n) {
-            size_t line_end = content.find('\n', scan);
-            std::string line = (line_end == std::string::npos)
-                ? content.substr(scan)
-                : content.substr(scan, line_end - scan);
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line == heading) {
-                hpos = (line_end == std::string::npos) ? n : line_end + 1;
-                break;
-            }
-            if (line_end == std::string::npos) break;
-            scan = line_end + 1;
-        }
-        if (hpos == std::string::npos) return {};
-
-        // Body runs until the next line that begins with "## " or EOF.
-        size_t body_end = n;
-        size_t bscan = hpos;
-        while (bscan < n) {
-            size_t line_end = content.find('\n', bscan);
-            std::string line = (line_end == std::string::npos)
-                ? content.substr(bscan)
-                : content.substr(bscan, line_end - bscan);
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line.rfind("## ", 0) == 0) {
-                body_end = bscan;
-                break;
-            }
-            if (line_end == std::string::npos) break;
-            bscan = line_end + 1;
-        }
-
-        std::string body = content.substr(hpos, body_end - hpos);
-
-        // Collapse all whitespace runs (incl. newlines) into single spaces.
-        std::string flat;
-        flat.reserve(body.size());
-        bool in_ws = false;
-        for (char c : body) {
-            if (c == '\n' || c == '\r' || c == '\t' || c == ' ') {
-                if (!in_ws && !flat.empty()) {
-                    flat.push_back(' ');
-                    in_ws = true;
-                }
-            } else {
-                flat.push_back(c);
-                in_ws = false;
-            }
-        }
-        while (!flat.empty() && flat.back() == ' ') flat.pop_back();
-
-        if (flat.size() > max_chars) {
-            flat.resize(max_chars);
-            // Trim a partial trailing token for cleanliness, then mark.
-            while (!flat.empty() && flat.back() != ' ') flat.pop_back();
-            while (!flat.empty() && flat.back() == ' ') flat.pop_back();
-            flat += " …";
-        }
-        return flat;
     }
 
     // List files sorted by modification time (most recent first)

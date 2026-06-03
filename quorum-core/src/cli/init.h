@@ -64,7 +64,7 @@ inline int init_project(const std::string& quorum_root = "") {
     // Pre-create one subdir per built-in role so the convention is
     // discoverable from a fresh init.
     static constexpr const char* kRoles[] = {
-        "leader", "thinker", "doer", "scribe", "librarian",
+        "leader", "thinker", "doer", "evaluator",
     };
     for (const auto* role : kRoles) {
         auto dir = std::string(".quorum/knowledge/roles/") + role;
@@ -107,7 +107,7 @@ inline int init_project(const std::string& quorum_root = "") {
         out << "id: leader\n"
             << "name: \"Leader\"\n"
             << "role: leader\n"
-            << "description: \"Coordinates the team -- receives goals, routes work, triggers scribe\"\n"
+            << "description: \"Coordinates the team -- receives goals, routes work to thinkers/knowers/doers\"\n"
             << "\n"
             << "vault_path: .quorum/vaults/leader/\n"
             << "context_file: .quorum/vaults/leader/CONTEXT.md\n";
@@ -139,7 +139,7 @@ inline int init_project(const std::string& quorum_root = "") {
             << "\n"
             << "- Do NOT write code yourself.\n"
             << "- Do NOT plan in excessive detail -- delegate to thinker agents.\n"
-            << "- Do NOT write documentation -- delegate to scribe agents.\n"
+            << "- Do NOT accumulate knowledge yourself -- the knowers (cartographer/architect/historian/recap) are the sole accumulators.\n"
             << "\n"
             << "## When Stuck\n"
             << "\n"
@@ -181,19 +181,12 @@ inline int init_project(const std::string& quorum_root = "") {
     // so init spends ZERO tokens. CWD is the fresh project, so create_agent
     // discovers THIS .quorum/ via discover_project_root().
     //
-    // Generic roles: thinker + scribe rely on skill auto-detect (OK if it
-    // falls back to a generic CONTEXT.md template).
+    // Generic role: thinker relies on skill auto-detect (OK if it falls back
+    // to a generic CONTEXT.md template).
     {
         sui::quorum::cli::AgentCreateParams p;
         p.role = "thinker";
         p.name = "thinker";
-        p.no_ai = true;
-        sui::quorum::cli::create_agent(p);
-    }
-    {
-        sui::quorum::cli::AgentCreateParams p;
-        p.role = "scribe";
-        p.name = "scribe";
         p.no_ai = true;
         sui::quorum::cli::create_agent(p);
     }
@@ -231,10 +224,10 @@ inline int init_project(const std::string& quorum_root = "") {
     std::cout << "  Created: .quorum/vaults/leader/knowledge/\n";
     std::cout << "  Created: .quorum/knowledge/  "
               << "(project-wide rules and references that apply to all agents)\n";
-    std::cout << "  Created: .quorum/knowledge/roles/{leader,thinker,doer,scribe,librarian}/  "
+    std::cout << "  Created: .quorum/knowledge/roles/{leader,thinker,doer,evaluator}/  "
               << "(role-specific rules apply to every agent of that role)\n";
-    std::cout << "\nQuorum initialized with 7 agents "
-              << "(leader, thinker, scribe, cartographer, architect, historian, recap).\n"
+    std::cout << "\nQuorum initialized with 6 agents "
+              << "(leader, thinker, cartographer, architect, historian, recap).\n"
               << "Next steps:\n";
     std::cout << "  1. Attach knower specialty skills + Tier-1 scans (token-free):\n";
     std::cout << "     scripts/setup-knowers.sh <project-dir>\n";

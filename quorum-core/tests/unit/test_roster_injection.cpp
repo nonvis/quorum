@@ -60,7 +60,7 @@ static void test_build_roster_3_agents() {
         .id = "move-dev", .name = "Move Dev", .description = "writes Move", .role = "doer"
     });
     agents.push_back(sui::quorum::AgentMetadata{
-        .id = "scribe", .name = "Scribe", .description = "records decisions", .role = "scribe"
+        .id = "historian", .name = "Historian", .description = "knows decisions", .role = "thinker"
     });
 
     sui::quorum::ConversationConfig cfg;
@@ -72,14 +72,14 @@ static void test_build_roster_3_agents() {
           "A: contains '**leader** (leader)'");
     check(roster.find("**move-dev** (doer) <- you") != std::string::npos,
           "A: contains '**move-dev** (doer) <- you'");
-    check(roster.find("**scribe** (scribe)") != std::string::npos,
-          "A: contains '**scribe** (scribe)'");
+    check(roster.find("**historian** (thinker)") != std::string::npos,
+          "A: contains '**historian** (thinker)'");
     check(roster.find("coordinates") != std::string::npos,
           "A: contains 'coordinates' description");
     check(roster.find("writes Move") != std::string::npos,
           "A: contains 'writes Move' description");
-    check(roster.find("records decisions") != std::string::npos,
-          "A: contains 'records decisions' description");
+    check(roster.find("knows decisions") != std::string::npos,
+          "A: contains 'knows decisions' description");
 }
 
 // --- Test B: Build roster with default_path -- path NOT advertised ----------

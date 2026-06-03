@@ -808,93 +808,6 @@ static void test_verdict_normalization() {
     check(r16.reviews[0].verdict == "approve", "verdict: '  approve  ' -> approve");
 }
 
-// ─── Phase 11: CURATION_UPDATE / DECISION_LOG_APPEND parse tests ─────────────
-
-static void test_curation_update_well_formed() {
-    sui::quorum::OutputParser parser;
-    std::string input =
-        "```CURATION_UPDATE\n"
-        "file: Pitch/00 - Introduction.md\n"
-        "section: Current direction\n"
-        "content: |\n"
-        "  - Section-scoped diff gate preserves operator edits.\n"
-        "  - Daemon-applies keeps the approval gate real.\n"
-        "source: learnings.md 2026-05-27T10:00:00Z\n"
-        "```\n";
-    auto r = parser.parse(input);
-    check(r.curation_updates.size() == 1, "curate: one curation update parsed");
-    check(r.curation_updates[0].file == "Pitch/00 - Introduction.md",
-          "curate: file field parsed");
-    check(r.curation_updates[0].section == "Current direction",
-          "curate: section field parsed");
-    check(r.curation_updates[0].content.find(
-              "Section-scoped diff gate preserves operator edits.")
-              != std::string::npos,
-          "curate: content first bullet preserved (raw multi-line)");
-    check(r.curation_updates[0].content.find(
-              "Daemon-applies keeps the approval gate real.")
-              != std::string::npos,
-          "curate: content second bullet preserved");
-    check(r.curation_updates[0].source == "learnings.md 2026-05-27T10:00:00Z",
-          "curate: source field parsed");
-    check(parser.has_actionable_output(r),
-          "curate: has_actionable_output true for CURATION_UPDATE");
-}
-
-static void test_decision_log_append_well_formed() {
-    sui::quorum::OutputParser parser;
-    std::string input =
-        "```DECISION_LOG_APPEND\n"
-        "utc: 2026-05-29T09:10:00Z\n"
-        "decision: |\n"
-        "  Adopt block + daemon-applies for librarian writes.\n"
-        "rationale: |\n"
-        "  Librarian is analyst-class at runtime; daemon-applies keeps the\n"
-        "  approval gate real.\n"
-        "source: learnings.md 2026-05-29T09:10:00Z\n"
-        "```\n";
-    auto r = parser.parse(input);
-    check(r.decision_log_appends.size() == 1,
-          "declog: one decision log append parsed");
-    check(r.decision_log_appends[0].utc == "2026-05-29T09:10:00Z",
-          "declog: utc field parsed");
-    check(r.decision_log_appends[0].decision.find(
-              "Adopt block + daemon-applies for librarian writes.")
-              != std::string::npos,
-          "declog: decision field parsed");
-    check(r.decision_log_appends[0].rationale.find("approval gate real.")
-              != std::string::npos,
-          "declog: rationale field parsed (multi-line)");
-    check(r.decision_log_appends[0].source == "learnings.md 2026-05-29T09:10:00Z",
-          "declog: source field parsed");
-    check(parser.has_actionable_output(r),
-          "declog: has_actionable_output true for DECISION_LOG_APPEND");
-}
-
-static void test_curation_malformed_dropped() {
-    sui::quorum::OutputParser parser;
-    // CURATION_UPDATE missing required `section`.
-    std::string cu_bad =
-        "```CURATION_UPDATE\n"
-        "file: Pitch/00 - Introduction.md\n"
-        "content: |\n"
-        "  - body with no section\n"
-        "```\n";
-    auto r1 = parser.parse(cu_bad);
-    check(r1.curation_updates.empty(),
-          "curate-bad: CURATION_UPDATE missing section dropped");
-
-    // DECISION_LOG_APPEND missing required `utc`.
-    std::string dla_bad =
-        "```DECISION_LOG_APPEND\n"
-        "decision: |\n"
-        "  A decision with no utc.\n"
-        "```\n";
-    auto r2 = parser.parse(dla_bad);
-    check(r2.decision_log_appends.empty(),
-          "declog-bad: DECISION_LOG_APPEND missing utc dropped");
-}
-
 // ─── main ────────────────────────────────────────────────────────────────────
 
 // ─── Regression: nested code fence inside content must NOT close the block ────
@@ -1000,11 +913,6 @@ int main() {
 
     // Verdict normalization tests
     test_verdict_normalization();
-
-    // Phase 11: CURATION_UPDATE / DECISION_LOG_APPEND parse tests
-    test_curation_update_well_formed();
-    test_decision_log_append_well_formed();
-    test_curation_malformed_dropped();
 
     // Regression: nested code fence inside VAULT_UPDATE content (truncation bug)
     test_nested_code_fence_in_content();

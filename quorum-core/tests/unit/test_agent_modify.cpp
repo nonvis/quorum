@@ -181,7 +181,7 @@ static void test_D_add_skill_file() {
     auto original_cwd = fs::current_path();
     auto tmp = setup_quorum_project();
 
-    create_test_agent("writer", "scribe");
+    create_test_agent("writer", "thinker");
 
     // Modify to add/override skill
     sui::quorum::cli::AgentCreateParams mod;
@@ -254,7 +254,7 @@ static void test_G_list_agents() {
 
     create_test_agent("alpha", "thinker", "Plans things");
     create_test_agent("beta", "doer", "Builds things");
-    create_test_agent("gamma", "scribe", "Documents things");
+    create_test_agent("gamma", "evaluator", "Scores things");
 
     // list_agents reads from cwd's .quorum/agents/
     int rc = sui::quorum::cli::list_agents();

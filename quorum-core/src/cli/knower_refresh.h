@@ -27,7 +27,7 @@
 // (tests/unit/test_knower_refresh.cpp). The only process I/O that spends tokens
 // is the run-knower.sh shell-out inside run_knower_refresh.
 //
-// Header-only, matches the cli/ask.h / cli/scribe_record.h convention.
+// Header-only, matches the cli/ask.h convention.
 
 #include <cstdlib>
 #include <filesystem>

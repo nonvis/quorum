@@ -78,7 +78,7 @@ static void test_explicit_agent_class_overrides() {
 static void test_non_doer_roles_stay_analyst() {
     std::cout << "\n=== C. Non-doer roles stay analyst ===\n\n";
 
-    std::vector<std::string> roles = {"leader", "thinker", "scribe", "librarian"};
+    std::vector<std::string> roles = {"leader", "thinker", "evaluator"};
     for (const auto& role : roles) {
         auto path = make_temp_yaml("id: test\nrole: " + role + "\n");
         auto result = sui::quorum::load_agent_config(path);

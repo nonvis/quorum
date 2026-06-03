@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "utils/config.h"
+#include "utils/subprocess.h"
 #include "storage/database.h"
 #include "agent/output_parser.h"
 #include "agent/context_assembler.h"
@@ -55,6 +56,59 @@ inline std::string generic_refresh_recommendation(int64_t conv_id,
            " --knower <cartographer|architect|historian|recap>)\n";
 }
 
+// Phase 14 Track 4 (Decision L4) — deterministic auto-commit backstop.
+//
+// The retired scribe's "Job 0" auto-committed outstanding changes on
+// completion. That bookkeeping now lives in the daemon, mirroring the
+// phase-plan checkoff backstop: on a conversation reaching is_done, if there
+// are uncommitted changes in `target_dir`, run `git add -A && git commit`.
+//
+// Defensive by design: SILENT no-op on ANY git error (no repo, nothing
+// staged, commit hook failure, detached HEAD, etc.) so the completion path is
+// NEVER blocked. `target_dir` empty/"." falls back to `project_root`. The
+// commit message embeds the conversation id + a short goal/summary label.
+//
+// Returns true iff a commit was actually created (for an optional one-line
+// operator log); false on no-op. Generic mode only is fine — brainstorm is
+// read-only and produces no working-tree changes to commit.
+inline bool auto_commit_on_completion(int64_t conv_id,
+                                      const std::string& target_dir,
+                                      const std::string& project_root,
+                                      const std::string& label) {
+    std::string dir = target_dir;
+    if (dir.empty() || dir == ".") dir = project_root;
+    if (dir.empty()) return false;
+
+    // Quote the dir for the shell; bail if it isn't a git work tree (silent).
+    auto q = [](const std::string& s) { return "\"" + s + "\""; };
+    auto in_tree = sui::quorum::run_command(
+        "cd " + q(dir) +
+        " && git rev-parse --is-inside-work-tree 2>/dev/null");
+    if (!in_tree || in_tree->exit_code != 0) return false;
+
+    // Anything to commit? `git status --porcelain` prints nothing on a clean
+    // tree. Empty output => no-op.
+    auto status = sui::quorum::run_command(
+        "cd " + q(dir) + " && git status --porcelain 2>/dev/null");
+    if (!status || status->output.empty()) return false;
+
+    // Build a single-line, shell-safe commit subject. Strip any double-quotes
+    // and collapse newlines so the message can't break the shell command.
+    std::string subject = label;
+    for (char& ch : subject) {
+        if (ch == '"' || ch == '\n' || ch == '\r') ch = ' ';
+    }
+    if (subject.size() > 80) subject = subject.substr(0, 80);
+    while (!subject.empty() && subject.back() == ' ') subject.pop_back();
+    std::string msg = "Conv " + std::to_string(conv_id) +
+                      (subject.empty() ? "" : ": " + subject);
+
+    auto commit = sui::quorum::run_command(
+        "cd " + q(dir) + " && git add -A && git commit -m " + q(msg) +
+        " >/dev/null 2>&1");
+    return commit && commit->exit_code == 0;
+}
+
 class ConversationEngine {
 public:
     ConversationEngine(Database& db, const ConversationConfig& cfg,
@@ -79,7 +133,8 @@ public:
     // Returns conversation ID.
     //
     // `mode` selects execution mode: "generic" (default; agents may mutate the
-    // project) or "brainstorm" (project read-only, scribe curates vault writes).
+    // project) or "brainstorm" (project read-only; participating knowers
+    // self-write their own lens's slice behind the human-approval gate).
     // Empty string falls back to cfg_.default_mode. Unknown values log a
     // warning and fall back to "generic".
     int64_t start(const std::string& goal, double budget_usd = 5.0,
@@ -270,6 +325,24 @@ public:
                 std::cout << "[conversation " << conv_id
                           << "] checkoff: " << flipped
                           << " plan line(s) updated\n";
+            }
+
+            // Phase 14 Track 4 (Decision L4) — deterministic auto-commit
+            // backstop (absorbs the retired scribe's Job 0). Mirrors the
+            // checkoff backstop's defensive style: silent no-op on any git
+            // error so completion is never blocked. The goal seeds the commit
+            // subject. Brainstorm is read-only so this is a no-op there.
+            {
+                std::string goal;
+                if (auto conv_done = db_.get_conversation(conv_id)) {
+                    goal = conv_done->goal;
+                }
+                bool committed = auto_commit_on_completion(
+                    conv_id, cfg_.target_dir, project_root_, goal);
+                if (committed) {
+                    std::cout << "[conversation " << conv_id
+                              << "] auto-committed outstanding changes\n";
+                }
             }
 
             // Phase 14 Track 3 (OQ1) — generic-mode knowledge accumulation.
@@ -511,8 +584,8 @@ private:
             // invoker and emitted via --append-system-prompt-file.
             //
             // Phase 9 Track 1 — pass conversation_mode through to the
-            // assembler so brainstorm-mode scribes get cross-vault
-            // inventory entries. Mode is sourced from the conversation row
+            // assembler so brainstorm-mode participants get the inventory
+            // entries. Mode is sourced from the conversation row
             // (set by start() / start_team_with_mode()).
             std::string conv_mode;
             if (auto conv = db_.get_conversation(conv_id)) {

@@ -2,9 +2,9 @@
 // Phase 9 Track 1 + Track 3 — ## Vault Inventory section in user_message.
 //
 // The inventory lists every rule-*.md and ref-*.md in the agent's resolution
-// scope (project + role + agent vault, plus teammate vaults for brainstorm-
-// mode scribes) so the agent can decide whether a VAULT_UPDATE should target
-// an existing file or create a new one.
+// scope (project + role + agent vault) so the agent can decide whether a
+// VAULT_UPDATE should target an existing file or create a new one. (Phase 14
+// retired the scribe's cross-vault teammate-inventory listing.)
 //
 // Track 1 emits filename + scope label + ISO-8601 mtime.
 // Track 3 enriches the line format to:
@@ -295,87 +295,6 @@ static void test_t4_empty_vault() {
     cleanup(vault);
 }
 
-// --- T5: brainstorm scribe cross-vault inventory ---------------------------
-
-static void test_t5_brainstorm_scribe_cross_vault() {
-    std::cout << "\n=== T5. brainstorm scribe sees teammate vault knowledge ===\n\n";
-
-    // Layout: <base>/vaults/{scribe-t5,doer-t5,leader-t5}/knowledge/
-    auto base = fs::temp_directory_path() /
-        ("quorum_test_inv_bs_" + std::to_string(getpid()) + "_" +
-         std::to_string(g_test_num++));
-    auto vaults_root = base / "vaults";
-    auto scribe_vault = vaults_root / "scribe-t5";
-    auto doer_vault = vaults_root / "doer-t5";
-    auto leader_vault = vaults_root / "leader-t5";
-    fs::create_directories(scribe_vault / "knowledge");
-    fs::create_directories(doer_vault / "knowledge");
-    fs::create_directories(leader_vault / "knowledge");
-
-    write_file(scribe_vault / "knowledge" / "rule-scribe-self.md",
-               "SCRIBE_OWN_RULE\n");
-    std::this_thread::sleep_for(std::chrono::milliseconds(15));
-    write_file(doer_vault / "knowledge" / "rule-doer-side.md",
-               "DOER_RULE\n");
-    std::this_thread::sleep_for(std::chrono::milliseconds(15));
-    write_file(leader_vault / "knowledge" / "ref-leader-side.md",
-               "LEADER_REF\n");
-    std::this_thread::sleep_for(std::chrono::milliseconds(15));
-
-    sui::quorum::ContextAssembler assembler;
-
-    // Brainstorm-mode scribe sees teammate knowledge.
-    auto split_bs = assembler.assemble_split(
-        "scribe-t5", scribe_vault.string(), "turn", "task body T5",
-        /*team_roster=*/{}, /*skill_file=*/{}, /*project_root=*/{},
-        /*agent_role=*/"scribe", /*budget=*/{},
-        /*conversation_mode=*/"brainstorm");
-
-    auto inv_pos = split_bs.user_message.find("## Vault Inventory");
-    check(inv_pos != std::string::npos,
-          "T5: brainstorm scribe inventory present");
-    auto inv_body = split_bs.user_message.substr(inv_pos);
-    auto end_a = inv_body.find("---");
-    auto end_b = inv_body.find("# Inbox:");
-    auto end_c = inv_body.find("# Current Task");
-    auto end = std::min({end_a, end_b, end_c});
-    if (end != std::string::npos) inv_body = inv_body.substr(0, end);
-
-    check(inv_body.find("rule-scribe-self.md") != std::string::npos,
-          "T5: scribe's own rule listed");
-    // Track 3: cross-vault entries are metadata-only (no content read), so
-    // tags stay empty → the `[tags]` block is omitted entirely. The
-    // literal "<filename> (vault: <agent>)" pattern still holds.
-    check(inv_body.find("rule-doer-side.md (vault: doer-t5)") != std::string::npos,
-          "T5: doer-side rule listed with 'vault: doer-t5' label (no tag block)");
-    check(inv_body.find("ref-leader-side.md (vault: leader-t5)") != std::string::npos,
-          "T5: leader-side ref listed with 'vault: leader-t5' label (no tag block)");
-
-    // Generic mode → teammate files NOT included.
-    auto split_generic = assembler.assemble_split(
-        "scribe-t5", scribe_vault.string(), "turn", "task body T5",
-        /*team_roster=*/{}, /*skill_file=*/{}, /*project_root=*/{},
-        /*agent_role=*/"scribe", /*budget=*/{},
-        /*conversation_mode=*/"generic");
-
-    auto inv_pos_g = split_generic.user_message.find("## Vault Inventory");
-    check(inv_pos_g != std::string::npos,
-          "T5: generic-mode scribe still has its own inventory");
-    auto inv_body_g = split_generic.user_message.substr(inv_pos_g);
-    auto end_ag = inv_body_g.find("---");
-    auto end_bg = inv_body_g.find("# Inbox:");
-    auto end_cg = inv_body_g.find("# Current Task");
-    auto end_g = std::min({end_ag, end_bg, end_cg});
-    if (end_g != std::string::npos) inv_body_g = inv_body_g.substr(0, end_g);
-
-    check(inv_body_g.find("rule-doer-side.md") == std::string::npos,
-          "T5: generic mode does NOT pull doer-side rule into inventory");
-    check(inv_body_g.find("ref-leader-side.md") == std::string::npos,
-          "T5: generic mode does NOT pull leader-side ref into inventory");
-
-    cleanup(base.string());
-}
-
 // --- T6: tagged ref — frontmatter tags surface as `[a, b]` block -----------
 
 static void test_t6_tagged_ref() {
@@ -521,7 +440,6 @@ int main() {
     test_t2_scope_coverage();
     test_t3_inventory_cap();
     test_t4_empty_vault();
-    test_t5_brainstorm_scribe_cross_vault();
     test_t6_tagged_ref();
     test_t7_untagged_rule();
     test_t8_mixed_vault();

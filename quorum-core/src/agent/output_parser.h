@@ -6,9 +6,6 @@
 #include <string_view>
 #include <vector>
 
-#include "vault/scribe_writer.h"
-#include "vault/librarian_curator.h"
-
 namespace sui::quorum {
 
 // ─── Data structures ──────────────────────────────────────────────────────────
@@ -59,9 +56,6 @@ struct EvaluationBlock {
 struct ParsedOutput {
     std::string summary;                     // contents of SUMMARY block (empty if absent)
     std::vector<VaultUpdate> vault_updates;  // VAULT_UPDATE blocks
-    std::vector<ScribeLearningsEntry> learnings_updates;  // LEARNINGS_UPDATE blocks (Phase 10 Track 10 v0.2)
-    std::vector<CurationUpdate> curation_updates;         // CURATION_UPDATE blocks (Phase 11)
-    std::vector<DecisionLogAppend> decision_log_appends;  // DECISION_LOG_APPEND blocks (Phase 11)
     std::vector<Proposal>    proposals;      // PROPOSAL blocks
     std::vector<Review>      reviews;        // REVIEW blocks
     std::vector<ParsedObservation> observations;  // OBSERVATION blocks
@@ -75,7 +69,7 @@ struct ParsedOutput {
 
 // Parses structured blocks from agent output.
 //
-// Recognized block types: VAULT_UPDATE, PROPOSAL, REVIEW, OBSERVATION, SUMMARY, HANDOFF, EVALUATION, LEARNINGS_UPDATE
+// Recognized block types: VAULT_UPDATE, PROPOSAL, REVIEW, OBSERVATION, SUMMARY, HANDOFF, EVALUATION
 //
 // Three accepted formats (in order of precedence):
 //
@@ -201,8 +195,7 @@ public:
                         bool skip = false;
                         for (const char* t : {"VAULT_UPDATE", "PROPOSAL",
                              "OBSERVATION", "SUMMARY", "REVIEW", "HANDOFF",
-                             "EVALUATION", "LEARNINGS_UPDATE",
-                             "CURATION_UPDATE", "DECISION_LOG_APPEND"}) {
+                             "EVALUATION"}) {
                             if (ft == t) {
                                 if (block_type.empty()) {
                                     block_type = t;
@@ -239,9 +232,6 @@ public:
     [[nodiscard]] bool has_actionable_output(const ParsedOutput& p) const {
         return !p.vault_updates.empty() || !p.proposals.empty() ||
                !p.reviews.empty() || !p.observations.empty() ||
-               !p.learnings_updates.empty() ||
-               !p.curation_updates.empty() ||
-               !p.decision_log_appends.empty() ||
                p.handoff.has_value();
     }
 
@@ -343,8 +333,7 @@ private:
         if (type == "VAULT_UPDATE" || type == "PROPOSAL" ||
             type == "REVIEW"       || type == "SUMMARY"  ||
             type == "OBSERVATION"  || type == "HANDOFF"  ||
-            type == "EVALUATION"   || type == "LEARNINGS_UPDATE" ||
-            type == "CURATION_UPDATE" || type == "DECISION_LOG_APPEND") {
+            type == "EVALUATION") {
             return type;
         }
         return {};
@@ -414,8 +403,7 @@ private:
         // Check if remainder starts with a known type followed by non-alpha or end
         for (const char* t : {"VAULT_UPDATE", "PROPOSAL",
              "OBSERVATION", "SUMMARY", "REVIEW", "HANDOFF",
-             "EVALUATION", "LEARNINGS_UPDATE",
-             "CURATION_UPDATE", "DECISION_LOG_APPEND"}) {
+             "EVALUATION"}) {
             std::string_view type_sv(t);
             if (line.size() >= type_sv.size() &&
                 line.substr(0, type_sv.size()) == type_sv) {
@@ -702,93 +690,6 @@ private:
             }
             if (ok) {
                 out.evaluation = std::move(e);  // last EVALUATION wins
-            }
-
-        } else if (type == "LEARNINGS_UPDATE") {
-            // Phase 10 Track 10 v0.2 - scribe is analyst-class at runtime
-            // (Sub-gate F empirical 2026-05-29); it emits a LEARNINGS_UPDATE
-            // block and the daemon writes .quorum/learnings.md via
-            // apply_scribe_learnings_update. Shape A: sub-fields utc + five
-            // bullet lists. Empty sub-fields are omitted by the scribe; the
-            // primitive's render_subsection drops empty sub-sections.
-            auto bag = parse_kv(lines);
-            ScribeLearningsEntry e;
-            e.utc_timestamp = bag.get_str("utc");
-
-            // Split a multi-line value into bullets: one bullet per line
-            // that begins (post-trim) with "- ". Lines without the prefix
-            // are silently dropped (v0.2 behaviour; see plan R6).
-            auto split_bullets = [](const std::string& multi) {
-                std::vector<std::string> result;
-                std::string cur;
-                auto emit = [&](const std::string& s) {
-                    auto t = trim(std::string_view(s));
-                    if (t.size() >= 2 && t.substr(0, 2) == "- ") {
-                        result.push_back(t.substr(2));
-                    }
-                };
-                for (char c : multi) {
-                    if (c == '\n') {
-                        emit(cur);
-                        cur.clear();
-                    } else {
-                        cur += c;
-                    }
-                }
-                if (!cur.empty()) emit(cur);
-                return result;
-            };
-
-            e.tried          = split_bullets(bag.get_str("tried"));
-            e.worked         = split_bullets(bag.get_str("worked"));
-            e.did_not_work   = split_bullets(bag.get_str("did_not_work"));
-            e.open_questions = split_bullets(bag.get_str("open_questions"));
-            e.decisions      = split_bullets(bag.get_str("decisions"));
-
-            if (e.utc_timestamp.empty()) {
-                std::cerr << "[output_parser] LEARNINGS_UPDATE missing utc"
-                          << " - block dropped\n";
-            } else {
-                out.learnings_updates.push_back(std::move(e));
-            }
-
-        } else if (type == "CURATION_UPDATE") {
-            // Phase 11 - librarian is analyst-class at runtime; it emits a
-            // CURATION_UPDATE block and the daemon writes the named section
-            // via apply_curation_update. `content` is the RAW multi-line
-            // replacement body (NOT bullet-split) - get_str preserves the
-            // multi-line `key: |` value intact (see parse_kv).
-            auto bag = parse_kv(lines);
-            CurationUpdate cu;
-            cu.file    = bag.get_str("file");
-            cu.section = bag.get_str("section");
-            cu.content = bag.get_str("content");
-            cu.source  = bag.get_str("source");
-
-            if (cu.file.empty() || cu.section.empty() || cu.content.empty()) {
-                std::cerr << "[output_parser] CURATION_UPDATE missing required"
-                          << " field (file/section/content) - block dropped\n";
-            } else {
-                out.curation_updates.push_back(std::move(cu));
-            }
-
-        } else if (type == "DECISION_LOG_APPEND") {
-            // Phase 11 - append-only Decision Log entry; the daemon writes via
-            // apply_decision_log_append. `decision` and `rationale` are RAW
-            // multi-line strings (kept whole, not bullet-split). utc + decision
-            // are required (mirrors the LEARNINGS_UPDATE utc gate).
-            auto bag = parse_kv(lines);
-            DecisionLogAppend dla;
-            dla.utc       = bag.get_str("utc");
-            dla.decision  = bag.get_str("decision");
-            dla.rationale = bag.get_str("rationale");
-            dla.source    = bag.get_str("source");
-
-            if (dla.utc.empty() || dla.decision.empty()) {
-                std::cerr << "[output_parser] DECISION_LOG_APPEND missing utc"
-                          << " or decision - block dropped\n";
-            } else {
-                out.decision_log_appends.push_back(std::move(dla));
             }
 
         } else if (type == "HANDOFF") {
