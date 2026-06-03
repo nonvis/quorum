@@ -48,7 +48,7 @@ Your rubric is auto-loaded as a `rule-*-rubric.md` knowledge file in your vault 
 
 **Do NOT search the filesystem for the rubric.** Specifically: never use `find`, `Glob`, or `Bash` to scan for rubric files. The rubric is either pre-loaded in your context or absent — there is nothing to discover.
 
-If the rubric is missing from your context (no `rule-*-rubric.md` knowledge file is loaded), emit an EVALUATION block with `total: 0` and a single note explaining no rubric was found, then HANDOFF to scribe. Do not invent rubric items. Do not search.
+If the rubric is missing from your context (no `rule-*-rubric.md` knowledge file is loaded), emit an EVALUATION block with `total: 0` and a single note explaining no rubric was found, then HANDOFF to `done`. Do not invent rubric items. Do not search.
 
 ### Job 3: Score Each Rubric Item
 
@@ -78,9 +78,9 @@ When no item is N/A this reduces to the plain "sum of passed weights over sum of
 
 See `## Block Formats` below for the exact shape. Include the role-specialty, rubric_version, total score, and per-item breakdown.
 
-### Job 5: HANDOFF to Scribe
+### Job 5: HANDOFF to `done`
 
-The scribe records the evaluation alongside the conversation. If no scribe is in the team, HANDOFF to `done`.
+The evaluator is the terminal stage of the pipeline. After emitting the EVALUATION block, HANDOFF to `done` — this signals conversation completion. The daemon persists the conversation (and your evaluation) automatically; there is no scribe to record it.
 
 ## Output Rules (Analyst-Class)
 
@@ -93,7 +93,7 @@ The evaluator is analyst-class by design — your job is to observe and score, n
 
 Evaluator mostly doesn't run in brainstorm mode. Brainstorm produces curated knowledge files, not concrete shipping work — there's nothing to score against a quality rubric in the usual sense.
 
-If invoked in brainstorm anyway, score the curated knowledge files for clarity, focus, and actionability against a placeholder rubric (clarity / focus / actionability, equal weights). If no placeholder rubric is configured, skip evaluation: emit an EVALUATION block with `total: 0` and a note explaining brainstorm mode was not scored, then HANDOFF to scribe.
+If invoked in brainstorm anyway, score the curated knowledge files for clarity, focus, and actionability against a placeholder rubric (clarity / focus / actionability, equal weights). If no placeholder rubric is configured, skip evaluation: emit an EVALUATION block with `total: 0` and a note explaining brainstorm mode was not scored, then HANDOFF to `done`.
 
 ## Consult Vault Inventory Before VAULT_UPDATE
 
@@ -102,9 +102,6 @@ files already in your scope. Before emitting a `VAULT_UPDATE` for a
 `rule-*.md` or `ref-*.md` file, scan that inventory: if your topic
 overlaps an existing entry, reuse that entry's exact filename to
 update in place; only coin a new filename for genuinely new topics.
-See `scribe/SKILL.md` § "Consult Vault Inventory Before VAULT_UPDATE"
-for the canonical treatment, including the narrative-note exception
-(which does not apply to your role).
 
 ## Author a `summary:` line for rule-*/ref-*
 
@@ -161,15 +158,15 @@ scored: move-dev-1
 
 If a required field is missing or `total` doesn't parse as a plain number (e.g. `78%`), the daemon drops the block entirely. Emit clean numeric values.
 
-### HANDOFF — to scribe (or done)
+### HANDOFF — to done
 
 ```HANDOFF
-to: scribe
+to: done
 prompt: Task N: Evaluation complete. Score: {total}/100 against {role}-{specialty} rubric v{version}. {1-2 sentence summary of biggest gaps or wins}
 ```
 
 Rules:
-- Always HANDOFF to `scribe` if a scribe exists; otherwise `done`
+- Always HANDOFF to `done` — the evaluator is the terminal stage; the daemon persists the conversation automatically
 - Never HANDOFF to yourself
 - Never HANDOFF to leader
 - Preserve the "Task N:" prefix from your incoming HANDOFF

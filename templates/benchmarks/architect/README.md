@@ -4,7 +4,7 @@ Synthetic tasks for the `architect` knower — a thinker (analyst, read-only)
 that maps a project's STRUCTURE (components + how they interconnect) and reasons
 about it (primary flow, change-impact). Each task ships a tiny multi-module
 fixture in `expected/` with real cross-module imports/calls; the daemon runs the
-standard `leader → architect → evaluator → scribe` pipeline and the evaluator
+standard `leader → architect → evaluator` pipeline and the evaluator
 scores the produced map against the architect rubric
 (`templates/rubrics/architect/rubric.md`).
 

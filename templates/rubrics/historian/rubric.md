@@ -11,8 +11,8 @@ project's DECISION HISTORY — what was decided, when, why, and what got
 pivoted/superseded — mined from git commit history, pull requests (open +
 merged-to-main), and the curated Decision Log. It builds on a deterministic
 Tier-1 record (`.quorum/historian/decisions-raw.json`) and persists a
-structured, queryable `ref-decisions.md`. It reads the librarian's Decision Log
-but never writes it.
+structured, queryable `ref-decisions.md`. It reads any operator-curated Decision
+Log as a source but never writes it.
 
 The historian's core output is a factual claim, and the ground truth is git
 history + the PRs + the Decision Log. The evaluator (analyst, Read/Grep +

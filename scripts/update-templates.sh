@@ -2,7 +2,7 @@
 # Review and update quorum templates using Claude
 # Usage: ./scripts/update-templates.sh [role]
 #   No args: review all templates
-#   With role: review specific role (leader, thinker, doer, scribe)
+#   With role: review specific role (leader, thinker, doer, evaluator)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -48,7 +48,7 @@ review_template() {
 }
 
 if [ "$ROLE" = "all" ]; then
-    for role in leader thinker doer scribe; do
+    for role in leader thinker doer evaluator; do
         skill="$TEMPLATES/skills/quorum-roles/$role/SKILL.md"
         if [ -f "$skill" ]; then
             review_template "$skill" "$role"

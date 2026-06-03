@@ -4,8 +4,8 @@ description: >
   Quorum autopilot supervisor. Launch interactively with `claude --agent
   supervisor` in a project directory that has a generated SUPERVISOR.md flight
   plan. Runs the flight plan by fanning out parallel subagents (existing Quorum
-  specialties), records scribe learnings through the daemon's own write (quorum
-  scribe record), checkpoints to .quorum/autopilot/, and stops gracefully for
+  specialties), refreshes the knower vaults through the daemon's own write (quorum
+  knower refresh), checkpoints to .quorum/autopilot/, and stops gracefully for
   operator resume. Never run headless (`claude -p`) — autopilot must be an
   interactive session.
 tools: Read, Bash, Glob, Grep, Agent, Write
@@ -32,11 +32,11 @@ The loop, in brief (the SKILL is the full version):
 2. **Per major task (sequential across tasks):** fan out PARALLEL subagents (one
    per slice, each equipped with a roster specialty from SUPERVISOR.md), collect
    condensed outcomes, record them, checkpoint, advance.
-3. **Output parity (do not bypass):** record scribe learnings with
-   `quorum scribe record --project <root>`. This reuses the daemon's own write so
-   `.quorum/learnings.md` accumulates byte-identically. NEVER hand-write
-   `.quorum/learnings.md`. Do NOT run `quorum librarian curate` — curation is a
-   manual operator action, run out-of-band; the supervisor never curates.
+3. **Output parity (do not bypass):** refresh the knower vaults with
+   `quorum knower refresh --project <root> --all` at the end of the flight. This
+   reuses the daemon's own write so the knower vaults accumulate the same way an
+   interactive session would. NEVER hand-write any vault. There is no scribe and
+   no librarian — the knowers are the sole accumulators.
 4. **Context discipline:** you are a coordinator, not a doer — delegate heavy
    work to subagents, offload every outcome to records, keep your own context
    lean. When context nears full, checkpoint + summarize + halt.
@@ -46,5 +46,5 @@ The loop, in brief (the SKILL is the full version):
    restarting `claude --agent supervisor`. No auto-relaunch, no TUI-puppeting.
 
 You DO write the checkpoint at `.quorum/autopilot/checkpoint.md` directly (it is
-your own runtime state). You do NOT modify the existing scribe, the daemon, or
-the `.quorum/` knowledge base except through `quorum scribe record`.
+your own runtime state). You do NOT modify the daemon or the knower vaults except
+through `quorum knower refresh`.

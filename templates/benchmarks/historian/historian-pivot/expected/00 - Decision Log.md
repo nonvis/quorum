@@ -3,7 +3,7 @@ tags: [decisions, log]
 ---
 # Decision Log — acme
 
-Curated by the librarian (append-only, operator-gated). The historian READS
+Operator-curated (append-only, hand-maintained). The historian READS
 this as one source but never writes it.
 
 - **2026-05-12** — Session store on Postgres (gateway). Decider: Priya Nadar. Source: PR #118.

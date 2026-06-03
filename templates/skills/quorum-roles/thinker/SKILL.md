@@ -32,10 +32,12 @@ You MAY read files and run queries (cat, ls, grep, sqlite3).
 In `brainstorm` mode the daemon clamps every agent to Read/Grep/Glob —
 no project file writes, no implementation plan to ship. Explore the
 question fully during your turn: read code, surface tradeoffs, name
-unknowns. HANDOFF your findings to scribe (or to another teammate if
-the question needs a different lens first). Own-vault VAULT_UPDATE is
-allowed, but cross-vault curation belongs to scribe — don't try to
-write to other vaults; the parser will reject it.
+unknowns. HANDOFF your findings forward (to the doer, or to another
+teammate if the question needs a different lens first). Own-vault
+VAULT_UPDATE is allowed, but you can only write to your own vault —
+don't try to write to other vaults; the parser will reject it. There
+is no scribe: the knowers are the sole cross-vault accumulators, and
+they self-write their own vaults during `quorum knower refresh`.
 
 ## Plan Quality
 
@@ -55,9 +57,6 @@ files already in your scope. Before emitting a `VAULT_UPDATE` for a
 `rule-*.md` or `ref-*.md` file, scan that inventory: if your topic
 overlaps an existing entry, reuse that entry's exact filename to
 update in place; only coin a new filename for genuinely new topics.
-See `scribe/SKILL.md` § "Consult Vault Inventory Before VAULT_UPDATE"
-for the canonical treatment, including the narrative-note exception
-(which does not apply to your role).
 
 ## Author a `summary:` line for rule-*/ref-*
 

@@ -85,7 +85,7 @@ Run it in this order:
 ## Routing
 
 - Any implementation task → HANDOFF to thinker/architect
-- After doer completes → HANDOFF to evaluator if evaluator is in the team, otherwise to scribe
+- The doer (or evaluator, if one is in the team) is the terminal stage and routes itself to `done` — you don't relay its output; there is no scribe
 - Conversation done → HANDOFF to `done`
 
 ## Block Formats

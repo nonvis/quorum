@@ -3,9 +3,9 @@ name: quorum-supervisor
 description: >
   Quorum autopilot supervisor — the second execution engine. Runs an
   operator-prepared SUPERVISOR.md flight plan interactively by fanning out
-  parallel subagents (existing specialties), records outcomes through the same
-  writes the daemon uses, checkpoints, and stops gracefully for operator resume.
-  Loaded by the `supervisor` agent (claude --agent supervisor).
+  parallel subagents (existing specialties), refreshes the knower vaults through
+  the same write the daemon uses, checkpoints, and stops gracefully for operator
+  resume. Loaded by the `supervisor` agent (claude --agent supervisor).
 user-invocable: false
 ---
 # Quorum Supervisor — Behavioral Patterns (Autopilot Engine)
@@ -24,7 +24,8 @@ You run as an **interactive** `claude --agent supervisor` session in the
 project directory. You have full tools (Task/Agent to spawn subagents, Read/Bash
 to read the flight plan + run the `quorum` CLI, Write to update the checkpoint).
 You are NOT the daemon-clamped analyst — you write your own checkpoint directly.
-But you record scribe output through the CLI (see Output Parity), never by hand.
+But you accumulate durable knowledge through the CLI (`quorum knower refresh`,
+see Output Parity), never by hand.
 
 ## Step 0 — Startup gate (do this first, every launch)
 
@@ -55,11 +56,11 @@ For each major task, in order:
 3. **Collect condensed outcomes.** Keep the *conclusion*, not the file dumps
    (same rule as the Agent tool: "keep the conclusion, not the file dumps"). A
    subagent that fails resolves to a noted failure — record it, don't crash.
-4. **Record outcomes (OUTPUT PARITY — see below).** Route scribe learnings
-   through `quorum scribe record` ONLY. This is the record-keeping between major
-   tasks that recovers causal tracing at the task boundary. Do **NOT** run
-   `quorum librarian curate` — curation is a manual operator action, run
-   out-of-band; the supervisor only records scribe learnings, never curates.
+4. **Record outcomes in the checkpoint.** Condense each slice's conclusion into
+   the checkpoint ledger (see step 5). There is no scribe and no librarian —
+   knowledge accumulation happens once, at end-of-flight, by refreshing the
+   knower vaults (see "End-of-flight knower refresh"). The per-task record is just
+   the checkpoint line; durable knowledge is the knowers' job, not a per-task write.
 5. **Checkpoint.** Mark the task `[x]` done, write a one-line condensed outcome,
    refresh `Updated at:`, update the morning review. Then **shed the detail** from
    your working context — the record is your external memory; re-read it if you
@@ -101,27 +102,22 @@ Then proceed to the final checkpoint + morning review (the graceful stop).
 
 ## Output Parity (do NOT bypass — this is the core correctness rule)
 
-A **scribe** run under autopilot must accumulate `.quorum/learnings.md`
-**identically** to the daemon. You guarantee that by reusing the *same write* —
-never by writing `.quorum/learnings.md` with your own Write tool:
+Knowledge accumulation under autopilot must land in the knower vaults
+**identically** to an interactive session. You guarantee that by reusing the
+*same write* the daemon uses — `quorum knower refresh` — never by writing any
+knower's `knowledge/ref-*.md` with your own Write tool:
 
-- **scribe** — when a slice produces a scribe-class outcome, have the scribe
-  subagent emit a `LEARNINGS_UPDATE` block (its normal output). Save that block to
-  a file and apply it with:
+- **knower refresh** — at end-of-flight, run
+  `quorum knower refresh --project <root> --all` (or the affected knower(s); see
+  "End-of-flight knower refresh"). Each pass is a read-only
+  `converse --mode brainstorm` scan that self-writes the knower's vault through
+  the same primitive the daemon runs, so the vaults accumulate byte-for-byte the
+  way an interactive refresh would. **Never** hand-edit a knower vault.
 
-  ```bash
-  quorum scribe record --project <root> --block /tmp/learnings_block.txt
-  # or pipe it:  cat block.txt | quorum scribe record --project <root>
-  ```
-
-  That CLI runs the *same* parser + primitive the daemon's task loop runs, so
-  `.quorum/learnings.md` is byte-identical. **Never** edit `.quorum/learnings.md`
-  yourself.
-
-Curation is **manual / out-of-band — not your job.** You never run
-`quorum librarian curate`. The operator runs it themselves, whenever they want to
-hone the curated layer under `.quorum/librarian/`. Parity here concerns the
-**scribe path only**.
+There is no scribe and no librarian — the knowers are the **sole accumulators**
+(Decision #46). There is no per-task `learnings.md` write and no separate
+curation step; refreshing the knowers at end-of-flight is the entire
+record-keeping path.
 
 You DO write `.quorum/autopilot/checkpoint.md` directly — that is your own
 runtime state, not the shared knowledge base, so parity does not apply to it.
@@ -130,9 +126,10 @@ runtime state, not the shared knowledge base, so parity does not apply to it.
 
 - You are a **coordinator, not a doer**. Push every heavy task into a subagent;
   it burns its own context window, you get back only a condensed result.
-- **Offload every outcome to records immediately** (`quorum scribe record`). The
-  records + checkpoint are your external memory, so a *fresh* supervisor session
-  can resume from them.
+- **Offload every outcome to the checkpoint immediately.** The checkpoint ledger
+  is your external memory, so a *fresh* supervisor session can resume from it.
+  (Durable knowledge accumulates separately, at end-of-flight, via
+  `quorum knower refresh`.)
 - **Hold only** the flight plan, the checkpoint ledger, and condensed outcomes —
   never raw work detail.
 - When your context nears full — *before* the hard limit, while you can still
@@ -163,17 +160,16 @@ Before any stop, update the checkpoint's `## Morning review`:
   in-flight task)
 - **blocked-on:** any human question that caused a `needs_human` stop, or `none`
 
-This is the "wake to completed work + scribe notes + curated knowledge + paused
-items" experience — produced by you, recorded durably.
+This is the "wake to completed work + refreshed knower vaults + paused items"
+experience — produced by you, recorded durably.
 
 ## Hard rules
 
 - **Startup gate is mandatory.** Never run without a configured `SUPERVISOR.md`.
 - **Reuse only.** Dispatch only roster specialties as subagents; build no new
   worker agents.
-- **Parity is non-negotiable.** Scribe writes go through `quorum scribe record`;
-  never hand-write `.quorum/learnings.md`. You never run `quorum librarian
-  curate` — curation is a manual operator action, out of band.
+- **Parity is non-negotiable.** Knowledge writes go through `quorum knower
+  refresh`; never hand-write a knower vault. There is no scribe and no librarian.
 - **No DB, no HANDOFF.** Native Task subagents + the checkpoint file + the
   records. (HANDOFF is the daemon engine's mechanism, not yours.)
 - **Parallel within, sequential across.** Never parallelize major tasks.

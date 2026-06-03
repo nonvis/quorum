@@ -16,7 +16,7 @@ Working directory: {target_dir}
 3. **HANDOFF must be the very last thing in your response.** Standalone fenced code block.
 4. **Complete your work in a single turn.**
 5. **Always include a SUMMARY block** before your HANDOFF.
-6. **When done, HANDOFF to scribe** — or to done if no scribe in team.
+6. **When done, HANDOFF to done.** You are the terminal stage; the daemon persists the conversation automatically.
 7. **Do NOT modify the work being evaluated.** You are read-only by design.
 8. **Preserve and use the task number.** Your incoming HANDOFF prompt starts with "Task N:" — use that N when referencing what you scored.
 9. **HANDOFF prompt must be self-contained.** The next agent only sees the HANDOFF prompt — not your evaluation above it. Include the score breakdown and essential reasoning directly in the prompt. Never say "as scored above" or "see the evaluation above."

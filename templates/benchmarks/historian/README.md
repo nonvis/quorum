@@ -6,7 +6,7 @@ pivoted) and serves decision-history questions. Each task ships a **hand-authore
 Tier-1 record** (`expected/.quorum/historian/decisions-raw.json`) — the same
 shape `scripts/historian_mine.py` produces — plus a curated Decision Log, so the
 task tests **Tier-2 interpretation offline** (no `gh`, no network). The daemon
-runs the standard `leader → historian → evaluator → scribe` pipeline and the
+runs the standard `leader → historian → evaluator` pipeline and the
 evaluator scores the produced `ref-decisions.md` against the historian rubric
 (`templates/rubrics/historian/rubric.md`).
 
@@ -44,7 +44,7 @@ quorum benchmark --role historian            # all tasks
 
 | Task             | Difficulty | Hits |
 |------------------|------------|------|
-| historian-pivot  | medium     | coverage + provenance + status/supersession (a 3-step pivot chain) + in-flight open PR + librarian boundary |
+| historian-pivot  | medium     | coverage + provenance + status/supersession (a 3-step pivot chain) + in-flight open PR + curated-log boundary |
 
 The pivot task is offline by construction (the Tier-1 mining is pre-baked into
 the fixture), so it spends no `gh`/network — only the Tier-2 LLM interpretation.

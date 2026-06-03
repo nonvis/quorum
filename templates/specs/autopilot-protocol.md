@@ -5,10 +5,11 @@
 > output-parity discipline. Skill authors and the `quorum supervisor init`
 > generator both implement this spec. Read it before changing either.
 
-Spec version: 0.2
-Last updated: 2026-05-30
+Spec version: 0.3
+Last updated: 2026-06-03
 Lineage: Research/04 - Autopilot Engine (Phase 13 design source-of-truth);
-companion to `handoff-protocol.md` (scribe) and `pitch-protocol.md` (librarian).
+companion to `handoff-protocol.md`. (Phase 14 retired the scribe and librarian;
+the knowers are the sole accumulators — see Decision #46.)
 
 ## Why this spec exists
 
@@ -27,10 +28,11 @@ safe:
   startup (the startup gate).
 - **`.quorum/autopilot/checkpoint.md`** — the resume + morning-review state the
   supervisor writes after each major task.
-- **Output parity** — the rule that the supervisor's **scribe** writes go through
-  the *same* code the daemon uses, so `.quorum/learnings.md` accumulates
-  byte-identically across engines. Curation (`quorum librarian curate`) is **not**
-  part of the autopilot path — it is a manual, out-of-band operator action.
+- **Output parity** — the rule that the supervisor's knowledge writes go through
+  the *same* code the daemon uses (`quorum knower refresh`), so the knower vaults
+  accumulate the way an interactive refresh would across engines. The knowers are
+  the sole accumulators; there is no scribe, no librarian, and no separate
+  curation step.
 
 ## The supervisor agent
 
@@ -49,10 +51,10 @@ both with `scripts/install-skills.sh`.
 
 The supervisor is a **full-tool interactive session** (Task/Agent to fan out
 subagents, Read/Bash to read the flight plan and run the `quorum` CLI, Write to
-update the checkpoint). It is NOT daemon-clamped — so unlike the analyst scribe/
-librarian, the supervisor writes its own checkpoint directly. It must still
-route *scribe* output through the shared CLI (see Output parity). It does **not**
-run `quorum librarian curate` — curation is manual/out-of-band.
+update the checkpoint). It is NOT daemon-clamped — so unlike the daemon's
+read-only analysts, the supervisor writes its own checkpoint directly. It must
+still route knowledge accumulation through the shared CLI (`quorum knower
+refresh`, see Output parity), never by hand-editing a knower vault.
 
 ### Startup gate
 
@@ -78,23 +80,23 @@ from `SUPERVISOR.md`. Configuration is three layers, two of them automatic:
    specialty (e.g. `recap`) available: install it as a specialty, create the agent
    so it lands in `.quorum/agents/`, then **re-run `quorum supervisor init`** so it
    appears in the roster.
-2. **scribe — auto-configured, but NOT via the roster.** This is the
-   record-keeper, used *between* tasks (run-loop step 4), not as a flight-plan
-   worker. Every generated `SUPERVISOR.md` carries the fixed `## Record-keeping`
-   section naming `quorum scribe record`, and the scribe SKILL resolves from
-   `~/.claude/skills/quorum-roles/`. So it needs **zero per-project setup** — the
-   supervisor always has it. The **librarian is not part of the autopilot path**:
-   `quorum librarian curate` is a manual, out-of-band operator action (run it
-   yourself to hone `.quorum/librarian/`); the supervisor never fires it.
+2. **Record-keeping — auto-configured, runs once at end-of-flight.** Knowledge
+   accumulation is **not** a per-task or flight-plan-worker step. Every generated
+   `SUPERVISOR.md` carries the fixed `## Record-keeping (knower refresh — end of
+   flight)` section naming `quorum knower refresh`, which resolves from the
+   project's installed knowers. So it needs **zero extra per-project setup** — when
+   the flight completes, the supervisor refreshes the affected knower(s). There is
+   no scribe, no librarian, no `learnings.md`, and no separate curation step.
 3. **The flight plan — operator-configured.** The one hand-authored layer: which
    roster agent runs which slice (the `agent:` field per task). The generator ships
    a placeholder; the startup gate refuses to run until it is filled.
 
-So "how does the supervisor use scribe, or recap?" — **scribe** is always wired in
-(layer 2, automatic); **recap** must first exist as an agent in `.quorum/agents/`
-and be picked up into the roster by re-running `init` (layer 1), then named in a
-flight-plan slice (layer 3). The **librarian** is none of these — it is never run
-by the supervisor; curation is a manual operator action.
+So "how does the supervisor accumulate knowledge, or use recap?" — knowledge is
+banked by the **end-of-flight `quorum knower refresh`** (layer 2, automatic);
+**recap** is one of the four knowers, refreshed by that same command (and also
+available as a flight-plan worker if it exists as an agent in `.quorum/agents/`
+and is picked up into the roster by re-running `init`, layer 1, then named in a
+slice, layer 3).
 
 **Model A caveat:** these are *instructions the supervisor (an LLM) follows* from
 `SUPERVISOR.md` + its SKILL — not constraints the daemon enforces at runtime
@@ -132,15 +134,16 @@ project_root: <abs path>
 |-------|------|-------|
 | <name> | <role> | <skill_file or —> |
 
-## Record-keeping (scribe — OUTPUT PARITY, do not bypass)
+## Record-keeping (knower refresh — end of flight)
 
-- scribe → pipe each scribe LEARNINGS_UPDATE block to
-  `quorum scribe record --project <root>`
-  (same write the daemon uses, so `.quorum/learnings.md` accumulates identically)
+- The knowers are the sole accumulators. There is no scribe and no learnings.md.
+- At end-of-flight, refresh the affected knowers so their surveys re-survey the
+  changed code:
+  `quorum knower refresh --project <root> --all`
+  (or a single lens: `--knower <cartographer|architect|historian|recap>`)
 
-Curation is NOT run by autopilot. The librarian-curate command is a manual,
-out-of-band operator action — run it yourself when you want to hone the curated
-layer under `.quorum/librarian/`. The supervisor never fires it.
+Humans read project state on demand via `quorum ask` (knower surveys + live code)
+or `quorum ask --agent recap`. There is no separate curated layer to maintain.
 
 ## Stop conditions
 
@@ -165,10 +168,10 @@ Schema rules:
   specialty — no new worker agents). If empty, the generator emits
   `(no agents configured — run quorum agent create first)` and the flight plan
   is a placeholder, so the startup gate stops.
-- **Record-keeping** is the parity lever (see below). It names the scribe CLI
-  command, which the supervisor must use rather than writing
-  `.quorum/learnings.md` itself, and notes that curation is a manual,
-  out-of-band operator action the supervisor never runs.
+- **Record-keeping** is the parity lever (see below). It names the
+  `quorum knower refresh` command, which the supervisor must use at end-of-flight
+  rather than hand-editing any knower vault. There is no scribe, no librarian, and
+  no separate curation step.
 - **Stop conditions** map to the checkpoint-and-halt routes.
 - **Flight plan** is the operator's input: major tasks run **sequentially**;
   within a task, slices fan out as **parallel** subagents. The generator emits
@@ -195,7 +198,7 @@ Flight spec: 0.1
 ## Condensed outcomes
 
 ### Task 1
-- <one-line conclusion — recorded via `quorum scribe record` at <UTC>>
+- <one-line conclusion — condensed into the checkpoint at <UTC>>
 
 ## Morning review
 
@@ -214,47 +217,42 @@ Field rules:
 
 ## Output parity (the core correctness rule)
 
-A **scribe** run under autopilot MUST accumulate `.quorum/learnings.md`
-**byte-identically** to the daemon — or the two engines silently drift the
+Knowledge accumulation under autopilot MUST land in the knower vaults the same
+way an interactive refresh would — or the two engines silently drift the
 knowledge base. Parity is achieved by **reusing the same write**, NOT by
-re-implementing it and NOT by changing the scribe:
+re-implementing it:
 
-- **scribe** — the supervisor pipes each scribe subagent's `LEARNINGS_UPDATE`
-  block to `quorum scribe record --project <root>`. That CLI runs the *same*
-  `parse_learnings_update()` + `apply_scribe_learnings_update()` the daemon runs
-  in its task-dispatch loop (`main.cpp`), so `.quorum/learnings.md` is identical.
-  The supervisor NEVER writes `.quorum/learnings.md` with its own Write tool.
+- **knower refresh** — at end-of-flight the supervisor runs
+  `quorum knower refresh --project <root> --all` (or the affected knower(s)). Each
+  pass is a read-only `converse --mode brainstorm` survey that self-writes the
+  knower's `knowledge/ref-*.md` through the *same* daemon primitive an interactive
+  refresh uses, so the vaults accumulate identically. The supervisor NEVER writes
+  a knower vault with its own Write tool.
 
-**Curation is NOT part of the autopilot path.** The supervisor never runs
-`quorum librarian curate`. Curation is a manual, out-of-band operator action: the
-operator runs `quorum librarian curate` themselves, whenever they want to hone
-the curated layer (`.quorum/librarian/Pitch/…`, `.quorum/librarian/00 - Decision
-Log.md`, `.quorum/librarian/01 - Roadmap.md`). Because the supervisor never
-curates, parity concerns the **scribe path only**.
-
-The existing scribe (its SKILL, `scribe_writer.h`, the daemon path) is
-**unchanged**. Phase 13 ships a parity test (`test_autopilot_parity.cpp`,
-Manual-Acceptance Sub-gate D) asserting the autopilot scribe route produces a
-byte-identical `.quorum/learnings.md` to the daemon route on the same input.
+The knowers are the **sole accumulators** (Decision #46). There is no scribe, no
+`.quorum/learnings.md`, no librarian, and no separate curation step — refreshing
+the knowers at end-of-flight is the entire record-keeping path, so parity concerns
+the **knower-refresh path only**.
 
 ## Two-level concurrency
 
 - **Parallel *within* a major task** — the supervisor fans out the task's slices
   as parallel subagents (each equipped with a roster specialty's skill).
-- **Sequential *across* major tasks** — record-keeping (scribe record) runs
-  between tasks, then the next task starts. This recovers Decision #13's causal
-  tracing at the major-task boundary (only the intra-task fan-out is parallel).
-  Curation is not run here — it is a manual operator action, out of band.
+- **Sequential *across* major tasks** — the supervisor condenses each task's
+  outcome into the checkpoint between tasks, then the next task starts. This
+  recovers Decision #13's causal tracing at the major-task boundary (only the
+  intra-task fan-out is parallel). Knowledge accumulation (knower refresh) runs
+  once, at end-of-flight, not between every task.
 
 ## Context discipline
 
 The supervisor is a **coordinator, not a doer**. It pushes heavy work into
 subagents (each burns its own window) and keeps its own context lean — holding
 only the flight plan, the checkpoint ledger, and **condensed** outcomes. Every
-outcome is offloaded to records (`learnings.md` / curated layer) immediately, so
-a *fresh* supervisor session can resume from the checkpoint + records. When
-context nears full — before the hard limit — the supervisor checkpoints,
-summarizes, and halts for morning resume.
+outcome is offloaded to the checkpoint immediately, so a *fresh* supervisor
+session can resume from it. (Durable knowledge accumulates separately, at
+end-of-flight, via `quorum knower refresh`.) When context nears full — before the
+hard limit — the supervisor checkpoints, summarizes, and halts for morning resume.
 
 ## Stop → checkpoint → operator resumes (Model A)
 
@@ -277,6 +275,11 @@ and the `quorum supervisor init` generator; add a changelog entry.
 
 ## Changelog
 
+- **0.3** (2026-06-03): Phase 14 retired the scribe and librarian. Record-keeping
+  is now a single end-of-flight `quorum knower refresh` (the knowers are the sole
+  accumulators, Decision #46). Output parity concerns the knower-refresh path;
+  there is no `.quorum/learnings.md` and no curation step. Earlier entries below
+  describe the pre-Phase-14 scribe/librarian model and are retained as history.
 - **0.2** (2026-05-30): Curation removed from autopilot — `quorum librarian
   curate` is a manual, out-of-band operator action; the supervisor records scribe
   learnings only. Parity now concerns the scribe path only. The curated layer

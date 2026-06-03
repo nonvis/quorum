@@ -4,7 +4,7 @@ Synthetic tasks for the `cartographer` knower — a thinker (analyst, read-only)
 that indexes a workspace's LAYOUT (what each top-level folder contains, where
 the key files live) and serves orientation lookups. Each task ships a small
 fixture workspace in `expected/`; the daemon runs the standard
-`leader → cartographer → evaluator → scribe` pipeline and the evaluator scores
+`leader → cartographer → evaluator` pipeline and the evaluator scores
 the produced index against the cartographer rubric
 (`templates/rubrics/cartographer/rubric.md`).
 

@@ -1,7 +1,7 @@
 # Move-dev synthetic benchmark suite
 
 Phase 8 Track 5: 5 self-contained Move tasks the daemon runs through the
-standard `leader → move-dev → evaluator → scribe` team pipeline. Each
+standard `leader → move-dev → evaluator` team pipeline. Each
 benchmark exercises a distinct slice of the move-dev rubric
 (`templates/rubrics/move-dev/rubric.md`).
 
@@ -34,8 +34,8 @@ quorum benchmark --role move-dev
 ```
 
 The CLI scaffolds a fresh temp project, copies `expected/` if present,
-initializes `.quorum/`, creates the standard 4-agent benchmark roster
-(leader / move-dev doer / evaluator / scribe), drives the conversation
+initializes `.quorum/`, creates the standard 3-agent benchmark roster
+(leader / move-dev doer / evaluator), drives the conversation
 through the daemon, queries the resulting `evaluations` row, and cleans up.
 
 ## Tasks (move-dev)
