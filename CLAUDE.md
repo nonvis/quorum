@@ -52,7 +52,7 @@ sui::quorum::Database db("quorum.db");
 db.execute("CREATE TABLE IF NOT EXISTS metrics (...)");
 ```
 
-Project-local `.quorum/` (created by `quorum init`): `config.yaml`, `quorum.db` (schema from `storage/schema.h`), `agents/*.yaml` (auto-discovered), `vaults/<agent>/` (CONTEXT.md + knowledge/), `teams/*.yaml`. CLI auto-discovers `.quorum/` by walking up from cwd — no `--config` needed except to run the long-lived daemon.
+Project-local `.quorum/` (created by `quorum init`): `config.yaml`, `quorum.db` (schema from `storage/schema.h`), `agents/*.yaml` (auto-discovered), `vaults/<agent>/` (CONTEXT.md + knowledge/). CLI auto-discovers `.quorum/` by walking up from cwd — no `--config` needed except to run the long-lived daemon.
 
 ## Testing
 

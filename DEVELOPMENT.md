@@ -141,7 +141,6 @@ quorum scribe record [--block <file>]      # apply a LEARNINGS_UPDATE block (out
 | components/AgentRoster.tsx | Agent badges; click to open the CONTEXT.md editor |
 | components/AgentCreateForm.tsx | Create a new agent from the browser |
 | components/AgentContextEditor.tsx | Edit an agent's CONTEXT.md |
-| components/TeamCreateForm.tsx | Build a team preset (default_path) |
 | components/ConfigPanel.tsx / BudgetPanel.tsx | Adjust config + budget window |
 
 ### Core Headers (quorum-core/src/)

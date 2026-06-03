@@ -40,7 +40,7 @@ Then run `quorum init` + `quorum agent create` for each agent.
 cd {project_dir} && quorum init
 ```
 
-This creates `.quorum/` with config.yaml, quorum.db (schema pre-created), agents/, vaults/, teams/.
+This creates `.quorum/` with config.yaml, quorum.db (schema pre-created), agents/, vaults/, and provisions the full default roster (leader + 4 knowers + scribe + thinker).
 
 ### 2. Create agents
 
@@ -77,18 +77,19 @@ vim .quorum/vaults/{agent_name}/CONTEXT.md
 
 Or use the web dashboard's CONTEXT.md editor (click any agent badge).
 
-### 5. Create team presets (optional)
+### 5. Add optional agents (optional)
+
+`quorum init` already provisions the full default roster (leader + 4 knowers + scribe + thinker). Add optional agents (doers, advisor, reviewer, evaluator) as the project needs them:
 
 ```bash
-# Via CLI
-quorum teams
+# Add a doer for a given working directory
+quorum agent create --role doer --name {agent_name} --target-dir {path} --no-ai
 
-# Or create directly
-cat > .quorum/teams/default.yaml << 'EOF'
-name: default
-default_path: [leader, thinker, doer, scribe]
-EOF
+# Or use the setup helpers for common rosters
+./scripts/setup-knowers.sh
 ```
+
+There are no team presets to define — the leader routes each goal to the best-fit agents across the full roster at conversation time.
 
 ## Validation
 
