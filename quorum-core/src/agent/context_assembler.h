@@ -868,6 +868,15 @@ public:
         if (!team_roster.empty()) {
             prompt += "---\n\n";
             prompt += team_roster;
+            // Phase 14 Track 1 (Decision L2) — brainstorm is strictly
+            // read-only. Tell the routing agent never to hand off to a doer;
+            // the daemon hard-rejects (aborts) any brainstorm HANDOFF that
+            // resolves to a doer, so this is guidance to avoid that dead end.
+            if (conversation_mode == "brainstorm") {
+                prompt += "\n**Brainstorm mode is read-only — never HANDOFF to a "
+                          "doer.** To build, the operator must rerun in generic "
+                          "mode.\n\n";
+            }
         }
 
         // Append task — variable per turn, lives in user_message.

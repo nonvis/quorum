@@ -211,6 +211,32 @@ public:
             }
         }
 
+        // 6b. Phase 14 Track 1 (Decision L2) — brainstorm hard-rejects doers.
+        // brainstorm is strictly read-only: if a resolved HANDOFF target is a
+        // doer (role == "doer"), abort the conversation rather than silently
+        // clamping its tool surface read-only (invoker.h defense-in-depth). The
+        // operator must revise the question or switch to generic mode to build.
+        if (!next_agent.empty()) {
+            std::string conv_mode;
+            if (auto conv_now = db_.get_conversation(conv_id)) {
+                conv_mode = conv_now->mode;
+            }
+            if (conv_mode == "brainstorm") {
+                std::string target_role;
+                for (const auto& a : agents_) {
+                    if (a.id == next_agent) { target_role = a.role; break; }
+                }
+                if (target_role == "doer") {
+                    std::cout << "[conversation " << conv_id << "] "
+                              << "Can't run a doer in brainstorm — revise the "
+                                 "question (brainstorm is read-only; use generic "
+                                 "mode to build).\n";
+                    db_.complete_conversation(conv_id);
+                    return false;
+                }
+            }
+        }
+
         // 7. Route: done -> complete; human -> waiting_for_human; budget/turns -> pause
         if (is_done) {
             db_.complete_conversation(conv_id);
