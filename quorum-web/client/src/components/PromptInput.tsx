@@ -10,7 +10,7 @@ const MODES: { id: ConversationMode; label: string; hint: string }[] = [
   {
     id: "brainstorm",
     label: "brainstorm",
-    hint: "Read-only; scribe curates vault writes",
+    hint: "Read-only; knowers stage vault writes for your approval",
   },
 ];
 

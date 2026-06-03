@@ -4,16 +4,14 @@ const ROLE_COLORS: Record<string, string> = {
   leader: "bg-purple-500",
   thinker: "bg-blue-500",
   doer: "bg-green-500",
-  scribe: "bg-cyan-500",
-  librarian: "bg-pink-500",
+  evaluator: "bg-indigo-500",
 };
 
 const ROLE_INITIALS: Record<string, string> = {
   leader: "L",
   thinker: "T",
   doer: "D",
-  scribe: "S",
-  librarian: "Lb",
+  evaluator: "E",
 };
 
 function AgentBadge({ agent, dimmed, onClick }: { agent: Agent; dimmed: boolean; onClick?: () => void }) {
