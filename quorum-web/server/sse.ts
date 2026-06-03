@@ -3,9 +3,6 @@ import { getConversations, type Conversation } from "./db";
 // Poll interval in ms
 const POLL_INTERVAL = 2000;
 
-// Track last known state per conversation for change detection
-let lastSnapshot: Map<number, string> = new Map();
-
 function getSnapshot(): Map<number, string> {
   const convs = getConversations();
   const snap = new Map<number, string>();
@@ -19,6 +16,9 @@ function getSnapshot(): Map<number, string> {
 // Create SSE stream for a client
 export function createSSEStream(): ReadableStream {
   let interval: Timer;
+  // Per-stream change-detection snapshot (NOT shared across clients — a module
+  // global races between concurrent/reconnecting streams and drops updates).
+  let lastSnapshot = new Map<number, string>();
 
   return new ReadableStream({
     start(controller) {

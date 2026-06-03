@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { Conversation, Stats, ProjectConfig, ProjectState, Agent } from "./types";
 import { fetchConversations, fetchStats, fetchConfig, fetchProjects, fetchAgents, fetchDaemonStatus } from "./api";
 import { useSSE } from "./hooks/useSSE";
@@ -59,6 +59,21 @@ export default function App() {
     fetchStats().then(setStats);
   });
 
+  // Polling fallback — the SSE stream can stall (dev proxy buffering / dropped
+  // socket, and onerror is a no-op), which leaves the UI frozen until a manual
+  // refresh. Poll every 2.5s while a conversation is actively running so updates
+  // land on their own. A ref holds the latest conversations without re-arming
+  // the interval on every update.
+  const conversationsRef = useRef(conversations);
+  conversationsRef.current = conversations;
+  useEffect(() => {
+    if (!project.current) return;
+    const id = setInterval(() => {
+      if (conversationsRef.current.some((c) => c.state === "active")) refresh();
+    }, 2500);
+    return () => clearInterval(id);
+  }, [project.current, refresh]);
+
   const handleProjectSelect = async (_path: string) => {
     const p = await fetchProjects();
     setProject(p);
@@ -66,6 +81,7 @@ export default function App() {
 
   const ACTIVE_STATES = new Set(["active", "waiting_for_human"]);
   const busy = conversations.some((c) => ACTIVE_STATES.has(c.state));
+  const runningConvs = conversations.filter((c) => c.state === "active");
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
@@ -87,6 +103,18 @@ export default function App() {
         <div className="mx-6 mt-3 px-4 py-2 bg-amber-900/30 border border-amber-800 rounded-lg text-amber-400 text-sm">
           Daemon not running — active conversations may be stale.
           Run <code className="bg-zinc-800 px-1.5 py-0.5 rounded text-xs">quorum status</code> to trigger recovery.
+        </div>
+      )}
+
+      {project.current && runningConvs.length > 0 && (
+        <div className="mx-6 mt-3 px-4 py-2 bg-blue-950/30 border border-blue-800 rounded-lg text-sm flex items-center gap-2">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+          </span>
+          <span className="text-blue-300">
+            Running — {runningConvs.map((c) => `${c.current_agent ?? "?"} on #${c.id}`).join(", ")}
+          </span>
         </div>
       )}
 
