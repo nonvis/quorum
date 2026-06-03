@@ -737,7 +737,7 @@ static void test_brainstorm_e2e() {
     });
     h.agents.push_back(sui::quorum::AgentMetadata{
         .id = "reviewer", .name = "Reviewer",
-        .description = "Critiques designs", .role = "reviewer"
+        .description = "Critiques designs", .role = "thinker"
     });
     h.agents.push_back(sui::quorum::AgentMetadata{
         .id = "scribe", .name = "Scribe",

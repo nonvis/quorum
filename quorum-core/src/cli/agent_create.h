@@ -223,13 +223,13 @@ inline std::string generate_context_md(
 inline int create_agent(const AgentCreateParams& p) {
     // 1. Validate role
     static const std::vector<std::string> valid_roles = {
-        "leader", "thinker", "doer", "reviewer", "scribe", "librarian", "evaluator"
+        "leader", "thinker", "doer", "scribe", "librarian", "evaluator"
     };
     bool role_valid = false;
     for (const auto& r : valid_roles) if (r == p.role) { role_valid = true; break; }
     if (!role_valid) {
         std::cerr << "ERROR: invalid role '" << p.role << "'. "
-                  << "Valid: leader, thinker, doer, reviewer, scribe, librarian, evaluator\n";
+                  << "Valid: leader, thinker, doer, scribe, librarian, evaluator\n";
         return 1;
     }
 
@@ -381,13 +381,13 @@ inline int modify_agent(const AgentCreateParams& overrides) {
     if (!overrides.role.empty() && overrides.role != existing->role) {
         // Validate role
         static const std::vector<std::string> valid_roles = {
-            "leader", "thinker", "doer", "reviewer", "scribe", "librarian", "evaluator"
+            "leader", "thinker", "doer", "scribe", "librarian", "evaluator"
         };
         bool role_valid = false;
         for (const auto& r : valid_roles) if (r == overrides.role) { role_valid = true; break; }
         if (!role_valid) {
             std::cerr << "ERROR: invalid role '" << overrides.role << "'. "
-                      << "Valid: leader, thinker, doer, reviewer, scribe, librarian, evaluator\n";
+                      << "Valid: leader, thinker, doer, scribe, librarian, evaluator\n";
             return 1;
         }
         existing->role = overrides.role;

@@ -207,7 +207,7 @@ static void test_E_no_changes_help() {
     auto original_cwd = fs::current_path();
     auto tmp = setup_quorum_project();
 
-    create_test_agent("stable", "reviewer");
+    create_test_agent("stable", "thinker");
 
     // Modify with no flags
     sui::quorum::cli::AgentCreateParams mod;
@@ -218,7 +218,7 @@ static void test_E_no_changes_help() {
 
     // Verify YAML unchanged
     auto yaml = read_file(tmp + "/.quorum/agents/stable.yaml");
-    check(yaml.find("role: reviewer") != std::string::npos,
+    check(yaml.find("role: thinker") != std::string::npos,
           "E: YAML unchanged");
 
     fs::current_path(original_cwd);

@@ -64,7 +64,7 @@ inline int init_project(const std::string& quorum_root = "") {
     // Pre-create one subdir per built-in role so the convention is
     // discoverable from a fresh init.
     static constexpr const char* kRoles[] = {
-        "leader", "thinker", "doer", "reviewer", "scribe", "librarian",
+        "leader", "thinker", "doer", "scribe", "librarian",
     };
     for (const auto* role : kRoles) {
         auto dir = std::string(".quorum/knowledge/roles/") + role;
@@ -231,7 +231,7 @@ inline int init_project(const std::string& quorum_root = "") {
     std::cout << "  Created: .quorum/vaults/leader/knowledge/\n";
     std::cout << "  Created: .quorum/knowledge/  "
               << "(project-wide rules and references that apply to all agents)\n";
-    std::cout << "  Created: .quorum/knowledge/roles/{leader,thinker,doer,reviewer,scribe,librarian}/  "
+    std::cout << "  Created: .quorum/knowledge/roles/{leader,thinker,doer,scribe,librarian}/  "
               << "(role-specific rules apply to every agent of that role)\n";
     std::cout << "\nQuorum initialized with 7 agents "
               << "(leader, thinker, scribe, cartographer, architect, historian, recap).\n"

@@ -166,7 +166,7 @@ public:
     // must match an entry in `team_agents`. Unknown agent IDs are rejected
     // (caller logs to stderr, does NOT crash the conversation).
     //
-    // All other roles (leader/thinker/doer/reviewer) remain own-vault-bound
+    // All other roles (leader/thinker/doer) remain own-vault-bound
     // even in brainstorm mode. This is deliberate — the scribe is the ONE
     // curator role for cross-vault writes.
     //

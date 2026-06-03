@@ -173,7 +173,7 @@ static void print_usage(const char* prog) {
               << "  --conversation <id>  Conversation ID for resume/close\n"
               << "  --help               Show this message\n"
               << "\nAgent create options:\n"
-              << "  --role <role>        Agent role (leader|thinker|doer|reviewer|scribe|librarian)\n"
+              << "  --role <role>        Agent role (leader|thinker|doer|scribe|librarian)\n"
               << "  --name <name>        Agent ID\n"
               << "  --project <name>     Project subfolder in configs/agents/ (optional with .quorum/)\n"
               << "  --description <d>    Agent description (optional)\n"
