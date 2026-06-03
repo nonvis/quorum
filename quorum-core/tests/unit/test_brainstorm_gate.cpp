@@ -371,9 +371,12 @@ static void test_reentry_explicit_other_agent_unchanged() {
 }
 
 static void test_leader_can_still_end_and_gate() {
-    std::cout << "\n=== D4. leader still ends (to: done) and gates (to: human) ===\n\n";
+    std::cout << "\n=== D4. leader gates (to: human); to: done only AFTER approval ===\n\n";
 
-    // Leader → done terminates even in brainstorm.
+    // Phase 14.1b — in a GATED brainstorm a leader HANDOFF→done before the
+    // human has approved is FORCE-CONVERTED into a waiting_for_human gate
+    // (the daemon makes the gate unskippable). See test_forced_gate_* below
+    // for the dedicated coverage; here we just confirm it does NOT complete.
     {
         TestHarness h;
         auto engine = h.make_engine();
@@ -383,9 +386,10 @@ static void test_leader_can_still_end_and_gate() {
         sui::quorum::ParsedOutput done;
         done.handoff = sui::quorum::HandoffBlock{.to = "done"};
         bool a = engine.on_task_complete(t1, done, 0.05);
-        check(!a, "D4: leader HANDOFF→done ends the brainstorm");
+        check(!a, "D4: leader HANDOFF→done (gated, uncleared) does not stay active");
         auto conv = h.db.get_conversation(conv_id);
-        check(conv && conv->state == "done", "D4: state == done");
+        check(conv && conv->state == "waiting_for_human",
+              "D4: premature to:done force-converted to waiting_for_human (NOT done)");
     }
     // Leader → human parks at the gate.
     {
@@ -401,6 +405,83 @@ static void test_leader_can_still_end_and_gate() {
         auto conv = h.db.get_conversation(conv_id);
         check(conv && conv->state == "waiting_for_human", "D4: state == waiting_for_human");
     }
+}
+
+// ─── F. forced gate: premature to:done can't complete a gated brainstorm ─────
+//
+// Phase 14.1b. The live-run failure: the leader engaged all four lenses,
+// synthesized a capture proposal, then closed with `HANDOFF to: done` instead
+// of `to: human`. The gate never fired, gate_cleared stayed 0, every knower
+// write was suppressed, and the brainstorm captured NOTHING. The daemon now
+// FORCE-CONVERTS that premature completion into a waiting_for_human gate. And
+// because respond() clears the gate, a SUBSEQUENT to:done completes normally —
+// at most one forced gate per conversation (no infinite loop).
+
+static void test_forced_gate_converts_premature_done() {
+    std::cout << "\n=== F1. gated brainstorm: leader to:done → waiting_for_human (forced) ===\n\n";
+
+    TestHarness h;
+    auto engine = h.make_engine();
+    auto conv_id = engine.start("Discuss design", 5.0, 20, "brainstorm");
+    auto pre = h.db.get_conversation(conv_id);
+    check(pre && pre->gated && !pre->gate_cleared,
+          "F1: gated brainstorm, gate not yet cleared");
+
+    // Leader synthesizes findings but (wrongly) closes with to:done.
+    auto t1 = h.latest_pending_task(conv_id);
+    h.complete_task(t1);
+    sui::quorum::ParsedOutput done;
+    done.handoff = sui::quorum::HandoffBlock{
+        .to = "done", .prompt = "Consolidated findings + write manifest ..."};
+    bool active = engine.on_task_complete(t1, done, 0.05);
+    check(!active, "F1: conversation not active (held, not completed)");
+
+    auto conv = h.db.get_conversation(conv_id);
+    check(conv && conv->state == "waiting_for_human",
+          "F1: premature to:done FORCE-CONVERTED to waiting_for_human (NOT done)");
+    check(conv && conv->current_agent == "human",
+          "F1: current_agent parked on human");
+    check(conv && !conv->gate_cleared, "F1: gate still uncleared (awaiting approval)");
+}
+
+static void test_forced_gate_no_loop_after_clear() {
+    std::cout << "\n=== F2. after approval, leader to:done completes (no infinite loop) ===\n\n";
+
+    TestHarness h;
+    auto engine = h.make_engine();
+    auto conv_id = engine.start("Discuss design", 5.0, 20, "brainstorm");
+
+    // Premature to:done → forced gate.
+    auto t1 = h.latest_pending_task(conv_id);
+    h.complete_task(t1);
+    sui::quorum::ParsedOutput done1;
+    done1.handoff = sui::quorum::HandoffBlock{.to = "done", .prompt = "findings"};
+    engine.on_task_complete(t1, done1, 0.05);
+    {
+        auto c = h.db.get_conversation(conv_id);
+        check(c && c->state == "waiting_for_human", "F2: parked at forced gate");
+    }
+
+    // Human approves → gate_cleared = 1, conversation active again on the leader.
+    bool ok = engine.respond(conv_id, "yes");
+    check(ok, "F2: respond() accepted");
+    {
+        auto c = h.db.get_conversation(conv_id);
+        check(c && c->gate_cleared, "F2: gate_cleared = 1 after respond");
+        check(c && c->state == "active", "F2: active again after respond");
+    }
+
+    // Leader now closes with to:done — this time it COMPLETES (guard's
+    // !gate_cleared is false). This proves the no-loop property: at most one
+    // forced gate per conversation.
+    auto t2 = h.latest_pending_task(conv_id);
+    h.complete_task(t2);
+    sui::quorum::ParsedOutput done2;
+    done2.handoff = sui::quorum::HandoffBlock{.to = "done"};
+    bool active2 = engine.on_task_complete(t2, done2, 0.05);
+    check(!active2, "F2: leader to:done after approval ends the conversation");
+    auto conv = h.db.get_conversation(conv_id);
+    check(conv && conv->state == "done", "F2: state == done (no second forced gate)");
 }
 
 // ─── E. ungated single-knower scan still terminates ──────────────────────────
@@ -464,6 +545,8 @@ int main() {
     test_reentry_handoff_to_leader_routes_to_leader();
     test_reentry_explicit_other_agent_unchanged();
     test_leader_can_still_end_and_gate();
+    test_forced_gate_converts_premature_done();
+    test_forced_gate_no_loop_after_clear();
     test_ungated_single_knower_scan_terminates();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)

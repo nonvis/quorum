@@ -390,6 +390,53 @@ public:
             }
         }
 
+        // 6c. Phase 14.1b — FORCE the brainstorm gate (daemon-enforced, not
+        // convention). The gate-firing itself was still leader-LLM-dependent:
+        // in a live run the leader synthesized a capture proposal but closed
+        // with `HANDOFF to: done` instead of `to: human`, so the gate never
+        // fired, gate_cleared stayed 0, every knower write was suppressed, and
+        // the brainstorm captured NOTHING. Here the daemon makes the gate
+        // UNSKIPPABLE: a would-be completion of a GATED, UNCLEARED brainstorm is
+        // converted into a `waiting_for_human` gate instead of finishing. The
+        // leader's own HANDOFF prompt (captured below even on the to:"done"
+        // branch) becomes the gate text; a clear default is used if it's empty.
+        //
+        // No infinite loop: respond() sets gate_cleared = 1, so a SUBSEQUENT
+        // is_done completes normally (the guard's `!conv->gate_cleared` is then
+        // false). At most ONE forced gate per conversation.
+        //
+        // Untouched: generic mode, ungated brainstorms (single-knower scans,
+        // gated == 0), and an explicit `HANDOFF to: human` (which sets is_human,
+        // not is_done). Only a would-be COMPLETION of a gated-and-uncleared
+        // brainstorm is intercepted here.
+        if (is_done && conv->mode == "brainstorm" && conv->gated
+                && !conv->gate_cleared) {
+            // Source the gate text from the leader's own synthesis: capture the
+            // HANDOFF prompt even though it targeted `to: done` (the normal gate
+            // path only captures it on the to:"human" branch).
+            std::string gate_msg;
+            if (parsed.handoff.has_value()) gate_msg = parsed.handoff->prompt;
+            if (gate_msg.empty()) {
+                gate_msg =
+                    "Leader tried to close this gated brainstorm without an "
+                    "explicit human gate. The daemon is holding for your "
+                    "approval before any knowledge is captured — review the "
+                    "leader's last turn, then: quorum respond --conversation "
+                    + std::to_string(conv_id) +
+                    " \"yes\" (or give edits / 'no').";
+            }
+            db_.update_conversation_state(conv_id, "waiting_for_human");
+            update_current_agent(conv_id, "human");
+            std::cout << "[conversation " << conv_id << "] waiting_for_human";
+            {
+                auto display = gate_msg.size() > 60
+                    ? gate_msg.substr(0, 60) : gate_msg;
+                std::cout << " -- " << display;
+            }
+            std::cout << "\n";
+            return false;  // hold for approval; do NOT complete
+        }
+
         // 7. Route: done -> complete; human -> waiting_for_human; budget/turns -> pause
         if (is_done) {
             db_.complete_conversation(conv_id);

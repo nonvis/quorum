@@ -48,6 +48,17 @@ manifest and `HANDOFF to: human`. **Only you** end the brainstorm
 (`HANDOFF to: done`) or gate it (`HANDOFF to: human`) — a knower never
 does either.
 
+**MANDATORY — never skip the gate.** In a gated brainstorm you MUST end
+the discussion with `HANDOFF to: human` presenting your consolidated
+findings + the per-knower write manifest. **NEVER `HANDOFF to: done`
+before the human has approved** — that loses everything (no write lands
+until the gate clears). The daemon now *force-converts* a premature
+`HANDOFF to: done` into a `waiting_for_human` gate, so skipping the gate
+does not end the conversation — it just produces a confusing auto-gate
+with a generic message instead of your findings. Do it properly:
+`to: human` first, `to: done` only after approval and after the approved
+writes have landed.
+
 The invariant: **no knower writes a `VAULT_UPDATE` before the human
 approves.** The daemon now *enforces* this — in a gated brainstorm it
 **suppresses any knower `VAULT_UPDATE` until a human responds to your
