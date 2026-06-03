@@ -32,21 +32,21 @@ quorum agent create --role scribe --name strategy-scribe --no-ai
 
 ## Software Engineering
 
-Building/maintaining a codebase. Two doers with different specializations (TypeScript, Move) plus security reviewer.
+Building/maintaining a codebase. Two doers with different specializations (TypeScript, Move) plus a `thinker`-role security review specialty.
 
 Provision these agents:
 - `leader` (leader) — routes work, manages multi-step implementations
 - `architect` (thinker) — module structure, API contracts, data models
 - `ts-dev` (doer) — TypeScript backend, APIs, tests
 - `move-dev` (doer) — Move contracts and modules
-- `security-reviewer` (reviewer) — vulnerabilities, access control, unsafe patterns
+- `security-reviewer` (thinker) — vulnerabilities, access control, unsafe patterns (a `thinker`-role review specialty)
 - `api-scribe` (scribe) — API design decisions, architecture notes
 
 ```bash
 quorum agent create --role thinker --name architect --no-ai
 quorum agent create --role doer --name ts-dev --target-dir . --no-ai
 quorum agent create --role doer --name move-dev --target-dir . --no-ai
-quorum agent create --role reviewer --name security-reviewer --no-ai
+quorum agent create --role thinker --name security-reviewer --no-ai
 quorum agent create --role scribe --name api-scribe --no-ai
 ```
 
@@ -78,19 +78,19 @@ quorum agent create --role scribe --name architecture-scribe --no-ai
 
 ## Research
 
-Experiments + synthesis. Methods-reviewer ensures statistical rigor.
+Experiments + synthesis. A `thinker`-role methods review specialty ensures statistical rigor.
 
 Provision these agents:
 - `leader` (leader) — frames questions, coordinates cycles
 - `literature-reviewer` (thinker) — prior work, hypotheses
 - `experiment-coder` (doer) — implements experiments, analysis, visualizations
-- `methods-reviewer` (reviewer) — statistical methods, confounds, significance
+- `methods-reviewer` (thinker) — statistical methods, confounds, significance (a `thinker`-role review specialty)
 - `findings-scribe` (scribe) — research notes
 
 ```bash
 quorum agent create --role thinker --name literature-reviewer --no-ai
 quorum agent create --role doer --name experiment-coder --target-dir . --no-ai
-quorum agent create --role reviewer --name methods-reviewer --no-ai
+quorum agent create --role thinker --name methods-reviewer --no-ai
 quorum agent create --role scribe --name findings-scribe --no-ai
 ```
 
@@ -104,7 +104,7 @@ Any roster above can run a goal in `--mode brainstorm` for read-only exploration
 
 ---
 
-An `evaluator` (7th archetype) can join any build roster to score doer output against a specialty rubric ("is it *good*?"), complementing the reviewer's "does it work?".
+An `evaluator` can join any build roster to score doer output against a specialty rubric ("is it *good*?"); correctness/convention checks ("does it work?") are handled by a `thinker`-role review specialty or the doer itself.
 
 ## Adding a domain
 

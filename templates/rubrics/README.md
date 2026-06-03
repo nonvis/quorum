@@ -15,7 +15,7 @@ templates/rubrics/<role-specialty>/rubric.md   # shipped with the daemon
 ```
 
 `<role-specialty>` matches the agent role name used elsewhere in the daemon
-(e.g. `move-dev`, `ts-dev`, `reviewer`). The `evaluator` resolves a rubric by
+(e.g. `move-dev`, `ts-dev`, `cpp-dev`). The `evaluator` resolves a rubric by
 checking the project override first and falling back to the template that
 shipped with the daemon. If neither exists, the evaluator emits no score (the
 agent under review is not gated by rubric availability).

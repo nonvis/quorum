@@ -20,14 +20,15 @@ Ask these questions one at a time:
 1. **Project directory** — where to initialize (default: current directory)
 2. **Description** — one sentence, what does this project do?
 3. **Team composition** — which agent roles does this project need?
-   - Available roles: `leader`, `thinker`, `doer`, `reviewer`, `scribe`, `librarian`, `evaluator`
+   - Available roles: `leader`, `thinker`, `doer`, `scribe`, `librarian`, `evaluator`
    - Role determines tool access: `doer` = executor (full tools), all others = analyst (read-only)
+   - Review/check is not a core role — it's a `thinker`-role review specialty (`--role thinker` + a review skill)
    - Minimum viable team: `thinker` + `doer` (thinker plans, doer executes)
    - Common setups:
-     - **Analysis only**: `thinker` (+ optional `reviewer`)
-     - **Build team**: `thinker` + `doer` (+ optional `reviewer`)
-     - **Full team**: `leader` + `thinker` + `doer` + `reviewer` + `scribe`
-4. **Agent names** — for each role, ask for a descriptive agent name (e.g., `move-dev` for a doer, `arch-reviewer` for a reviewer)
+     - **Analysis only**: `thinker` (+ optional `thinker` review specialty)
+     - **Build team**: `thinker` + `doer` (+ optional `thinker` review specialty)
+     - **Full team**: `leader` + `thinker` + `doer` + a `thinker` review specialty + `scribe`
+4. **Agent names** — for each role, ask for a descriptive agent name (e.g., `move-dev` for a doer, `arch-reviewer` for a `thinker` review specialty)
 5. **Target directory** (doer agents only) — where should the doer agent work? (e.g., `.` for project root, `~/projects/myapp`)
 
 Then run `quorum init` + `quorum agent create` for each agent.
@@ -79,7 +80,7 @@ Or use the web dashboard's CONTEXT.md editor (click any agent badge).
 
 ### 5. Add optional agents (optional)
 
-`quorum init` already provisions the full default roster (leader + 4 knowers + scribe + thinker). Add optional agents (doers, advisor, reviewer, evaluator) as the project needs them:
+`quorum init` already provisions the full default roster (leader + 4 knowers + scribe + thinker). Add optional agents (doers, advisor, a `thinker` review specialty, evaluator) as the project needs them:
 
 ```bash
 # Add a doer for a given working directory

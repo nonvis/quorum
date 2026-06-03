@@ -25,7 +25,7 @@ Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
 
 `quorum_daemon converse "goal"` starts a conversation. The leader agent routes work to other agents via HANDOFF blocks. Each agent responds and hands off to the next agent in the chain.
 
-7 agent archetypes: leader, thinker, doer, reviewer, scribe, librarian, evaluator. Plus the **supervisor** — a coordination role that drives the autopilot engine (Phase 13), started interactively via `claude --agent supervisor`, not a daemon worker.
+6 agent archetypes: leader, thinker, doer, scribe, librarian, evaluator. (Review/check is a thinker-role analyst specialty, not a core role.) Plus the **supervisor** — a coordination role that drives the autopilot engine (Phase 13), started interactively via `claude --agent supervisor`, not a daemon worker.
 
 ### Modes
 

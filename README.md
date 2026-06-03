@@ -106,14 +106,13 @@ claude --agent supervisor                    # run it interactively (NOT headles
 
 ## Agent Archetypes
 
-Seven archetypes. **Role determines tool access** — `doer` is executor (full tools); every other role is analyst (read-only). Analyst roles that "write" do so by emitting structured blocks the deterministic daemon applies — they never hold Write/Edit at runtime.
+Six archetypes. **Role determines tool access** — `doer` is executor (full tools); every other role is analyst (read-only). Analyst roles that "write" do so by emitting structured blocks the deterministic daemon applies — they never hold Write/Edit at runtime. (Review/check is a thinker-role analyst specialty, not a core role.)
 
 | Archetype | Role | Class |
 |-----------|------|-------|
 | **leader** | Coordinator. Receives the user goal, routes work via HANDOFF, answers read-only "ask the manager" queries. | analyst |
 | **thinker** | Planner. Analyzes problems, proposes approaches, produces structured plans. | analyst |
 | **doer** | Executor. Implements changes — code, config, files — in its `target_dir`. | executor |
-| **reviewer** | Validator. "Does this work?" Reviews doer output for correctness. Optional. | analyst |
 | **scribe** | Records outcomes. Emits a `LEARNINGS_UPDATE` block → daemon appends `.quorum/learnings.md`; in brainstorm, distributes cross-vault `rule-*.md`/`ref-*.md`. | analyst |
 | **librarian** | Periodic curator. Distills accumulated scribe learnings into the project's Pitch / Decision Log / Roadmap via `CURATION_UPDATE` / `DECISION_LOG_APPEND` blocks behind an operator diff gate (`quorum librarian curate`). | analyst |
 | **evaluator** | Scorer. "Is this *good*?" Scores work against a specialty rubric; emits an `EVALUATION` block. | analyst |
@@ -129,7 +128,7 @@ Same daemon, different agent teams. Each domain defines agent YAML configs, CONT
 | Domain | Example Agents | Use Case |
 |--------|----------------|----------|
 | Trading (mm-bot) | leader, market_thinker, bot_doer, scribe | Optimize trading parameters, monitor P&L |
-| Development | leader, arch_thinker, impl_doer, reviewer, scribe | Analyze codebases, propose and implement improvements |
+| Development | leader, arch_thinker, impl_doer, review_thinker, scribe | Analyze codebases, propose and implement improvements |
 | Infrastructure | leader, infra_thinker, ops_doer, scribe | Monitor services, optimize resources |
 
 ## Web Dashboard

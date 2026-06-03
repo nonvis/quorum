@@ -25,7 +25,7 @@ This spec defines:
     learnings.md              Written by scribe across sessions
 ```
 
-v0.1 scope: scribe-only. Future expansion (doer / reviewer / leader handoff schemas) is TBD and will extend this spec without breaking v0.1.
+v0.1 scope: scribe-only. Future expansion (doer / leader handoff schemas) is TBD and will extend this spec without breaking v0.1.
 
 The folder is gitignored by default. Teams that want to commit context for collaboration can opt in by removing the rule.
 
@@ -63,7 +63,7 @@ A skill must not delete a section written by another skill. Example: `validate-i
 
 If a skill detects a section that contradicts what it is about to write (e.g. a stale Business Model written before the user pivoted), it appends a new dated entry under the same section and notes the conflict, rather than overwriting.
 
-Note: in v0.1 the scribe is the sole writer to `.quorum/learnings.md`, so non-deletion holds trivially. The rule is stated here so future writers (doer / reviewer / leader handoff schemas) inherit the constraint without renegotiation.
+Note: in v0.1 the scribe is the sole writer to `.quorum/learnings.md`, so non-deletion holds trivially. The rule is stated here so future writers (doer / leader handoff schemas) inherit the constraint without renegotiation.
 
 ### Rule 4: Bootstrap
 

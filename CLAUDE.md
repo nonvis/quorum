@@ -38,7 +38,7 @@ make run-verbose         # run daemon with verbose logging
 
 - **Zero LLM in the control loop.** The daemon never calls an LLM; all scheduling/routing/events are pure C++. LLMs run only in `claude -p` subprocesses spawned by the task-dispatch loop.
 - **Role → tool class:** `doer` = executor (full tools, `target_dir` cwd); every other role = analyst (`--disallowedTools "Write,Edit,NotebookEdit"`). Analyst roles "write" by emitting structured blocks the daemon applies — they never hold Write/Edit at runtime.
-- **Seven roles:** leader, thinker, doer, reviewer, evaluator, scribe, librarian. (reviewer = "does it work?"; evaluator = "is it *good*?" → rubric score.) Plus the **supervisor** coordination role that drives the autopilot engine, started `claude --agent supervisor` (interactive, not a daemon worker).
+- **Six roles:** leader, thinker, doer, evaluator, scribe, librarian. (evaluator = "is it *good*?" → rubric score; correctness/convention checks — "does it work?" — are a thinker-role review specialty or the doer itself, not a core role.) Plus the **supervisor** coordination role that drives the autopilot engine, started `claude --agent supervisor` (interactive, not a daemon worker).
 - **Sequential dispatch** in the daemon engine — one `claude -p` at a time; per-task token cap + window budget; crash recovery re-dispatches stale `active` tasks on startup.
 - **Structured output blocks** parsed by `agent/output_parser.h`: HANDOFF, SUMMARY, VAULT_UPDATE, LEARNINGS_UPDATE (scribe → `.quorum/learnings.md`), CURATION_UPDATE / DECISION_LOG_APPEND (librarian → Pitch/Decision-Log/Roadmap), EVALUATION (evaluator). Read the parser for exact field shapes — don't restate them.
 
