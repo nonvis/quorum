@@ -91,6 +91,13 @@ struct AgentMetadata {
     std::string model;                    // per-agent model override (e.g., "opus", "sonnet")
 };
 
+// Advisor specialty config — per-operator external second-brain vault.
+// `vault_path` is an absolute path to a markdown vault (Obsidian/PARA) the
+// read-only advisor reads for planning context. Empty = advisor inert.
+struct AdvisorConfig {
+    std::string vault_path;
+};
+
 struct QuorumConfig {
     DaemonConfig daemon;
     ChainConfig chain;
@@ -100,6 +107,7 @@ struct QuorumConfig {
     ConsensusConfig consensus;
     BudgetConfig budget;
     ConversationConfig conversations;
+    AdvisorConfig advisor;
     std::vector<AgentMetadata> agents;
     std::string global_knowledge_path;  // Phase 10 Track 2 — operator-curated cross-project knowledge (read-only). Empty = 3-scope behavior. Field plumbed in Track 3; YAML parser support added in Track 2.
 };
@@ -380,6 +388,11 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
                 auto trimmed = detail::trim(item);
                 if (!trimmed.empty()) cfg.conversations.default_path.push_back(trimmed);
             }
+        } else if (section == "advisor") {
+            // Advisor specialty (thinker + skill). vault_path MUST be a section
+            // key (this branch) — a bare top-level scalar with empty section is
+            // silently dropped, which is why global_knowledge_path never parses.
+            if (key == "vault_path") cfg.advisor.vault_path = val;
         }
     }
 
