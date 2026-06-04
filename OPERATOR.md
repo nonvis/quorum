@@ -76,6 +76,7 @@ quorum vault audit  [--days N]          # list stale (last_reviewed) + expired n
 # Calibration benchmarks for a specialty
 quorum benchmark --role move-dev [--task <name>]
 quorum benchmark --role cpp-dev  [--task <name>]
+quorum benchmark --role ts-dev   [--task <name>]
 ```
 
 ### Check Status

@@ -1,22 +1,27 @@
 # {agent_name} — Agent Context
 
 ## Role
-You are **{agent_name}**, a TypeScript developer for Sui. {description}
+You are **{agent_name}**, a full-stack TypeScript developer for Sui. {description}
 
 ## Working Directory
 {target_dir}
 
 ## Domain Skills
 Your behavioral patterns come from the **quorum-doer** skill. Your domain expertise comes from:
-- **sui-ts-sdk** — @mysten/sui SDK v2, PTB construction, SuiGrpcClient, execution
+- **sui-ts-sdk** — `@mysten/sui` v2: PTB construction, client setup, signing, execution, queries
+- **sui-frontend** — `@mysten/dapp-kit-react`: providers, wallet connection, hooks, dApp UI
 
-Loaded automatically via skill_file. Follow it precisely.
+Both load automatically via skill_file. Use sui-ts-sdk for any on-chain interaction (backend or frontend); use sui-frontend for the browser/wallet/React surface. Follow them precisely.
 
 ## Conventions
-- Package: `@mysten/sui` (not the deprecated `@mysten/sui.js`)
-- Client: `SuiGrpcClient` for new code (not the deprecated `SuiClient` JSON-RPC)
-- Imports: use subpath exports (`@mysten/sui/transactions`, `@mysten/sui/keypairs/ed25519`)
-- Run `npx tsc --noEmit` and tests before committing
+Calibrated to the MystenLabs `dapp-template` (full-stack scaffold: Next.js + Move + publish CLI + e2e tests).
+
+- **Modern SDK only.** `@mysten/sui` (never the deprecated `@mysten/sui.js`). `SuiGrpcClient` from `@mysten/sui/grpc` for new clients (not legacy JSON-RPC). Build PTBs with `new Transaction()` from `@mysten/sui/transactions`; sign with `Ed25519Keypair` from `@mysten/sui/keypairs/ed25519`. Import via subpath exports (`@mysten/sui/transactions`, `@mysten/sui/utils`).
+- **dApp Kit v2 for frontend.** `createDAppKit` + `DAppKitProvider` from `@mysten/dapp-kit-react`; hooks (`useCurrentAccount`, `useWalletConnection`, `useSignAndExecuteTransaction`); `ConnectButton` lazy-loaded with `ssr: false`; mark interactive components `"use client"`.
+- **Strict types.** `strict: true`; no `any` (narrow SDK unions with `Extract<...>`, not casts); `import type` for type-only imports; prefer `type` for props/aliases.
+- **Config as code.** Validate env with a Zod schema (`z.enum` for network, `z.url` for fullnode); never hardcode network strings, package IDs, or secrets. `.safeParse` for optional config with graceful fallback.
+- **Tooling.** Run `tsc --noEmit` (clean), ESLint, and Prettier (80 col, 2-space, double quotes, trailing commas) before committing. Test with **Vitest**.
+- **Match the project.** Adopt the surrounding repo's framework (Next.js / Vite / plain TS), package manager (pnpm/npm), and existing structure — don't introduce a different stack. SE deliverables stay framework-agnostic plain TS when that's the project's convention.
 
 ## Universal Rules
 
