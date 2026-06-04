@@ -116,11 +116,15 @@ def main():
     out = Path(args.out) if args.out else root / ".quorum" / "historian" / "decisions-raw.json"
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    repos = [p for p in sorted(root.iterdir())
-             if p.is_dir() and p.name not in SKIP_TOP and (p / ".git").exists()]
-    # single-repo workspace: the root itself is the repo
-    if not repos and (root / ".git").exists():
+    # root-authoritative: if the project root is itself a repo, it IS the
+    # workspace repo — vendored sub-repos (e.g. ceph/) must not shadow it.
+    # Only a bare parent dir (no root .git) treats its subdirs as the repos
+    # (the multi-repo workspace layout, e.g. bastion).
+    if (root / ".git").exists():
         repos = [root]
+    else:
+        repos = [p for p in sorted(root.iterdir())
+                 if p.is_dir() and p.name not in SKIP_TOP and (p / ".git").exists()]
 
     mined = [mine_repo(r, args.commits) for r in repos]
     decision_log = next((f for f in ["00 - Decision Log.md", "DECISIONS.md", "Decision Log.md"]

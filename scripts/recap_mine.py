@@ -175,11 +175,15 @@ def main():
     out = Path(args.out) if args.out else root / ".quorum" / "recap" / "timeline-raw.json"
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    repos = [p for p in sorted(root.iterdir())
-             if p.is_dir() and p.name not in SKIP_TOP and (p / ".git").exists()]
-    # single-repo workspace: the root itself is the repo
-    if not repos and (root / ".git").exists():
+    # root-authoritative: if the project root is itself a repo, it IS the
+    # workspace repo — vendored sub-repos (e.g. ceph/) must not shadow it.
+    # Only a bare parent dir (no root .git) treats its subdirs as the repos
+    # (the multi-repo workspace layout, e.g. bastion).
+    if (root / ".git").exists():
         repos = [root]
+    else:
+        repos = [p for p in sorted(root.iterdir())
+                 if p.is_dir() and p.name not in SKIP_TOP and (p / ".git").exists()]
 
     # pass 1: windowed commits + where-I-left-off facts per repo
     mined = [mine_commits(r, args.since) for r in repos]
