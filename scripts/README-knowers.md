@@ -32,30 +32,30 @@ Scaffolds the knower setup into any project. Idempotent, spends **zero tokens**,
 runs **no state-mutating git** in the target. Steps:
 
 1. `quorum_daemon init` if `<project-dir>/.quorum/` is absent.
-2. Drop `templates/knowers/CLAUDE.template.md` → `<project-dir>/CLAUDE.md`
-   (only if none exists — never overwrites).
-3. Refresh all three Tier-1 tools — `cartographer_index.py` + `historian_mine.py`
+   (The project's `CLAUDE.md` is external to Quorum — setup never creates or
+   edits it. The cartographer only *reads* it as optional context if present.)
+2. Refresh all three Tier-1 tools — `cartographer_index.py` + `historian_mine.py`
    + `recap_mine.py` → `<project-dir>/.quorum/tools/` each run.
-4. Create the `cartographer` + `architect` + `historian` + `recap` agents
+3. Create the `cartographer` + `architect` + `historian` + `recap` agents
    (`--no-ai`, skipped if their yaml already exists).
-5. Run the deterministic cartographer Tier-1 scan →
+4. Run the deterministic cartographer Tier-1 scan →
    `<project-dir>/.quorum/cartographer/layout.json`.
-6. Run the deterministic historian Tier-1 mine →
+5. Run the deterministic historian Tier-1 mine →
    `<project-dir>/.quorum/historian/decisions-raw.json`. **This step needs an
    authenticated `gh`** (it shells out to `gh pr list` for PR data). If `gh` is
    missing or unauthenticated, the step is **skipped with a warning** (setup
    does NOT fail) — run `historian_mine.py` later once gh is ready. The tool
    also degrades gracefully on a missing git remote (empty PR lists).
-7. Run the deterministic recap Tier-1 windowed mine →
+6. Run the deterministic recap Tier-1 windowed mine →
    `<project-dir>/.quorum/recap/timeline-raw.json`, then seed the operator-owned
    dump channels `messages-dump.md` + `linear-dump.md` (stubs, **only if absent**
-   — never overwrites an existing dump). **Unlike step 6, this runs
+   — never overwrites an existing dump). **Unlike step 5, this runs
    unconditionally** — the git timeline is always emitted; `gh` only *enriches*
    it with PR data, so a missing/unauthenticated `gh` just yields empty PR lists.
-8. Print a summary + next steps.
+7. Print a summary + next steps.
 
-Re-running is safe: no duplicate agents, CLAUDE.md untouched, tools +
-layout + decision record refreshed.
+Re-running is safe: no duplicate agents, the project's CLAUDE.md never touched,
+tools + layout + decision record refreshed.
 
 ### `run-knower.sh <project-dir> <cartographer|architect|historian|recap>`
 
@@ -179,7 +179,7 @@ built-in fixture (exit 0 = pass).
 # from the quorum repo
 make build
 scripts/setup-knowers.sh /path/to/workspace
-#   → fill in CLAUDE.md's "## Folders" section
+#   → the project's CLAUDE.md (if any) is read as context; Quorum never edits it
 #   → if the historian mine was skipped (no gh auth), run it once gh is ready:
 #       python3 /path/to/workspace/.quorum/tools/historian_mine.py --root /path/to/workspace
 #   → recap reads two operator-owned dumps (seeded as stubs if absent):

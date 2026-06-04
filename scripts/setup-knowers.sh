@@ -4,9 +4,9 @@
 #
 # Scaffold the read-only Quorum "knower" setup (cartographer + architect +
 # historian + recap) into any project workspace. Idempotent: safe to re-run; never
-# overwrites an existing CLAUDE.md, never duplicates agents, never runs
-# state-mutating git in the target, and spends NO LLM tokens (Tier-1 scans are
-# deterministic; agents created with --no-ai; no converse).
+# creates or edits the project's CLAUDE.md (it's external to Quorum), never
+# duplicates agents, never runs state-mutating git in the target, and spends NO
+# LLM tokens (Tier-1 scans are deterministic; agents created with --no-ai; no converse).
 #
 # After setup, run the (token-spending) Tier-2 LLM passes via:
 #   scripts/run-knower.sh <project-dir> cartographer
@@ -41,11 +41,10 @@ CARTO_SKILL="$QUORUM/templates/skills/cartographer/SKILL.md"
 ARCH_SKILL="$QUORUM/templates/skills/architect/SKILL.md"
 HIST_SKILL="$QUORUM/templates/skills/historian/SKILL.md"
 RECAP_SKILL="$QUORUM/templates/skills/recap/SKILL.md"
-CLAUDE_TMPL="$QUORUM/templates/knowers/CLAUDE.template.md"
 CARTO_TOOL_SRC="$QUORUM/scripts/cartographer_index.py"
 HIST_TOOL_SRC="$QUORUM/scripts/historian_mine.py"
 RECAP_TOOL_SRC="$QUORUM/scripts/recap_mine.py"
-for f in "$CARTO_SKILL" "$ARCH_SKILL" "$HIST_SKILL" "$RECAP_SKILL" "$CLAUDE_TMPL" "$CARTO_TOOL_SRC" "$HIST_TOOL_SRC" "$RECAP_TOOL_SRC"; do
+for f in "$CARTO_SKILL" "$ARCH_SKILL" "$HIST_SKILL" "$RECAP_SKILL" "$CARTO_TOOL_SRC" "$HIST_TOOL_SRC" "$RECAP_TOOL_SRC"; do
     if [ ! -f "$f" ]; then
         echo "ERROR: required source file missing: $f" >&2
         exit 1
@@ -66,12 +65,12 @@ else
     ( cd "$PROJECT_DIR" && "$DAEMON" init )
 fi
 
-# ── 2. Drop CLAUDE.md if absent (NEVER overwrite) ───────────────────────────
+# ── 2. CLAUDE.md is the project's own — Quorum never creates or edits it ─────
+#    (the cartographer reads it as optional survey context if present)
 if [ -f "$PROJECT_DIR/CLAUDE.md" ]; then
-    echo "==> [2/9] CLAUDE.md already present — leaving it untouched"
+    echo "==> [2/9] CLAUDE.md present — cartographer will read it as context (left untouched)"
 else
-    echo "==> [2/9] copy CLAUDE.template.md -> $PROJECT_DIR/CLAUDE.md"
-    cp "$CLAUDE_TMPL" "$PROJECT_DIR/CLAUDE.md"
+    echo "==> [2/9] no CLAUDE.md — fine; it's the project's to own, not Quorum's to create"
 fi
 
 # ── 3. Refresh the Tier-1 tools into the project ────────────────────────────
@@ -224,22 +223,17 @@ if [ -f "$PROJECT_DIR/.quorum/recap/timeline-raw.json" ]; then
     echo "    $PROJECT_DIR/.quorum/recap/timeline-raw.json  (Tier-1 windowed timeline)"
 fi
 echo "    $PROJECT_DIR/.quorum/recap/{messages-dump.md,linear-dump.md}  (operator-owned dump channels)"
-if [ -f "$PROJECT_DIR/CLAUDE.md" ]; then
-    echo "    $PROJECT_DIR/CLAUDE.md"
-fi
 echo ""
 echo "  Next steps:"
-echo "    1. Fill in the '## Folders' section of $PROJECT_DIR/CLAUDE.md"
-echo "       (the cartographer honors it and produces the authoritative index)."
-echo "    2. If the historian mine was skipped (no authenticated gh), run it"
+echo "    1. If the historian mine was skipped (no authenticated gh), run it"
 echo "       once gh is ready:"
 echo "         python3 $PROJECT_DIR/.quorum/tools/historian_mine.py --root \"$PROJECT_DIR\""
-echo "    3. Run the Tier-2 LLM passes (these DO spend tokens):"
+echo "    2. Run the Tier-2 LLM passes (these DO spend tokens):"
 echo "         $QUORUM/scripts/run-knower.sh \"$PROJECT_DIR\" cartographer"
 echo "         $QUORUM/scripts/run-knower.sh \"$PROJECT_DIR\" architect"
 echo "         $QUORUM/scripts/run-knower.sh \"$PROJECT_DIR\" historian"
 echo "         $QUORUM/scripts/run-knower.sh \"$PROJECT_DIR\" recap"
-echo "    4. recap reads two operator-owned dumps (seeded as stubs if absent):"
+echo "    3. recap reads two operator-owned dumps (seeded as stubs if absent):"
 echo "         $PROJECT_DIR/.quorum/recap/messages-dump.md   (timestamped chat -> timeline)"
 echo "         $PROJECT_DIR/.quorum/recap/linear-dump.md      (Linear export -> untimed overlay)"
 echo ""
