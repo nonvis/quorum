@@ -9,12 +9,12 @@ Sources: the `cpp-code-quality` skill (this repo), the C++ Core Guidelines
 (https://isocpp.github.io/CppCoreGuidelines/), cppreference C++20, and the
 conventions distilled from two production C++20 systems codebases — one
 host-constrained storage engine (2-space / Allman, return-code + framework
-logging, C++17-pinned by its host) and one greenfield low-latency
+logging, C++20 via Ceph Reef — the SAL `int`/`-errno` + framework logging are host-mandated, not the standard) and one greenfield low-latency
 matching/consensus engine (4-space / K&R, `std::optional`/`std::variant` errors,
 C++20, BFT-deterministic state machine). The rubric encodes what those two
 **agree on** (ownership, RAII, typed errors, determinism, tests) as hard rules,
 and treats where they **diverge** (indent/brace cosmetics, the error-reporting
-idiom, the exact standard when host-pinned) as evaluator judgment.
+idiom) as evaluator judgment.
 
 Calibration intent:
 - **C++20 is the baseline** for new code. An older standard PASSes only when the
