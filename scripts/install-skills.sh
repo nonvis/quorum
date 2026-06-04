@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install all quorum skills to ~/.claude/skills/
-# Installs: quorum-roles, sui-dev-skills, move-code-quality
+# Installs: quorum-roles, sui-dev-skills, move-code-quality, cpp-code-quality
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -59,6 +59,7 @@ for sub in sui-move sui-ts-sdk sui-frontend; do
 done
 
 install_skill "move-code-quality"
+install_skill "cpp-code-quality"
 
 echo ""
 

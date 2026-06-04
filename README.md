@@ -116,7 +116,7 @@ Four core roles. **Role determines tool access** — `doer` is executor (full to
 | **doer** | Executor. Implements changes — code, config, files — in its `target_dir`. | executor |
 | **evaluator** | Scorer. "Is this *good*?" Scores work against a specialty rubric; emits an `EVALUATION` block. Terminal stage — hands off to `done`. | analyst |
 
-**Specialties** are focused (role, domain) pairings — e.g. `move-dev` (a doer + Move craft + a measured rubric), or the read-only **knowers** `cartographer` / `architect` / `historian` / `recap` (where / how / why / what-when). The four knowers are the **sole knowledge accumulators**: each self-writes its own vault during `quorum knower refresh`, and `quorum ask` answers from those vaults.
+**Specialties** are focused (role, domain) pairings — e.g. `move-dev` or `cpp-dev` (a doer + a craft + a measured rubric), or the read-only **knowers** `cartographer` / `architect` / `historian` / `recap` (where / how / why / what-when). The four knowers are the **sole knowledge accumulators**: each self-writes its own vault during `quorum knower refresh`, and `quorum ask` answers from those vaults.
 
 Plus one coordination role outside the daemon: the **supervisor**, which drives the autopilot engine (see Engines).
 

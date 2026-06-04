@@ -96,6 +96,16 @@ else
     ERRORS=$((ERRORS + 1))
 fi
 
+# cpp-code-quality
+if [ -f "$TEMPLATES/skills/cpp-code-quality/SKILL.md" ]; then
+    check_frontmatter "$TEMPLATES/skills/cpp-code-quality/SKILL.md" "cpp-code-quality"
+    lines=$(wc -l < "$TEMPLATES/skills/cpp-code-quality/SKILL.md")
+    echo "  ✅ cpp-code-quality ($lines lines)"
+else
+    echo "  ❌ cpp-code-quality/SKILL.md — MISSING"
+    ERRORS=$((ERRORS + 1))
+fi
+
 echo ""
 
 # --- 3. Agent templates ---

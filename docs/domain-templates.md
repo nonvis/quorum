@@ -39,11 +39,13 @@ Provision these agents:
 - `architect` (thinker) — module structure, API contracts, data models
 - `ts-dev` (doer) — TypeScript backend, APIs, tests
 - `move-dev` (doer) — Move contracts and modules
+- `cpp-dev` (doer) — modern C++20 systems code, with a measured rubric
 
 ```bash
 quorum agent create --role thinker --name architect --no-ai
 quorum agent create --role doer --name ts-dev --target-dir . --no-ai
 quorum agent create --role doer --name move-dev --target-dir . --no-ai
+quorum agent create --role doer --name cpp-dev --target-dir . --no-ai
 ```
 
 **Example goal:** `quorum converse "Add a REST endpoint for querying escrow status by address."`
