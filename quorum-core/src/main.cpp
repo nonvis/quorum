@@ -32,6 +32,7 @@
 #include "cli/vault_dedup.h"
 #include "cli/vault_audit.h"
 #include "cli/ask.h"
+#include "cli/search.h"
 #include "cli/supervisor_init.h"
 #include "cli/knower_refresh.h"
 #include "utils/discover.h"
@@ -145,6 +146,8 @@ static void print_usage(const char* prog) {
               << "                                          List stale (last_reviewed > N days) and expired rule/ref files\n"
               << "  " << prog << " ask \"<question>\" [--project <path|name>] [--agent <name>]\n"
               << "                                          Ask a project's manager (or a specific --agent) a question, read-only\n"
+              << "  " << prog << " search \"<query>\" [--project <path|name>] [--agent <name>] [--limit N] [--json]\n"
+              << "                                          Deterministic (no-LLM) ranked keyword search over the project's ref-*.md knower notes\n"
               << "  " << prog << " knower refresh [--all | --knower <name>] [--project <path|name>]\n"
               << "                                          Re-run the read-only knower scan(s) so the knower vaults re-survey the codebase\n"
               << "  " << prog << " benchmark --role <r> --task <name>          Run one synthetic benchmark for a role-specialty\n"
@@ -496,6 +499,7 @@ int main(int argc, char* argv[]) {
     std::string vault_subcmd_arg;
     bool vault_path_explicit = false;
     sui::quorum::cli::AskOptions ask_opts;  // Phase 12 — `quorum ask`
+    sui::quorum::cli::SearchOptions search_opts;  // Phase 15 — `quorum search`
     sui::quorum::cli::SupervisorInitOptions supervisor_init_opts;  // Phase 13
     std::string supervisor_subcmd_arg;
     sui::quorum::cli::KnowerRefreshOptions knower_refresh_opts;    // Phase 14 T3
@@ -629,6 +633,29 @@ int main(int argc, char* argv[]) {
                 ask_opts.agent = sub_args[++i];
             } else {
                 ask_opts.question = sub_args[i];  // last positional = question
+            }
+        }
+    } else if (subcommand == "search") {
+        // Phase 15 — `quorum search "<query>" [--project <path|name>]
+        //             [--agent <name>] [--limit N] [--json]`.
+        // The query is positional (everything that isn't a flag); --project and
+        // --agent each take the next arg; --limit takes an int; --json is a bool.
+        for (size_t i = 0; i < sub_args.size(); ++i) {
+            if (sub_args[i] == "--project" && i + 1 < sub_args.size()) {
+                search_opts.project = sub_args[++i];
+            } else if (sub_args[i] == "--agent" && i + 1 < sub_args.size()) {
+                search_opts.agent = sub_args[++i];
+            } else if (sub_args[i] == "--limit" && i + 1 < sub_args.size()) {
+                try {
+                    search_opts.limit = std::stoi(sub_args[++i]);
+                } catch (...) {
+                    std::cerr << "ERROR: --limit requires an integer value\n";
+                    return 1;
+                }
+            } else if (sub_args[i] == "--json") {
+                search_opts.json = true;
+            } else {
+                search_opts.query = sub_args[i];  // last positional = query
             }
         }
     } else if (subcommand == "supervisor") {
@@ -778,6 +805,16 @@ int main(int argc, char* argv[]) {
     // leader can read the live code.
     if (subcommand == "ask") {
         return sui::quorum::cli::run_ask(ask_opts);
+    }
+
+    // Phase 15 — `quorum search "<query>" [--project <path|name>] [--agent
+    // <name>] [--limit N] [--json]`. No --config / no DB: a deterministic,
+    // no-LLM, read-only ranked keyword search over the project's accumulated
+    // ref-*.md knower notes, reusing the daemon's own search_references()
+    // scorer. run_search resolves the project root (default cwd, or --project
+    // <path|name>), loads the ref corpus, and prints the ranked hits.
+    if (subcommand == "search") {
+        return sui::quorum::cli::run_search(search_opts);
     }
 
     // Phase 13 — `quorum supervisor init`. No --config needed: generates the

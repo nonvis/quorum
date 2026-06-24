@@ -249,6 +249,13 @@ add_executable(test_ask tests/unit/test_ask.cpp)
 target_include_directories(test_ask PRIVATE src)
 add_test(NAME test_ask COMMAND test_ask)
 
+# Phase 15: quorum search CLI (deterministic no-LLM ranked ref search) — pure
+# search_refs() entrypoint (tag-vs-body ranking, summary preview, --agent
+# scoping, empty/stopword query, all-vaults corpus).
+add_executable(test_search tests/unit/test_search.cpp)
+target_include_directories(test_search PRIVATE src)
+add_test(NAME test_search COMMAND test_search)
+
 # Phase 13 Track 3: quorum supervisor init — SUPERVISOR.md generator (autopilot)
 add_executable(test_supervisor_init tests/unit/test_supervisor_init.cpp)
 target_include_directories(test_supervisor_init PRIVATE src)
