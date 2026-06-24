@@ -102,10 +102,16 @@ namespace sui::quorum {
 //   - field absent from frontmatter
 //   - field present but value empty after trim
 //
-// Scope: single-line scalar values only. No multi-line strings, no nested
-// keys, no anchors. Single-quoted values not supported (we never emit them).
-// Matches the fail-open posture of parse_frontmatter_tags — any anomaly
-// returns "" without throwing.
+// Scope: single-line scalar values, PLUS YAML block scalars — `>` (folded) and
+// `|` (literal), with optional chomping (`+`/`-`) and explicit-indent digits
+// (e.g. `>-`, `|+`, `>2`). A block scalar's body is read from the following
+// indented lines and FOLDED to a single space-joined line: blank lines collapse
+// to a separator and literal newlines are NOT preserved. That is intentional —
+// the sole consumer is the single-line `summary:` preview (Decision #44 D1),
+// which is already whitespace-collapsed / length-capped downstream, so `|`
+// literal-newline fidelity is deliberately dropped. No nested keys, no anchors.
+// Single-quoted values not supported (we never emit them). Matches the fail-open
+// posture of parse_frontmatter_tags — any anomaly returns "" without throwing.
 [[nodiscard]] inline std::string parse_frontmatter_field(
     const std::string& content, const std::string& field_name) {
     const size_t n = content.size();
@@ -146,6 +152,87 @@ namespace sui::quorum {
             size_t b = value.size();
             while (b > a && (value[b - 1] == ' ' || value[b - 1] == '\t')) --b;
             value = value.substr(a, b - a);
+
+            // Block-scalar header? `>` folded / `|` literal, optionally followed
+            // only by a chomping indicator (+/-) and/or explicit-indent digits.
+            // Anything else after the indicator (text, `pipe`, `= 5`, etc.) is a
+            // normal single-line value and falls through unchanged.
+            auto is_block_header = [](const std::string& v) {
+                if (v.empty() || (v[0] != '>' && v[0] != '|')) return false;
+                for (size_t k = 1; k < v.size(); ++k) {
+                    char c = v[k];
+                    if (c == '+' || c == '-' || (c >= '0' && c <= '9') ||
+                        c == ' ' || c == '\t') {
+                        continue;  // chomping / indent digit / trailing space
+                    }
+                    return false;  // real content on the header line → not a block
+                }
+                return true;
+            };
+            if (is_block_header(value)) {
+                // Read the block body from the following lines. The key indent in
+                // top-level frontmatter is 0; the block body is more-indented.
+                // Block indent = leading-whitespace width of the first non-blank
+                // following line (skipping leading fully-blank lines).
+                size_t bscan = (end == std::string::npos) ? n : end + 1;
+                std::vector<std::string> body;
+                size_t block_indent = std::string::npos;  // unset until 1st content line
+                while (bscan < n) {
+                    size_t bend = content.find('\n', bscan);
+                    std::string bline = (bend == std::string::npos)
+                        ? content.substr(bscan)
+                        : content.substr(bscan, bend - bscan);
+                    if (!bline.empty() && bline.back() == '\r') bline.pop_back();
+
+                    if (bline == "---") break;  // closing fence terminates block
+
+                    // Leading-whitespace width of this line.
+                    size_t ind = 0;
+                    while (ind < bline.size() &&
+                           (bline[ind] == ' ' || bline[ind] == '\t')) ++ind;
+                    bool blank = (ind == bline.size());
+
+                    if (block_indent == std::string::npos) {
+                        // Still searching for the first non-blank body line.
+                        if (blank) {
+                            body.push_back("");  // collapses to a separator later
+                            if (bend == std::string::npos) break;
+                            bscan = bend + 1;
+                            continue;
+                        }
+                        if (ind == 0) break;  // sibling key at indent 0, no body
+                        block_indent = ind;
+                    } else {
+                        // Non-blank, less-indented than the block → sibling key.
+                        if (!blank && ind < block_indent) break;
+                    }
+
+                    if (blank) {
+                        body.push_back("");
+                    } else {
+                        // Strip exactly the block-indent prefix.
+                        body.push_back(bline.substr(block_indent));
+                    }
+
+                    if (bend == std::string::npos) break;  // EOF terminates block
+                    bscan = bend + 1;
+                }
+
+                // Join body lines with a single space (folds folded + literal
+                // alike to one line; blank lines act as separators).
+                std::string out;
+                for (const std::string& bl : body) {
+                    if (!out.empty()) out.push_back(' ');
+                    out += bl;
+                }
+                // Trim leading/trailing whitespace.
+                size_t oa = 0;
+                while (oa < out.size() && (out[oa] == ' ' || out[oa] == '\t')) ++oa;
+                size_t ob = out.size();
+                while (ob > oa && (out[ob - 1] == ' ' || out[ob - 1] == '\t')) --ob;
+                return out.substr(oa, ob - oa);
+            }
+
             // strip surrounding double quotes
             if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
                 value = value.substr(1, value.size() - 2);

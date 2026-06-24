@@ -303,6 +303,163 @@ static void test_t11_malformed_summary_fail_closed() {
 }
 
 // ---------------------------------------------------------------------------
+// T12: parse_frontmatter_field — YAML block scalars (>/|) folded to one line
+// ---------------------------------------------------------------------------
+
+static void test_t12_block_scalars() {
+    std::cout << "\n=== T12. parse_frontmatter_field: block scalars (>/|) ===\n\n";
+    using sui::quorum::parse_frontmatter_field;
+
+    // (a) folded `>` across multiple indented lines → space-joined, no leading '>'.
+    {
+        std::string c =
+            "---\n"
+            "summary: >\n"
+            "  Long folded summary across\n"
+            "  multiple indented lines.\n"
+            "---\nbody\n";
+        auto v = parse_frontmatter_field(c, "summary");
+        check(v == "Long folded summary across multiple indented lines.",
+              "T12a: folded '>' joined by single spaces, no leading '>'");
+    }
+
+    // (b) literal `|` multi-line → joined (space-join acceptable per single-line
+    //     preview contract).
+    {
+        std::string c =
+            "---\n"
+            "summary: |\n"
+            "  line one\n"
+            "  line two\n"
+            "  line three\n"
+            "---\nbody\n";
+        auto v = parse_frontmatter_field(c, "summary");
+        check(v == "line one line two line three",
+              "T12b: literal '|' folded to space-joined single line");
+    }
+
+    // (c) chomping indicators on the header → still a block.
+    {
+        std::string c =
+            "---\n"
+            "summary: >-\n"
+            "  folded with strip chomp\n"
+            "  second line\n"
+            "---\nbody\n";
+        auto v = parse_frontmatter_field(c, "summary");
+        check(v == "folded with strip chomp second line",
+              "T12c1: '>-' parsed as block");
+
+        std::string c2 =
+            "---\n"
+            "summary: |+\n"
+            "  literal keep chomp\n"
+            "---\nbody\n";
+        auto v2 = parse_frontmatter_field(c2, "summary");
+        check(v2 == "literal keep chomp",
+              "T12c2: '|+' parsed as block");
+    }
+
+    // (d) block does NOT bleed into the next sibling key; sibling still parses.
+    {
+        std::string c =
+            "---\n"
+            "summary: >\n"
+            "  folded body here\n"
+            "  more body\n"
+            "tags: [walrus, seal]\n"
+            "---\nbody\n";
+        auto v = parse_frontmatter_field(c, "summary");
+        check(v == "folded body here more body",
+              "T12d1: block stops before sibling key (no bleed)");
+        check(parse_frontmatter_field(c, "tags") == "[walrus, seal]",
+              "T12d2: sibling 'tags' single-line value still parsed");
+        auto tags = sui::quorum::parse_frontmatter_tags(c);
+        check(tags.size() == 2 && tags[0] == "walrus" && tags[1] == "seal",
+              "T12d3: parse_frontmatter_tags unaffected by preceding block");
+
+        // sibling that is itself a plain key:
+        std::string c2 =
+            "---\n"
+            "summary: >\n"
+            "  folded\n"
+            "foo: bar\n"
+            "---\nbody\n";
+        check(parse_frontmatter_field(c2, "summary") == "folded",
+              "T12d4: block stops before 'foo:' sibling");
+        check(parse_frontmatter_field(c2, "foo") == "bar",
+              "T12d5: 'foo' sibling value parsed after block");
+    }
+
+    // (e) block terminated by the closing '---' fence → no '---' in value.
+    {
+        std::string c =
+            "---\n"
+            "summary: >\n"
+            "  text before the fence\n"
+            "---\nbody\n";
+        auto v = parse_frontmatter_field(c, "summary");
+        check(v == "text before the fence",
+              "T12e: block ends at '---' fence, no fence in value");
+        check(v.find("---") == std::string::npos,
+              "T12e2: closing fence not leaked into value");
+    }
+
+    // (f) REGRESSION — single-line / quoted / pseudo-block values unchanged.
+    {
+        check(parse_frontmatter_field(
+                  "---\nsummary: Plain text\n---\nb\n", "summary") == "Plain text",
+              "T12f1: plain single-line value unchanged");
+        check(parse_frontmatter_field(
+                  "---\nsummary: \"Quoted\"\n---\nb\n", "summary") == "Quoted",
+              "T12f2: quoted value unchanged (quotes stripped)");
+        // '>' followed by real text on the SAME line is NOT a block header.
+        check(parse_frontmatter_field(
+                  "---\nsummary: > not a block\n---\nb\n", "summary") == "> not a block",
+              "T12f3: '> text' on same line is a plain value (not a block)");
+        // '|pipe' — pipe immediately followed by letters → not a block.
+        check(parse_frontmatter_field(
+                  "---\nsummary: |pipe\n---\nb\n", "summary") == "|pipe",
+              "T12f4: '|pipe' is a plain value (not a block)");
+        // '>= 5' → not a block (contains '=' and space-text).
+        check(parse_frontmatter_field(
+                  "---\nsummary: >= 5\n---\nb\n", "summary") == ">= 5",
+              "T12f5: '>= 5' is a plain value (not a block)");
+    }
+
+    // (g) empty block — header followed immediately by fence or sibling → "".
+    {
+        check(parse_frontmatter_field(
+                  "---\nsummary: >\n---\nbody\n", "summary").empty(),
+              "T12g1: empty block before fence → \"\"");
+        check(parse_frontmatter_field(
+                  "---\nsummary: |\ntags: [x]\n---\nbody\n", "summary").empty(),
+              "T12g2: empty block before sibling key → \"\"");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// T13: strip_frontmatter unaffected by block scalars (regression guard)
+// ---------------------------------------------------------------------------
+
+static void test_t13_strip_frontmatter_with_block() {
+    std::cout << "\n=== T13. strip_frontmatter: block-scalar body still stripped ===\n\n";
+    std::string c =
+        "---\n"
+        "summary: >\n"
+        "  folded summary line\n"
+        "  second line\n"
+        "tags: [walrus]\n"
+        "---\n"
+        "# Body Heading\n\nBody text.\n";
+    auto stripped = sui::quorum::strip_frontmatter(c);
+    check(stripped == "# Body Heading\n\nBody text.\n",
+          "T13: frontmatter (incl. block body) stripped, body intact");
+    check(stripped.find("folded summary") == std::string::npos,
+          "T13: block-scalar body not leaked into stripped content");
+}
+
+// ---------------------------------------------------------------------------
 // T7: untagged backwards-compat — Phase 8 ranking unchanged (covers plan #10)
 // ---------------------------------------------------------------------------
 
@@ -372,6 +529,8 @@ int main() {
     test_t9_summary_becomes_excerpt();
     test_t10_no_summary_body_fallback();
     test_t11_malformed_summary_fail_closed();
+    test_t12_block_scalars();
+    test_t13_strip_frontmatter_with_block();
 
     std::cout << "\n---------------------------------------------------\n";
     std::cout << "  passed: " << g_passed << "  failed: " << g_failed << "\n";
