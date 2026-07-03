@@ -7,7 +7,7 @@
 ## Two modes (per conversation)
 
 - **generic** (default) — agents mutate the project; doers write real artifacts in their `target_dir`.
-- **brainstorm** (`--mode brainstorm`) — every agent clamped read-only at the tool layer (invoker overrides `agent_class` to analyst); the scribe distributes curated `rule-*.md` / `ref-*.md` across team vaults at end of cycle.
+- **brainstorm** (`--mode brainstorm`) — every agent clamped read-only at the tool layer (invoker overrides `agent_class` to analyst); knowledge writes are human-gated (daemon-enforced): the leader presents a per-knower manifest, and on approval the participating knowers self-write their own `ref-*.md` vault slices.
 
 Same agents, same HANDOFF protocol, sequential dispatch in both. Only the write surface differs.
 
@@ -17,6 +17,7 @@ Same agents, same HANDOFF protocol, sequential dispatch in both. Only the write 
 make build               # cmake + compile (Release) → build/quorum_daemon
 make test                # build + ctest --output-on-failure
 make build-debug         # debug symbols
+make install             # symlink `quorum` CLI → ~/.local/bin + role skills + supervisor agent (make uninstall removes)
 make run-verbose         # run daemon with verbose logging
 ./scripts/web.sh start   # web dashboard in background (UI :3101, API :3100)
 ```
@@ -32,15 +33,15 @@ make run-verbose         # run daemon with verbose logging
 
 ## Layout
 
-`quorum-core/src/` — the daemon: `main.cpp` (CLI parse + dispatch + daemon loop) · `daemon/` (conversation engine, scheduler) · `agent/` (invoker, output_parser, context_assembler, rubric) · `storage/` (SQLite + `schema.h`) · `vault/` (per-agent vaults; `scribe_writer.h` + `librarian_curator.h` write primitives) · `cli/` (one header per `quorum <subcommand>`) · `utils/`. `templates/` — agent CONTEXT.md, role/craft skills, `specs/` (handoff / pitch / autopilot protocols). `quorum-web/` — Bun+Hono API (:3100) + React UI (:3101). `scripts/` — install-skills, web, setup-knowers, lint/update-templates.
+`quorum-core/src/` — the daemon: `main.cpp` (CLI parse + dispatch + daemon loop) · `daemon/` (conversation engine, scheduler) · `agent/` (invoker, output_parser, context_assembler, rubric) · `storage/` (SQLite + `schema.h`) · `vault/` (per-agent vaults; `vault_manager.h`, `indexer.h`, `retention.h`, `context_history.h`) · `cli/` (one header per `quorum <subcommand>`) · `utils/`. `templates/` — agent CONTEXT.md, role/craft skills, `specs/` (autopilot protocol). `quorum-web/` — Bun+Hono API (:3100) + React UI (:3101). `scripts/` — install-skills, web, setup-knowers, lint/update-templates.
 
 ## Architecture invariants
 
 - **Zero LLM in the control loop.** The daemon never calls an LLM; all scheduling/routing/events are pure C++. LLMs run only in `claude -p` subprocesses spawned by the task-dispatch loop.
 - **Role → tool class:** `doer` = executor (full tools, `target_dir` cwd); every other role = analyst (`--disallowedTools "Write,Edit,NotebookEdit"`). Analyst roles "write" by emitting structured blocks the daemon applies — they never hold Write/Edit at runtime.
-- **Six roles:** leader, thinker, doer, evaluator, scribe, librarian. (evaluator = "is it *good*?" → rubric score; correctness/convention checks — "does it work?" — are a thinker-role review specialty or the doer itself, not a core role.) Plus the **supervisor** coordination role that drives the autopilot engine, started `claude --agent supervisor` (interactive, not a daemon worker).
+- **Four core roles:** leader, thinker, doer, evaluator. (evaluator = "is it *good*?" → rubric score; correctness/convention checks — "does it work?" — are a thinker-role review specialty or the doer itself, not a core role.) The read-only **knowers** (cartographer / architect / historian / recap) and **advisor** are thinker-role specialties. Plus the **supervisor** — an installed agent definition (the autopilot driver), started `claude --agent supervisor` (interactive, not a daemon worker).
 - **Sequential dispatch** in the daemon engine — one `claude -p` at a time; per-task token cap + window budget; crash recovery re-dispatches stale `active` tasks on startup.
-- **Structured output blocks** parsed by `agent/output_parser.h`: HANDOFF, SUMMARY, VAULT_UPDATE, LEARNINGS_UPDATE (scribe → `.quorum/learnings.md`), CURATION_UPDATE / DECISION_LOG_APPEND (librarian → Pitch/Decision-Log/Roadmap), EVALUATION (evaluator). Read the parser for exact field shapes — don't restate them.
+- **Structured output blocks** parsed by `agent/output_parser.h`: HANDOFF, VAULT_UPDATE, PROPOSAL, REVIEW, OBSERVATION, SUMMARY, EVALUATION. Read the parser for exact field shapes — don't restate them.
 
 ## Key idioms
 
@@ -53,6 +54,8 @@ db.execute("CREATE TABLE IF NOT EXISTS metrics (...)");
 ```
 
 Project-local `.quorum/` (created by `quorum init`): `config.yaml`, `quorum.db` (schema from `storage/schema.h`), `agents/*.yaml` (auto-discovered), `vaults/<agent>/` (CONTEXT.md + knowledge/). CLI auto-discovers `.quorum/` by walking up from cwd — no `--config` needed except to run the long-lived daemon.
+
+Knowledge layer: `quorum knower refresh` re-surveys the codebase into the knower vaults; `quorum ask` gives an LLM answer from them + live code; `quorum search "<q>"` is the deterministic $0 (no-LLM) ranked search over `ref-*.md`.
 
 ## Testing
 

@@ -115,6 +115,7 @@ quorum agent list | modify | history
 # Knowledge layer — knowers are the sole accumulators (scribe/librarian retired in Phase 14)
 quorum knower refresh [--all | --knower <name>] [--project <p>]   # re-run read-only knower scan(s); knowers re-survey + self-write their vaults
 quorum ask "<question>" [--project <p>] [--agent <name>]         # ask the manager (or a knower, e.g. --agent recap), read-only
+quorum search "<query>" [--project <p>] [--agent <name>] [--limit N]  # deterministic $0 ranked keyword search over ref-*.md (no LLM)
 quorum vault dedup [--dry-run] | vault audit [--days N]
 quorum benchmark --role <r> [--task <name>]
 
@@ -191,13 +192,14 @@ claude --agent supervisor                  # run the flight plan INTERACTIVELY (
 | unit/test_phase_plan_checkoff.cpp | Deterministic phase-plan checkoff backstop on completion. |
 | unit/test_knower_refresh.cpp | `quorum knower refresh` pure parts — name validation, `--all` order, setup checks. |
 | unit/test_ask.cpp | `quorum ask` pure helpers (project resolve, manager-prompt assembly). |
+| unit/test_search.cpp | `quorum search` ranked keyword scorer (filename/tag/content weights, summary preview). |
 | unit/test_vault_dedup.cpp, test_vault_audit.cpp | `quorum vault dedup` / `vault audit` helpers. |
 | unit/test_agent_create.cpp, test_agent_modify.cpp, test_agent_roster_dir.cpp, test_agent_hot_reload.cpp | Agent lifecycle (create / modify / roster dir / hot-reload). |
 | unit/test_supervisor_init.cpp | Autopilot `SUPERVISOR.md` generator + checkpoint skeleton (Phase 13). |
 
 The knowledge layer is verified by `test_knower_refresh.cpp`, `test_ask.cpp`, and the brainstorm-gate / vault-update tests. (Phase 14 deleted the old `test_scribe_write_discipline.cpp`, `test_librarian_curate.cpp`, `test_librarian_pipeline.cpp`, and `test_autopilot_parity.cpp` along with the scribe/librarian roles.)
 
-45 ctest targets currently registered (`cd build && ctest`).
+46 ctest targets currently registered (`cd build && ctest`).
 
 ## Design Notes
 

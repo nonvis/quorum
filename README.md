@@ -84,7 +84,7 @@ quorum converse "Analyze mm-bot spread performance"
 # Brainstorm mode — read-only team, human-gated knower self-write
 quorum converse --mode brainstorm "What should our caching strategy look like?"
 
-# With custom budget and turn limit
+# With a turn limit
 quorum converse --max-rounds 5 "goal"
 
 # Lifecycle
@@ -97,6 +97,7 @@ quorum close   --conversation 1              # close a conversation
 quorum knower refresh --all                   # re-survey the codebase into the knower vaults
 quorum ask "what did we decide about X?"      # answered from the knower vaults, read-only
 quorum ask --agent recap "where did we leave off?"   # catch-up via the recap knower
+quorum search "durability decision"           # deterministic $0 ranked search over ref-*.md (no LLM)
 
 # Autopilot engine (Phase 13) — overnight, parallel
 quorum supervisor init                       # generate ./SUPERVISOR.md flight plan
@@ -162,7 +163,7 @@ The dashboard also has a **"What's going on?" recap button** (RecapPanel) that c
 | `quorum-core/` | C++20 daemon (src/, tests/) |
 | `quorum-web/` | Bun + Hono API server + React frontend (web dashboard) |
 | `templates/` | Role skills, domain skills, agent CONTEXT.md templates |
-| `scripts/` | install-skills.sh, lint-templates.sh, update-templates.sh |
+| `scripts/` | install-skills.sh, setup-knowers.sh, run-knower.sh, setup-advisor.sh, web.sh, lint-templates.sh, update-templates.sh |
 | `docs/` | Design documents |
 | `.claude/commands/` | Claude Code skills |
 
