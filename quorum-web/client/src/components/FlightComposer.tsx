@@ -8,6 +8,7 @@ import type { Agent, PlanResult, PlanTask } from "../types";
 import { submitFlightPlan } from "../api";
 import { draftTasks } from "../lib/flightDraft";
 import { modeOf, type ConversationMode } from "../lib/theme";
+import { FlightLaunch } from "./FlightLaunch";
 
 interface DraftTask {
   key: number;
@@ -137,7 +138,10 @@ export function FlightComposer({
         </div>
 
         <div className="mb-1.5 font-mono text-[10.5px] font-bold tracking-[0.12em]" style={{ color: NIGHT }}>
-          LAUNCH IT IN YOUR TERMINAL — THE ONE STEP THE WEB CAN'T DO
+          LAUNCH — FROM HERE (tmux session) OR ANY TERMINAL
+        </div>
+        <div className="mb-2">
+          <FlightLaunch />
         </div>
         <div className="flex items-center gap-2">
           <input
@@ -155,10 +159,10 @@ export function FlightComposer({
           </button>
         </div>
         <p className="mt-2 text-[12px] leading-[1.55] text-faint">
-          The flight is an interactive <code className="font-mono">claude --agent supervisor</code> session —
-          start it when you're ready (tonight, tmux, anywhere). It reads this plan, flies it, checkpoints to{" "}
-          <code className="font-mono">.quorum/autopilot/</code>, and the flights board here shows the morning
-          review when you're back.
+          The flight is an interactive <code className="font-mono">claude --agent supervisor</code> session.
+          “Launch flight” starts it in a detached tmux session — attach from any terminal to watch or answer
+          gates. It reads this plan, flies it, checkpoints to{" "}
+          <code className="font-mono">.quorum/autopilot/</code>, and the flights board shows the morning review.
         </p>
 
         <details className="mt-3">

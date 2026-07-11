@@ -238,6 +238,30 @@ export async function submitFlightPlan(payload: PlanPayload): Promise<PlanResult
   return res.json();
 }
 
+// Flight session — the interactive supervisor TUI hosted in detached tmux.
+export interface FlightSession {
+  available: boolean;
+  running: boolean;
+  session?: string;
+  attach?: string;
+}
+
+export async function fetchFlightSession(): Promise<FlightSession> {
+  const res = await fetch(`${BASE}/autopilot/flight-session`);
+  if (!res.ok) return { available: false, running: false };
+  return res.json();
+}
+
+export async function launchFlight(): Promise<{
+  started?: boolean;
+  session?: string;
+  attach?: string;
+  error?: string;
+}> {
+  const res = await fetch(`${BASE}/autopilot/launch`, { method: "POST" });
+  return res.json();
+}
+
 export async function setFlightsReviewed(ids: string[], reviewed: boolean) {
   const res = await fetch(`${BASE}/autopilot/reviewed`, {
     method: "POST",

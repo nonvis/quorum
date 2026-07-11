@@ -28,7 +28,10 @@ function getPidFilePath(): string | null {
   }
 }
 
-// Kill stale daemon and remove PID lock on web server startup
+// Reap a genuinely stale PID lock on web server startup. A LIVE daemon is
+// never touched — it may be mid-conversation, and restarting the web server
+// must not kill in-flight work (learned the hard way 2026-07-11: the old
+// kill-if-alive behavior murdered a running brainstorm on `make web`).
 export function cleanupStaleDaemon(): void {
   const pidFile = getPidFilePath();
   if (!pidFile || !existsSync(pidFile)) return;
@@ -39,18 +42,12 @@ export function cleanupStaleDaemon(): void {
       unlinkSync(pidFile);
       return;
     }
-    // Check if process is alive
     try {
       process.kill(pid, 0);
-      // Process alive — kill it
-      console.log(`[cleanup] killing stale daemon PID ${pid}`);
-      process.kill(pid, "SIGTERM");
-      // Give it a moment, then remove PID file
-      setTimeout(() => {
-        try { unlinkSync(pidFile); } catch {}
-      }, 500);
+      // Process alive — leave it alone.
+      console.log(`[cleanup] daemon PID ${pid} is alive — leaving it running`);
     } catch {
-      // Process dead — just remove stale PID file
+      // Process dead — remove the stale PID file.
       console.log(`[cleanup] removing stale PID file (PID ${pid} dead)`);
       unlinkSync(pidFile);
     }

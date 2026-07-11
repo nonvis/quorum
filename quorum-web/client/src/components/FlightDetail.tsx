@@ -6,7 +6,8 @@ import type { Flight } from "../types";
 import { setFlightsReviewed } from "../api";
 import { stripInlineMd } from "../lib/verdict";
 import { modeOf, flightStateOf, fmtWhen, NIGHT } from "../lib/theme";
-import { ledgerGlyph } from "./FlightCard";
+import { ledgerGlyph, } from "./FlightCard";
+import { FlightLaunch } from "./FlightLaunch";
 
 export function FlightDetail({
   flight,
@@ -230,11 +231,16 @@ export function FlightDetail({
               </div>
             )}
 
-            {/* terminal command */}
+            {/* launch / resume — web (tmux) or any terminal */}
             <div>
               <div className="mb-1.5 font-mono text-[10.5px] font-bold tracking-[0.12em] text-faint">
-                {f.status === "complete" ? "FLY THE NEXT PLAN / RE-OPEN" : "LAUNCH · RESUME (terminal)"}
+                {f.status === "complete" ? "FLY THE NEXT PLAN / RE-OPEN" : "LAUNCH · RESUME"}
               </div>
+              {f.source === "checkpoint" && (
+                <div className="mb-2">
+                  <FlightLaunch onLaunched={onAction} />
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <input
                   readOnly

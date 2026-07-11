@@ -8,6 +8,7 @@ import type { Flight } from "../types";
 import { setFlightsReviewed } from "../api";
 import { stripInlineMd } from "../lib/verdict";
 import { modeOf, flightStateOf, fmtWhen, NIGHT } from "../lib/theme";
+import { FlightLaunch } from "./FlightLaunch";
 
 export function ledgerGlyph(status: string, warn: boolean, flightStatus: string): { glyph: string; color: string } {
   if (status === "done") return warn ? { glyph: "⚠", color: "#e3a45c" } : { glyph: "✓", color: "#85bd93" };
@@ -210,6 +211,9 @@ export function FlightCard({
 
       {/* triage actions */}
       <div className="mt-3 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+        {f.source === "checkpoint" && f.status !== "complete" && (
+          <FlightLaunch onLaunched={onAction} />
+        )}
         {!f.reviewed ? (
           <button
             disabled={busy}

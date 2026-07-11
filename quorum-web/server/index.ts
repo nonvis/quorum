@@ -702,10 +702,83 @@ app.get("/api/docent/history", (c) => {
 
 // -- Autopilot (second execution engine) --
 //
-// The web only PREPARES a flight (POST /plan writes SUPERVISOR.md) and REVIEWS
-// flights (GET /flights reads .quorum/autopilot/). A flight runs in a terminal
-// as an interactive `claude --agent supervisor` session — there is deliberately
-// no "launch" endpoint. See server/autopilot.ts + autopilot-protocol.md v0.3.
+// The web PREPARES a flight (POST /plan writes SUPERVISOR.md), REVIEWS flights
+// (GET /flights reads .quorum/autopilot/), and — since 2026-07-11 (operator
+// call) — LAUNCHES/RESUMES one: POST /launch starts the interactive
+// `claude --agent supervisor` session inside a detached tmux session. This
+// keeps the autopilot contract intact (Model A, interactive TUI, never
+// headless `claude -p`) — the web button is just the operator's resume hand;
+// attach from any terminal to watch or answer gates.
+
+function flightSessionName(projectPath: string): string {
+  const base = projectPath.split("/").filter(Boolean).pop() ?? "project";
+  return "qflight-" + base.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+async function tmuxHasSession(name: string): Promise<boolean> {
+  try {
+    const proc = Bun.spawn(["tmux", "has-session", "-t", `=${name}`], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    return (await proc.exited) === 0;
+  } catch {
+    return false; // tmux not installed
+  }
+}
+
+app.get("/api/autopilot/flight-session", async (c) => {
+  const state = getState();
+  if (!state.currentProject) return c.json({ available: false, running: false });
+  const tmuxOk = !!Bun.which("tmux");
+  const name = flightSessionName(state.currentProject);
+  const running = tmuxOk && (await tmuxHasSession(name));
+  return c.json({
+    available: tmuxOk && !!Bun.which("claude"),
+    running,
+    session: name,
+    attach: `tmux attach -t ${name}`,
+  });
+});
+
+app.post("/api/autopilot/launch", async (c) => {
+  const state = getState();
+  if (!state.currentProject) return c.json({ error: "No project selected" }, 400);
+  const projectPath = state.currentProject;
+  if (!Bun.which("tmux")) return c.json({ error: "tmux not installed (brew install tmux)" }, 503);
+  if (!Bun.which("claude")) return c.json({ error: "claude CLI not on PATH" }, 503);
+  if (!existsSync(join(projectPath, "SUPERVISOR.md"))) {
+    return c.json({ error: "No SUPERVISOR.md — generate a flight plan first" }, 400);
+  }
+  const name = flightSessionName(projectPath);
+  if (await tmuxHasSession(name)) {
+    return c.json({
+      error: `flight session already live — attach: tmux attach -t ${name}`,
+      running: true,
+      session: name,
+    }, 409);
+  }
+  // Interactive TUI inside detached tmux; initial prompt starts the flight
+  // without waiting for keyboard input. CLAUDECODE stripped (nesting guard).
+  const proc = Bun.spawn(
+    [
+      "tmux", "new-session", "-d", "-s", name, "-c", projectPath,
+      `env -u CLAUDECODE claude --agent supervisor "Run your startup gate and fly the flight plan."`,
+    ],
+    { stdout: "pipe", stderr: "pipe", env: { ...process.env, CLAUDECODE: undefined } },
+  );
+  const stderr = await new Response(proc.stderr).text();
+  const code = await proc.exited;
+  if (code !== 0) {
+    return c.json({ error: `tmux launch failed: ${stderr.trim().slice(-300)}` }, 500);
+  }
+  console.log(`[flight] launched tmux session ${name} for ${projectPath}`);
+  return c.json({
+    started: true,
+    session: name,
+    attach: `tmux attach -t ${name}`,
+  });
+});
 
 app.get("/api/autopilot/flights", (c) => {
   const state = getState();
