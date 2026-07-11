@@ -123,8 +123,13 @@ rule turns a weak model into a reliable librarian for your own notes.
 - **v1 — hand-rolled ReAct loop** (`loop.run_agent`). Multi-step search → read →
   answer over the text protocol. *SHIPPED.*
 - **v2 — local brain** via `--brain local`. The seam and `LocalServerBrain` are
-  *SHIPPED*; the model is *TODO* — install llama.cpp or LM Studio, serve a model,
-  point `--base-url` at it.
+  *SHIPPED*; the model rung is *PARKED* (operator call, 2026-07-11): with a paid
+  Max subscription the marginal Claude cost is zero, and Docent's speed lives in
+  the harness, not the model. Parked, not rejected — the revival triggers (a
+  metered billing regime, window pressure, offline/hard-privacy work, harness
+  hardening, LoRA distillation) are logged in the vault: Quorum/Docent/02 -
+  Design Decisions, D11. Revival: `brew install llama.cpp`, serve any
+  OpenAI-compatible model, point `--base-url` at it.
 - **v3 — optional/future.** Embeddings for hybrid retrieval (sqlite-vec /
   sentence-transformers) and/or a from-scratch inference toy. *Not built.*
 
