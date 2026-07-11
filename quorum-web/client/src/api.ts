@@ -1,4 +1,16 @@
-import type { Conversation, Task, Stats, ProjectConfig, ProjectState, Agent, BudgetInfo, AgentCost } from "./types";
+import type {
+  Conversation,
+  Task,
+  Stats,
+  ProjectConfig,
+  ProjectState,
+  Agent,
+  BudgetInfo,
+  AgentCost,
+  Flight,
+  PlanPayload,
+  PlanResult,
+} from "./types";
 
 const BASE = "/api";
 
@@ -167,6 +179,46 @@ export async function fetchAgentCosts(): Promise<AgentCost[]> {
 
 export async function fetchDaemonStatus(): Promise<{ running: boolean }> {
   const res = await fetch(`${BASE}/daemon/status`);
+  return res.json();
+}
+
+// ── autopilot (second engine) ─────────────────────────────────────────
+// The web prepares + reviews flights; a terminal runs them. See server notes.
+
+export async function fetchFlights(): Promise<Flight[]> {
+  const res = await fetch(`${BASE}/autopilot/flights`);
+  const data = await res.json();
+  return data.flights ?? [];
+}
+
+export async function submitFlightPlan(payload: PlanPayload): Promise<PlanResult> {
+  const res = await fetch(`${BASE}/autopilot/plan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+export async function setFlightsReviewed(ids: string[], reviewed: boolean) {
+  const res = await fetch(`${BASE}/autopilot/reviewed`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids, reviewed }),
+  });
+  return res.json();
+}
+
+// Web-first: `quorum knower refresh` as a button. Spawns detached on the
+// server; the passes appear in the conversations list as they run.
+export async function refreshKnowers(
+  knower?: string,
+): Promise<{ started?: boolean; note?: string; error?: string }> {
+  const res = await fetch(`${BASE}/knower/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ knower }),
+  });
   return res.json();
 }
 

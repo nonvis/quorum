@@ -71,6 +71,78 @@ export interface AgentCost {
   avg_cost: number;
 }
 
+// ── autopilot (second execution engine) ──────────────────────────────
+// Read model for a "flight" — an overnight `claude --agent supervisor` run.
+// Mirrors quorum-web/server/autopilot.ts; sourced from SUPERVISOR.md +
+// .quorum/autopilot/ (checkpoint.md, archive/*.md), per autopilot-protocol v0.3.
+
+export type FlightTaskStatus = "pending" | "in_flight" | "done";
+export type FlightStatus = "ready" | "in_flight" | "needs_you" | "complete";
+
+export interface FlightTask {
+  index: number;
+  title: string;
+  status: FlightTaskStatus;
+  warn: boolean; // done-but-with-caveat (outcome mentions a skip/failure)
+}
+
+export interface FlightOutcome {
+  heading: string;
+  taskIndex: number | null;
+  bullets: string[];
+}
+
+export interface MorningReview {
+  done: string;
+  pending: string;
+  blockedOn: string;
+  notes: string | null;
+}
+
+export interface Flight {
+  id: string; // "current" for the live checkpoint, else archive file stem
+  source: "checkpoint" | "archive" | "bundled-fixture";
+  fixture: boolean;
+  project: string;
+  name: string;
+  mode: string | null;
+  specVersion: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  status: FlightStatus;
+  tasks: FlightTask[];
+  outcomes: FlightOutcome[];
+  morningReview: MorningReview | null;
+  reviewed: boolean;
+  launchCommand: string;
+}
+
+// Composer → POST /api/autopilot/plan payload (writes SUPERVISOR.md).
+export interface PlanTask {
+  title: string;
+  agent: string;
+  slices: string[];
+  doneWhen: string;
+}
+
+export interface PlanPayload {
+  goal: string;
+  mode: "generic" | "brainstorm";
+  tasks: PlanTask[];
+  maxMajorTasks?: number | null;
+  force?: boolean;
+}
+
+export interface PlanResult {
+  success: boolean;
+  needsForce?: boolean;
+  error?: string;
+  path?: string;
+  content?: string;
+  launchCommand?: string;
+  archivedPrevious?: string | null;
+}
+
 export interface ProjectConfig {
   config_path: string;
   daemon: {

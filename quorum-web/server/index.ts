@@ -30,6 +30,7 @@ import {
 } from "./db";
 import { execDaemon, execDaemonAt, execAsk, spawnDaemon, cleanupStaleDaemon, isDaemonRunning } from "./daemon";
 import { createSSEStream } from "./sse";
+import { buildFlights, writePlan, setReviewed, type PlanPayload } from "./autopilot";
 
 const app = new Hono();
 
@@ -616,6 +617,88 @@ app.post("/api/config", async (c) => {
   } catch (e) {
     return c.json({ error: "Failed to update config" }, 500);
   }
+});
+
+// -- Autopilot (second execution engine) --
+//
+// The web only PREPARES a flight (POST /plan writes SUPERVISOR.md) and REVIEWS
+// flights (GET /flights reads .quorum/autopilot/). A flight runs in a terminal
+// as an interactive `claude --agent supervisor` session — there is deliberately
+// no "launch" endpoint. See server/autopilot.ts + autopilot-protocol.md v0.3.
+
+app.get("/api/autopilot/flights", (c) => {
+  const state = getState();
+  if (!state.currentProject) return c.json({ flights: [] });
+  return c.json({ flights: buildFlights(state.currentProject) });
+});
+
+app.post("/api/autopilot/plan", async (c) => {
+  const state = getState();
+  if (!state.currentProject) return c.json({ error: "No project selected" }, 400);
+  const body = await c.req.json<PlanPayload>();
+  if (body.mode !== "generic" && body.mode !== "brainstorm") {
+    return c.json({ error: `mode must be 'generic' or 'brainstorm' (got '${body.mode}')` }, 400);
+  }
+  const result = writePlan(state.currentProject, body);
+  if (!result.success) {
+    return c.json(result, result.needsForce ? 409 : 400);
+  }
+  return c.json(result);
+});
+
+// Morning-review "cleared" flags — persisted server-side in
+// .quorum/autopilot/reviewed.json so they survive refresh + browser switches.
+app.post("/api/autopilot/reviewed", async (c) => {
+  const state = getState();
+  if (!state.currentProject) return c.json({ error: "No project selected" }, 400);
+  const body = await c.req.json<{ ids: string[]; reviewed: boolean }>();
+  if (!Array.isArray(body.ids) || body.ids.length === 0) {
+    return c.json({ error: "ids is required" }, 400);
+  }
+  setReviewed(state.currentProject, body.ids, body.reviewed !== false);
+  return c.json({ success: true });
+});
+
+// -- Knower refresh (web-first: the post-build routine op gets a button) --
+//
+// Shells `quorum knower refresh --project <root> [--all | --knower <name>]`,
+// detached — each knower pass is a read-only brainstorm conversation that can
+// run for minutes, and it shows up in the conversations list as it runs, so
+// the dashboard itself is the progress view.
+app.post("/api/knower/refresh", async (c) => {
+  const state = getState();
+  if (!state.currentProject) return c.json({ error: "No project selected" }, 400);
+  const projectPath = getProjectConfig(state.currentProject).projectPath;
+  const daemonBin = getProjectConfig(state.currentProject).daemonBin;
+  if (!existsSync(daemonBin)) {
+    return c.json(
+      { error: `quorum daemon not built (${daemonBin}) — run \`make build\` in the quorum repo first` },
+      503,
+    );
+  }
+  const body = await c.req.json<{ knower?: string }>().catch(() => ({ knower: undefined as string | undefined }));
+  const args = ["knower", "refresh", "--project", projectPath];
+  const KNOWER_NAMES = ["cartographer", "architect", "historian", "recap"];
+  if (body.knower && body.knower !== "all") {
+    if (!KNOWER_NAMES.includes(body.knower)) {
+      return c.json({ error: `unknown knower: ${body.knower}` }, 400);
+    }
+    args.push("--knower", body.knower);
+  } else {
+    args.push("--all");
+  }
+  console.log(`[knower-refresh] spawning: ${args.join(" ")}`);
+  const proc = Bun.spawn([daemonBin, ...args], {
+    cwd: projectPath,
+    stdout: "inherit",
+    stderr: "inherit",
+    env: { ...process.env, CLAUDECODE: undefined },
+  });
+  proc.unref();
+  return c.json({
+    started: true,
+    note: "Refresh runs as read-only brainstorm conversations — watch them appear in the list.",
+  });
 });
 
 // -- SSE endpoint --
