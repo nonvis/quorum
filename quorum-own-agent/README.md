@@ -47,6 +47,8 @@ for a full `ask`.
 | `prompts.py`   | Prompt templates — the text protocol that makes the brain swappable |
 | `loop.py`      | The hand-rolled ReAct loop (`run_agent`) + the v0 `single_shot` pipeline |
 | `goldeval.py`  | Golden-set eval harness (substance + citation scoring) |
+| `bank.py`      | Transcript bank — every ask recorded per-project (v3.5 substrate) |
+| `distill.py`   | Harvest: brain-generated corpus questions → agentic runs → bank |
 
 ## The Brain seam
 
@@ -132,6 +134,12 @@ rule turns a weak model into a reliable librarian for your own notes.
   OpenAI-compatible model, point `--base-url` at it.
 - **v3 — optional/future.** Embeddings for hybrid retrieval (sqlite-vec /
   sentence-transformers) and/or a from-scratch inference toy. *Not built.*
+- **v3.5 — distillation substrate** *SHIPPED*: every ask is banked to
+  `<project>/.quorum/own-agent/transcripts/*.jsonl` (opt out: `--no-bank`;
+  stats: `bank`), and `distill -n N` harvests grounded transcripts on demand
+  (brain generates corpus-answerable questions, each runs the real loop).
+  The actual LoRA fine-tune waits on a D11 revival trigger — its output is a
+  local model. Recipe lives in the vault (Quorum/Docent/04).
 
 ## Eval
 

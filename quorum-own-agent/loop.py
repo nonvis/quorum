@@ -120,4 +120,11 @@ def single_shot(project: Path, question: str, brain, k: int = 8) -> dict:
         context=retrieval.format_hits(hits, per_chunk=1200),
         question=question,
     )
-    return {"answer": brain.complete(prompt), "hits": hits}
+    answer = brain.complete(prompt)
+    return {
+        "answer": answer,
+        "hits": hits,
+        "steps": len(hits),
+        # same field name as run_agent so the bank stores both modes uniformly
+        "transcript": prompt + "\n\n" + answer,
+    }

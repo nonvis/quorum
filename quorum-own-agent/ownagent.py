@@ -63,6 +63,8 @@ def cmd_search(args):
 
 
 def cmd_ask(args):
+    import bank  # transcript bank — v3.5 substrate
+
     project = _project(args)
     brain = _brain(args)
     log = None if args.quiet else lambda s: print(s, file=sys.stderr)
@@ -79,7 +81,42 @@ def cmd_ask(args):
             )
     except BrainError as e:
         sys.exit(f"brain error: {e}")
+    if not args.no_bank:
+        try:
+            bank.bank_record(
+                project,
+                mode="single_shot" if args.single_shot else "agentic",
+                brain=brain.name,
+                question=args.question,
+                answer=result["answer"],
+                steps=result["steps"],
+                transcript=result["transcript"],
+            )
+        except OSError as e:
+            if log:
+                log(f"(bank write failed: {e})")
     print(result["answer"])
+
+
+def cmd_distill(args):
+    import distill  # lazy — the harvest is an occasional, brain-heavy op
+
+    project = _project(args)
+    brain = _brain(args)
+    try:
+        distill.harvest(
+            project, brain, n=args.n, max_steps=args.max_steps, k=args.k,
+            log=lambda s: print(s, file=sys.stderr),
+        )
+    except (BrainError, ValueError) as e:
+        sys.exit(f"distill error: {e}")
+
+
+def cmd_bank(args):
+    import bank
+
+    stats = bank.bank_stats(_project(args))
+    print(f"{stats['records']} transcript(s) in {stats['files']} file(s) — {stats['dir']}")
 
 
 def cmd_eval(args):
@@ -131,8 +168,19 @@ def main():
     p.add_argument("--single-shot", action="store_true",
                    help="v0 pipeline: retrieve once + synthesize once (no loop)")
     p.add_argument("--quiet", action="store_true", help="print only the answer")
+    p.add_argument("--no-bank", action="store_true",
+                   help="don't record this ask's transcript in the bank")
     common(p, brainy=True)
     p.set_defaults(fn=cmd_ask)
+
+    p = sub.add_parser("distill", help="harvest N grounded transcripts into the bank")
+    p.add_argument("-n", type=int, default=12, help="questions to generate + run")
+    common(p, brainy=True)
+    p.set_defaults(fn=cmd_distill)
+
+    p = sub.add_parser("bank", help="show transcript-bank stats")
+    common(p, brainy=False)
+    p.set_defaults(fn=cmd_bank)
 
     p = sub.add_parser("eval", help="run the golden-question set")
     p.add_argument("--golden", default=None, help="path to golden .jsonl")
