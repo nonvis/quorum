@@ -135,7 +135,7 @@ export default function App() {
                 </div>
               )}
 
-              <Composer onSubmit={refresh} busy={busy} />
+              <Composer onSubmit={refresh} busy={busy} agents={agents} />
 
               <div className="mb-3.5 mt-[22px] flex items-center gap-2">
                 <span className="font-mono text-[10.5px] font-semibold tracking-[0.14em] text-faint">
