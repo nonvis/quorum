@@ -54,6 +54,12 @@ export default function App() {
     });
   }, [refresh]);
 
+  // Deep link: #c<id> (optionally #c<id>/respond) opens a conversation detail.
+  useEffect(() => {
+    const m = location.hash.match(/^#c(\d+)(\/respond)?$/);
+    if (m) setSelected({ id: Number(m[1]), respond: !!m[2] });
+  }, []);
+
   useEffect(() => {
     if (!project.current) return;
     fetchAgents().then(setAgents);

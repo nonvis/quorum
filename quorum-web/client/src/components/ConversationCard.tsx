@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import type { Conversation, Task } from "../types";
 import { fetchConversation, updateMaxRounds } from "../api";
 import { lastHumanGateMessage } from "../lib/segments";
+import { deriveVerdict, VERDICT_COLOR } from "../lib/verdict";
 import {
   modeOf,
   stateOf,
@@ -50,6 +51,12 @@ export function ConversationCard({
   const needsYou = c.state === "waiting_for_human";
   const gatePreview = needsYou ? lastHumanGateMessage(tasks) ?? c.paused_reason : null;
 
+  // Latest verdict — one glanceable line for the last settled task, so the
+  // board reads without opening the detail. Skipped while the gate box is
+  // showing (it already carries the ask).
+  const lastSettled = [...tasks].reverse().find((t) => t.status === "done" || t.status === "failed");
+  const latestVerdict = !needsYou && lastSettled ? deriveVerdict(lastSettled) : null;
+
   const resume10 = async () => {
     await updateMaxRounds(c.id, c.max_rounds + 10);
     onAction();
@@ -96,6 +103,24 @@ export function ConversationCard({
       <p className="mt-[9px] text-[16px] font-semibold leading-[1.4] text-ink [text-wrap:pretty]">
         {c.goal}
       </p>
+
+      {latestVerdict && latestVerdict.kind !== "none" && (
+        <div className="mt-[7px] flex items-baseline gap-2">
+          <span
+            className="flex-shrink-0 font-mono text-[10px] font-bold"
+            style={{ color: VERDICT_COLOR[latestVerdict.kind] }}
+          >
+            {latestVerdict.kind === "error" ? "✕" : latestVerdict.kind === "handoff" ? "→" : latestVerdict.kind === "vault" ? "▤" : "▸"}
+          </span>
+          <span
+            className="line-clamp-1 text-[12.5px] leading-[1.5]"
+            style={{ color: latestVerdict.kind === "error" ? "#c98b81" : "#9b94a3" }}
+            title={latestVerdict.text}
+          >
+            {latestVerdict.text}
+          </span>
+        </div>
+      )}
 
       {tasks.length > 0 && (
         <div className="mt-[11px] flex flex-wrap items-center gap-2.5">

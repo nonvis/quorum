@@ -25,6 +25,9 @@ export interface Task {
   status: string;
   prompt: string;
   result: string | null;
+  // Hook for a real daemon-emitted summary. Not in the DB yet — when the
+  // column lands, lib/verdict.ts prefers it over first-sentence derivation.
+  summary?: string | null;
   token_in: number | null;
   token_out: number | null;
   cost: number | null;

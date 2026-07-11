@@ -4,6 +4,8 @@ import remarkGfm from "remark-gfm";
 import type { Conversation, Task, Agent } from "../types";
 import { fetchConversation, respondToLeader, updateMaxRounds } from "../api";
 import { parseSegments, extractHumanResponse, lastHumanGateMessage } from "../lib/segments";
+import { deriveVerdict, VERDICT_COLOR } from "../lib/verdict";
+import { DiffBlock } from "./DiffBlock";
 import {
   modeOf,
   stateOf,
@@ -43,17 +45,16 @@ function TaskBody({ task }: { task: Task }) {
             </div>
           </div>
         ) : (
+          // A vault write is a CHANGE — render it as a diff, not prose.
           <div key={i} className="overflow-hidden rounded-xl" style={{ border: "1px solid rgba(167,147,230,0.3)" }}>
             <div
               className="flex items-center gap-2 px-3 py-1.5 font-mono text-[10.5px] tracking-[0.06em]"
               style={{ background: "rgba(167,147,230,0.09)" }}
             >
-              <span style={{ color: "#a793e6" }}>▤ VAULT</span>
+              <span style={{ color: "#a793e6" }}>▤ VAULT WRITE</span>
               <span className="break-all" style={{ color: "#c8bbef" }}>{seg.path}</span>
             </div>
-            <div className="md-content max-h-96 overflow-auto bg-rail px-3 py-2.5">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{seg.content}</ReactMarkdown>
-            </div>
+            <DiffBlock text={seg.content} />
           </div>
         )
       )}
@@ -69,25 +70,27 @@ function TaskBody({ task }: { task: Task }) {
   );
 }
 
+// The canonical verdict-first task unit: status dot + agent + role + a
+// one-line VERDICT always visible; full prose collapsed by default —
+// not-expanding is the happy path.
 function TaskRow({
   task,
   isLast,
   role,
   now,
-  defaultCollapsed,
 }: {
   task: Task;
   isLast: boolean;
   role: string;
   now: number;
-  defaultCollapsed: boolean;
 }) {
-  const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  const [expanded, setExpanded] = useState(false);
   const working = task.status === "active";
   const dotBg =
     task.status === "done" ? "#85bd93" : working ? "#8fa9e8" : task.status === "failed" ? "#c98b81" : "#4a4454";
   const hasBody = !!task.result || !!task.error || !!extractHumanResponse(task.prompt);
   const liveCost = working ? "" : task.cost != null ? fmtUsd(task.cost) : "";
+  const verdict = deriveVerdict(task);
 
   return (
     <div className="relative mt-4 pl-6">
@@ -97,24 +100,43 @@ function TaskRow({
         style={{ background: dotBg }}
       />
       <div
-        onClick={() => hasBody && setCollapsed((v) => !v)}
-        className={`-mx-1 flex items-center gap-2.5 rounded-md px-1 py-0.5 ${hasBody ? "cursor-pointer select-none hover:bg-chip" : ""}`}
+        onClick={() => hasBody && setExpanded((v) => !v)}
+        className={`-mx-1 rounded-md px-1 py-0.5 ${hasBody ? "cursor-pointer select-none hover:bg-chip" : ""}`}
       >
-        <span className="w-2.5 text-[10px] text-faint">{hasBody ? (collapsed ? "▸" : "▾") : ""}</span>
-        <span className="font-mono text-[13px] font-semibold text-ink">{task.agent}</span>
-        <span
-          className="rounded-full border border-line-soft px-[7px] py-px text-[10.5px]"
-          style={{ color: roleColor(role) }}
-        >
-          {role}
-        </span>
-        <span className="flex-1" />
-        {task.token_in != null && (
-          <span className="font-mono text-[11px] text-faint">
-            {ktok(task.token_in)} → {task.token_out != null ? ktok(task.token_out) : "…"}
+        <div className="flex items-center gap-2.5">
+          <span className="w-2.5 text-[10px] text-faint">{hasBody ? (expanded ? "▾" : "▸") : ""}</span>
+          <span className="font-mono text-[13px] font-semibold text-ink">{task.agent}</span>
+          <span
+            className="rounded-full border border-line-soft px-[7px] py-px text-[10.5px]"
+            style={{ color: roleColor(role) }}
+          >
+            {role}
           </span>
+          <span className="flex-1" />
+          {task.token_in != null && (
+            <span className="font-mono text-[11px] text-faint">
+              {ktok(task.token_in)} → {task.token_out != null ? ktok(task.token_out) : "…"}
+            </span>
+          )}
+          {liveCost && <span className="font-mono text-[11.5px] text-muted">{liveCost}</span>}
+        </div>
+        {verdict.kind !== "none" && (
+          <div className="mt-1 flex items-baseline gap-2 pl-[22px]">
+            <span
+              className="flex-shrink-0 font-mono text-[10px] font-bold tracking-[0.08em]"
+              style={{ color: VERDICT_COLOR[verdict.kind] }}
+            >
+              {verdict.kind === "error" ? "✕" : verdict.kind === "handoff" ? "→" : verdict.kind === "vault" ? "▤" : "▸"}
+            </span>
+            <span
+              className="line-clamp-1 text-[12.5px] leading-[1.5]"
+              style={{ color: verdict.kind === "error" ? "#c98b81" : "#b9b2ba" }}
+              title={verdict.text}
+            >
+              {verdict.text}
+            </span>
+          </div>
         )}
-        {liveCost && <span className="font-mono text-[11.5px] text-muted">{liveCost}</span>}
       </div>
 
       {working && (
@@ -130,7 +152,7 @@ function TaskRow({
         </div>
       )}
 
-      {!collapsed && hasBody && <TaskBody task={task} />}
+      {expanded && hasBody && <TaskBody task={task} />}
     </div>
   );
 }
@@ -157,8 +179,14 @@ export function ConversationDetail({
   const respondRef = useRef<HTMLTextAreaElement>(null);
 
   const roleFor = useMemo(() => {
-    const map = new Map(agents.map((a) => [a.name, a.role] as const));
-    return (name: string) => map.get(name) ?? "doer";
+    // Tasks reference agents by id ("leader") while display names may differ
+    // ("Leader") — index both, case-insensitively.
+    const map = new Map<string, string>();
+    for (const a of agents) {
+      map.set(a.id.toLowerCase(), a.role);
+      map.set(a.name.toLowerCase(), a.role);
+    }
+    return (name: string) => map.get(name.toLowerCase()) ?? "doer";
   }, [agents]);
 
   const load = () =>
@@ -303,7 +331,6 @@ export function ConversationDetail({
                     isLast={i === n - 1}
                     role={roleFor(t.agent)}
                     now={now}
-                    defaultCollapsed={t.status === "done" && i < n - 2}
                   />
                 ))}
               </div>
