@@ -676,6 +676,30 @@ app.post("/api/docent/ask", async (c) => {
   return c.json({ answer: stdout.trim(), steps });
 });
 
+// Docent history — the transcript bank (D12) doubles as the panel's memory:
+// every ask is already banked per-project, so history is a read, not a store.
+app.get("/api/docent/history", (c) => {
+  const state = getState();
+  if (!state.currentProject) return c.json([]);
+  const dir = join(state.currentProject, ".quorum", "own-agent", "transcripts");
+  if (!existsSync(dir)) return c.json([]);
+  const limit = Math.min(50, parseInt(c.req.query("limit") ?? "20", 10) || 20);
+  const records: { ts: string; mode: string; question: string; answer: string; steps: number }[] = [];
+  const files = readdirSync(dir).filter((f) => f.endsWith(".jsonl")).sort().reverse();
+  for (const f of files) {
+    if (records.length >= limit) break;
+    const lines = readFileSync(join(dir, f), "utf-8").split("\n").filter(Boolean).reverse();
+    for (const line of lines) {
+      if (records.length >= limit) break;
+      try {
+        const r = JSON.parse(line);
+        records.push({ ts: r.ts, mode: r.mode, question: r.question, answer: r.answer, steps: r.steps });
+      } catch {}
+    }
+  }
+  return c.json(records);
+});
+
 // -- Autopilot (second execution engine) --
 //
 // The web only PREPARES a flight (POST /plan writes SUPERVISOR.md) and REVIEWS

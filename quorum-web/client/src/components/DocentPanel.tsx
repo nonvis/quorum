@@ -2,10 +2,10 @@
 // live project over minutes, Docent answers from the accumulated knower vaults
 // in seconds, with per-claim [note path] citations or an explicit refusal.
 // Backed by quorum-own-agent/ (see its README + the vault's Quorum/Docent notes).
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { askDocent } from "../api";
+import { askDocent, fetchDocentHistory, type DocentHistoryItem } from "../api";
 
 export function DocentPanel({ onClose }: { onClose: () => void }) {
   const [question, setQuestion] = useState("");
@@ -14,6 +14,20 @@ export function DocentPanel({ onClose }: { onClose: () => void }) {
   const [answer, setAnswer] = useState<string | null>(null);
   const [steps, setSteps] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // Answers don't evaporate: the transcript bank doubles as panel memory.
+  const [history, setHistory] = useState<DocentHistoryItem[]>([]);
+
+  useEffect(() => {
+    fetchDocentHistory().then(setHistory);
+  }, []);
+
+  const showHistoryItem = (h: DocentHistoryItem) => {
+    if (loading) return;
+    setAsked(h.question);
+    setAnswer(h.answer);
+    setSteps([]);
+    setError(null);
+  };
 
   const run = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,6 +44,7 @@ export function DocentPanel({ onClose }: { onClose: () => void }) {
       else {
         setAnswer(res.answer ?? "");
         setSteps(res.steps ?? []);
+        fetchDocentHistory().then(setHistory);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "request failed");
@@ -124,6 +139,34 @@ export function DocentPanel({ onClose }: { onClose: () => void }) {
               things live. Every claim comes cited with its note path; if the
               knowledge base doesn't cover it, Docent says so.
             </p>
+          )}
+
+          {history.length > 0 && (
+            <div className="mt-5 border-t border-line pt-3">
+              <div className="mb-2 font-mono text-[10.5px] font-bold tracking-[0.12em] text-faint">
+                RECENT · {history.length}
+              </div>
+              <div className="flex flex-col gap-1">
+                {history.map((h, i) => (
+                  <button
+                    key={`${h.ts}-${i}`}
+                    onClick={() => showHistoryItem(h)}
+                    disabled={loading}
+                    className={`flex items-baseline gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-chip disabled:opacity-50 ${
+                      asked === h.question ? "bg-chip" : ""
+                    }`}
+                  >
+                    <span className="flex-shrink-0 font-mono text-[10.5px] text-dim">
+                      {h.ts.slice(5, 16).replace("T", " ")}
+                    </span>
+                    <span className="line-clamp-1 flex-1 text-[12.5px] text-muted">{h.question}</span>
+                    <span className="flex-shrink-0 font-mono text-[10px] text-dim">
+                      {h.mode === "agentic" ? `${h.steps} step${h.steps === 1 ? "" : "s"}` : "1-shot"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       </div>

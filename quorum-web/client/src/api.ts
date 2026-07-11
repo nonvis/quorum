@@ -205,6 +205,21 @@ export async function askDocent(
   return res.json();
 }
 
+export interface DocentHistoryItem {
+  ts: string;
+  mode: string;
+  question: string;
+  answer: string;
+  steps: number;
+}
+
+// Past Docent asks — read back from the per-project transcript bank.
+export async function fetchDocentHistory(limit = 20): Promise<DocentHistoryItem[]> {
+  const res = await fetch(`${BASE}/docent/history?limit=${limit}`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
 // ── autopilot (second engine) ─────────────────────────────────────────
 // The web prepares + reviews flights; a terminal runs them. See server notes.
 
