@@ -627,6 +627,55 @@ app.post("/api/config", async (c) => {
   }
 });
 
+// -- Docent (our own knowledge agent) --
+//
+// Shells quorum-own-agent/ownagent.py against the active project: grounded,
+// cited answers from the knower vaults in seconds (vs recap's minutes). The
+// agent's ClaudeCLIBrain strips CLAUDECODE itself and tracks the operator's
+// CLI default model. See quorum-own-agent/README.md.
+const DOCENT_DIR = resolve(repoRoot, "quorum-own-agent");
+const DOCENT_TIMEOUT_MS = 4 * 60 * 1000;
+
+app.post("/api/docent/ask", async (c) => {
+  const state = getState();
+  if (!state.currentProject) return c.json({ error: "No project selected" }, 400);
+  const body = await c.req.json<{ question: string; singleShot?: boolean }>();
+  if (!body.question?.trim()) return c.json({ error: "question is required" }, 400);
+
+  // no --quiet: stdout = answer only, stderr = the step log we surface below
+  const args = ["ownagent.py", "ask", "--project", state.currentProject];
+  if (body.singleShot) args.push("--single-shot");
+  args.push(body.question.trim());
+
+  const proc = Bun.spawn(["python3", ...args], {
+    cwd: DOCENT_DIR,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try { proc.kill(); } catch {}
+  }, DOCENT_TIMEOUT_MS);
+
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  const exitCode = await proc.exited;
+  clearTimeout(timer);
+
+  if (timedOut) return c.json({ error: `docent timed out after ${DOCENT_TIMEOUT_MS / 60000} min` }, 500);
+  if (exitCode !== 0) {
+    return c.json({ error: stderr.trim().split("\n").pop() || "docent failed" }, 500);
+  }
+  // stderr carries the step log ("[step 1] ACTION: search(…)") — surface it so
+  // the panel can show how the answer was reached.
+  const steps = stderr
+    .split("\n")
+    .filter((l) => l.includes("[step"))
+    .map((l) => l.trim());
+  return c.json({ answer: stdout.trim(), steps });
+});
+
 // -- Autopilot (second execution engine) --
 //
 // The web only PREPARES a flight (POST /plan writes SUPERVISOR.md) and REVIEWS

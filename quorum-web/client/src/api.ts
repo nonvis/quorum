@@ -190,6 +190,21 @@ export async function fetchDaemonStatus(): Promise<{ running: boolean }> {
   return res.json();
 }
 
+// Docent — our own knowledge agent (quorum-own-agent/): grounded, cited
+// answers from the knower vaults in seconds. Multi-call agentic loop on the
+// server; the caller shows a loading state.
+export async function askDocent(
+  question: string,
+  singleShot = false,
+): Promise<{ answer?: string; steps?: string[]; error?: string }> {
+  const res = await fetch(`${BASE}/docent/ask`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, singleShot }),
+  });
+  return res.json();
+}
+
 // ── autopilot (second engine) ─────────────────────────────────────────
 // The web prepares + reviews flights; a terminal runs them. See server notes.
 

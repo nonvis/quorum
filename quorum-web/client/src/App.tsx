@@ -19,6 +19,7 @@ import { FlightDetail } from "./components/FlightDetail";
 import { ConfigPanel } from "./components/ConfigPanel";
 import { BudgetSheet } from "./components/BudgetSheet";
 import { RecapPanel } from "./components/RecapPanel";
+import { DocentPanel } from "./components/DocentPanel";
 import { AgentContextEditor } from "./components/AgentContextEditor";
 
 type Filter = "all" | "needs" | "running" | "done" | "flights";
@@ -82,6 +83,7 @@ export default function App() {
   const [showConfig, setShowConfig] = useState(false);
   const [showBudget, setShowBudget] = useState(false);
   const [showRecap, setShowRecap] = useState(false);
+  const [showDocent, setShowDocent] = useState(() => location.hash === "#docent");
 
   const refresh = useCallback(async () => {
     const [convs, daemon, fls] = await Promise.all([
@@ -242,9 +244,17 @@ export default function App() {
                 <button
                   onClick={() => setShowRecap(true)}
                   className="rounded-full border border-line-soft bg-transparent px-3 py-1 text-[11.5px] text-muted hover:border-line-dash hover:text-ink"
-                  title="On-demand recap (quorum ask --agent recap)"
+                  title="On-demand recap (quorum ask --agent recap) — minutes, re-reads the live project"
                 >
                   what's going on?
+                </button>
+                <button
+                  onClick={() => setShowDocent(true)}
+                  className="rounded-full border px-3 py-1 text-[11.5px] transition-colors"
+                  style={{ borderColor: "rgba(99,179,166,0.35)", color: "#63b3a6" }}
+                  title="Docent — grounded, cited answers from the knower vaults in seconds"
+                >
+                  ask docent
                 </button>
                 <span className="flex-1" />
                 {filterDefs.map((f) => {
@@ -322,6 +332,7 @@ export default function App() {
       )}
       {showBudget && <BudgetSheet onClose={() => setShowBudget(false)} />}
       {showRecap && <RecapPanel onClose={() => setShowRecap(false)} />}
+      {showDocent && <DocentPanel onClose={() => setShowDocent(false)} />}
       {showConfig && <ConfigPanel onClose={() => setShowConfig(false)} />}
     </div>
   );
