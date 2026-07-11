@@ -25,6 +25,11 @@ function clip(s: string): string {
 }
 
 // Strip inline markdown so the verdict reads as plain text on one line.
+// Exported for other one-line renderings (flight outcome bullets).
+export function stripInlineMd(s: string): string {
+  return plain(s);
+}
+
 function plain(s: string): string {
   return s
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")

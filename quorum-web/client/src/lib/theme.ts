@@ -64,6 +64,31 @@ export function stateOf(state: string): StateStyle {
   return STATE[state] ?? { label: state.replace(/_/g, " "), color: "#8a8390", bg: "rgba(138,131,144,0.12)" };
 }
 
+// ── autopilot engine ──────────────────────────────────────────────────
+// The engine accent (night blue) — deliberately NOT a mode color: engine and
+// write-surface are orthogonal axes.
+export const NIGHT = "#8fa9e8";
+
+export const FLIGHT_STATE: Record<string, StateStyle> = {
+  ready: { label: "ready", color: "#b3aa98", bg: "rgba(179,170,152,0.12)" },
+  in_flight: { label: "in flight", color: "#8fa9e8", bg: "rgba(143,169,232,0.12)" },
+  needs_you: { label: "needs you", color: "#191310", bg: "#e3a45c" },
+  complete: { label: "landed", color: "#85bd93", bg: "rgba(133,189,147,0.12)" },
+};
+
+export function flightStateOf(status: string): StateStyle {
+  return FLIGHT_STATE[status] ?? { label: status, color: "#8a8390", bg: "rgba(138,131,144,0.12)" };
+}
+
+// Compact "MM-DD HH:MM" for flight ISO-8601 UTC timestamps, in local time.
+export function fmtWhen(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 export const ROLE: Record<string, string> = {
   leader: "#c79be8",
   thinker: "#8fa9e8",

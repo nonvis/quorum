@@ -1,8 +1,80 @@
 import { useState, useEffect } from "react";
 import type { Agent, BudgetInfo } from "../types";
-import { fetchBudget } from "../api";
+import { fetchBudget, refreshKnowers } from "../api";
 import { roleColor, MODE } from "../lib/theme";
 import { AgentCreateForm } from "./AgentCreateForm";
+
+// Web-first: `quorum knower refresh` gets a button (the post-build routine
+// op). It spends tokens — four read-only brainstorm scans — so it asks for
+// one confirming click, then the passes show up in the conversations list.
+function KnowerRefresh() {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
+
+  const go = async () => {
+    setBusy(true);
+    try {
+      const res = await refreshKnowers();
+      if (res.started) {
+        setNote({ text: res.note ?? "refresh started", error: false });
+      } else {
+        setNote({ text: res.error ?? "refresh failed", error: true });
+      }
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+    }
+  };
+
+  return (
+    <div className="mt-1.5">
+      {!confirming ? (
+        <button
+          onClick={() => {
+            setNote(null);
+            setConfirming(true);
+          }}
+          className="w-full rounded-[10px] border border-dashed border-line-dash px-2.5 py-1.5 text-left text-[11.5px] text-muted hover:text-ink"
+          title="re-survey the codebase into the knower vaults (quorum knower refresh --all)"
+        >
+          ↻ Refresh knowers
+        </button>
+      ) : (
+        <div className="rounded-[10px] border border-line-soft px-2.5 py-2">
+          <p className="mb-1.5 text-[11px] leading-[1.5] text-muted">
+            Runs read-only scans for every knower — spends tokens.
+          </p>
+          <div className="flex gap-1.5">
+            <button
+              onClick={go}
+              disabled={busy}
+              className="rounded-md px-2.5 py-1 text-[11.5px] font-bold text-[#171319] disabled:opacity-45"
+              style={{ background: "#63b3a6" }}
+            >
+              {busy ? "…" : "Go"}
+            </button>
+            <button
+              onClick={() => setConfirming(false)}
+              disabled={busy}
+              className="rounded-md border border-line-soft px-2.5 py-1 text-[11.5px] text-muted"
+            >
+              cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {note && (
+        <p
+          className="mt-1.5 px-1 text-[10.5px] leading-[1.5]"
+          style={{ color: note.error ? "#c98b81" : "#85bd93" }}
+        >
+          {note.text}
+        </p>
+      )}
+    </div>
+  );
+}
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -80,6 +152,7 @@ export function Sidebar({
         </div>
         <div className="mt-2 px-1">
           <AgentCreateForm onCreated={onAgentCreated} />
+          <KnowerRefresh />
         </div>
       </div>
 

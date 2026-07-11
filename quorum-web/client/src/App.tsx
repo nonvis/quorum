@@ -1,18 +1,27 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import type { Conversation, ProjectState, Agent } from "./types";
-import { fetchConversations, fetchProjects, fetchAgents, fetchDaemonStatus } from "./api";
+import type { Conversation, ProjectState, Agent, Flight } from "./types";
+import {
+  fetchConversations,
+  fetchProjects,
+  fetchAgents,
+  fetchDaemonStatus,
+  fetchFlights,
+  setFlightsReviewed,
+} from "./api";
 import { useSSE } from "./hooks/useSSE";
 import { TopBar } from "./components/TopBar";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
 import { ConversationCard } from "./components/ConversationCard";
 import { ConversationDetail } from "./components/ConversationDetail";
+import { FlightCard } from "./components/FlightCard";
+import { FlightDetail } from "./components/FlightDetail";
 import { ConfigPanel } from "./components/ConfigPanel";
 import { BudgetSheet } from "./components/BudgetSheet";
 import { RecapPanel } from "./components/RecapPanel";
 import { AgentContextEditor } from "./components/AgentContextEditor";
 
-type Filter = "all" | "needs" | "running" | "done";
+type Filter = "all" | "needs" | "running" | "done" | "flights";
 
 const STATE_ORDER: Record<string, number> = {
   waiting_for_human: 0,
@@ -27,24 +36,62 @@ const FILTER_FNS: Record<Filter, (c: Conversation) => boolean> = {
   needs: (c) => c.state === "waiting_for_human",
   running: (c) => c.state === "active",
   done: (c) => c.state === "done" || c.state === "closed",
+  flights: () => false, // flights filter shows the flights band only
 };
+
+const FLIGHT_ORDER: Record<string, number> = {
+  needs_you: 0,
+  in_flight: 1,
+  ready: 2,
+  complete: 3,
+};
+
+// Which flights show under each filter. The board is triage-first: "all"
+// hides cleared flights; "flights" is the engine view showing everything
+// (cleared ones dimmed).
+function visibleFlightsFor(filter: Filter, flights: Flight[]): Flight[] {
+  const sorted = [...flights].sort(
+    (a, b) =>
+      (FLIGHT_ORDER[a.status] ?? 9) - (FLIGHT_ORDER[b.status] ?? 9) ||
+      (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""),
+  );
+  switch (filter) {
+    case "all":
+      return sorted.filter((f) => !f.reviewed);
+    case "flights":
+      return sorted;
+    case "needs":
+      return sorted.filter((f) => f.status === "needs_you" && !f.reviewed);
+    case "running":
+      return sorted.filter((f) => f.status === "in_flight" && !f.reviewed);
+    case "done":
+      return sorted.filter((f) => f.status === "complete");
+  }
+}
 
 export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [flights, setFlights] = useState<Flight[]>([]);
   const [project, setProject] = useState<ProjectState>({ current: null, recent: [] });
   const [agents, setAgents] = useState<Agent[]>([]);
   const [daemonRunning, setDaemonRunning] = useState(true);
   const [filter, setFilter] = useState<Filter>("all");
   const [selected, setSelected] = useState<{ id: number; respond?: boolean } | null>(null);
+  const [selectedFlight, setSelectedFlight] = useState<string | null>(null);
   const [editingAgent, setEditingAgent] = useState<string | null>(null);
   const [showConfig, setShowConfig] = useState(false);
   const [showBudget, setShowBudget] = useState(false);
   const [showRecap, setShowRecap] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [convs, daemon] = await Promise.all([fetchConversations(), fetchDaemonStatus()]);
+    const [convs, daemon, fls] = await Promise.all([
+      fetchConversations(),
+      fetchDaemonStatus(),
+      fetchFlights(),
+    ]);
     setConversations(convs);
     setDaemonRunning(daemon.running);
+    setFlights(fls);
   }, []);
 
   useEffect(() => {
@@ -54,10 +101,12 @@ export default function App() {
     });
   }, [refresh]);
 
-  // Deep link: #c<id> (optionally #c<id>/respond) opens a conversation detail.
+  // Deep links: #c<id>[/respond] opens a conversation; #f:<id> opens a flight.
   useEffect(() => {
     const m = location.hash.match(/^#c(\d+)(\/respond)?$/);
     if (m) setSelected({ id: Number(m[1]), respond: !!m[2] });
+    const fm = location.hash.match(/^#f:(.+)$/);
+    if (fm) setSelectedFlight(decodeURIComponent(fm[1]));
   }, []);
 
   useEffect(() => {
@@ -85,22 +134,35 @@ export default function App() {
   };
 
   const busy = conversations.some((c) => c.state === "active" || c.state === "waiting_for_human");
-  const needsCount = conversations.filter((c) => c.state === "waiting_for_human").length;
+  const flightNeeds = flights.filter((f) => f.status === "needs_you" && !f.reviewed).length;
+  const needsCount = conversations.filter((c) => c.state === "waiting_for_human").length + flightNeeds;
   const runningCount = conversations.filter((c) => c.state === "active").length;
   const doneCount = conversations.filter((c) => c.state === "done" || c.state === "closed").length;
-  const daemonStale = !daemonRunning && (needsCount > 0 || runningCount > 0);
+  const daemonStale = !daemonRunning && (needsCount - flightNeeds > 0 || runningCount > 0);
 
   const sorted = [...conversations].sort(
     (a, b) => (STATE_ORDER[a.state] ?? 9) - (STATE_ORDER[b.state] ?? 9) || b.id - a.id,
   );
-  const visible = sorted.filter(FILTER_FNS[filter]);
+  const visible = filter === "flights" ? [] : sorted.filter(FILTER_FNS[filter]);
+  const visibleFlights = visibleFlightsFor(filter, flights);
+  // Batch-clear targets: landed flights still on the board.
+  const clearable = visibleFlights.filter((f) => f.status === "complete" && !f.reviewed);
+
+  const clearAll = async () => {
+    if (clearable.length === 0) return;
+    await setFlightsReviewed(clearable.map((f) => f.id), true);
+    refresh();
+  };
 
   const filterDefs: { id: Filter; label: string; count: number }[] = [
-    { id: "all", label: "all", count: conversations.length },
+    { id: "all", label: "all", count: conversations.length + flights.filter((f) => !f.reviewed).length },
     { id: "needs", label: "needs you", count: needsCount },
     { id: "running", label: "running", count: runningCount },
     { id: "done", label: "done", count: doneCount },
+    { id: "flights", label: "✈ flights", count: flights.filter((f) => !f.reviewed).length },
   ];
+
+  const openFlight = selectedFlight ? flights.find((f) => f.id === selectedFlight) : null;
 
   return (
     <div className="flex min-h-screen flex-col bg-base text-ink">
@@ -136,6 +198,42 @@ export default function App() {
               )}
 
               <Composer onSubmit={refresh} busy={busy} agents={agents} />
+
+              {/* flights band — the morning review: glance → verify → clear */}
+              {visibleFlights.length > 0 && (
+                <>
+                  <div className="mb-3 mt-[22px] flex items-center gap-2">
+                    <span className="font-mono text-[10.5px] font-semibold tracking-[0.14em] text-faint">
+                      FLIGHTS · MORNING REVIEW
+                    </span>
+                    <span className="flex-1" />
+                    {clearable.length >= 2 && (
+                      <button
+                        onClick={clearAll}
+                        className="rounded-full border px-3 py-1 text-[11.5px] font-semibold transition-colors"
+                        style={{
+                          borderColor: "rgba(133,189,147,0.4)",
+                          color: "#85bd93",
+                          background: "rgba(133,189,147,0.06)",
+                        }}
+                        title="mark every landed flight as reviewed"
+                      >
+                        ✓ Clear all reviewed · {clearable.length}
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-3">
+                    {visibleFlights.map((f) => (
+                      <FlightCard key={f.id} flight={f} onOpen={setSelectedFlight} onAction={refresh} />
+                    ))}
+                  </div>
+                </>
+              )}
+              {filter === "flights" && visibleFlights.length === 0 && (
+                <p className="mx-1 mt-5 text-[13px] text-faint">
+                  No flights yet — switch the composer to “✈ queue a flight” to plan one.
+                </p>
+              )}
 
               <div className="mb-3.5 mt-[22px] flex items-center gap-2">
                 <span className="font-mono text-[10.5px] font-semibold tracking-[0.14em] text-faint">
@@ -178,7 +276,7 @@ export default function App() {
                     onAction={refresh}
                   />
                 ))}
-                {visible.length === 0 && (
+                {visible.length === 0 && filter !== "flights" && (
                   <p className="mx-1 my-2 text-[13px] text-faint">
                     {conversations.length === 0
                       ? "No conversations yet. Set a mode and a goal above to start."
@@ -205,6 +303,13 @@ export default function App() {
           initialRespond={selected.respond}
           agents={agents}
           onClose={() => setSelected(null)}
+          onAction={refresh}
+        />
+      )}
+      {openFlight && (
+        <FlightDetail
+          flight={openFlight}
+          onClose={() => setSelectedFlight(null)}
           onAction={refresh}
         />
       )}
