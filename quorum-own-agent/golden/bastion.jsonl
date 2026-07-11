@@ -1,0 +1,12 @@
+// Golden question bank for the `bastion` project — Bastion Samsung sweeping workspace.
+// Each fact + citation was verified against the knower notes under
+// /Users/sangsoo/projects/bastion/.quorum/vaults/{architect,historian,...}/knowledge/.
+// expect_any: lowercase substrings, any-match; expect_cite: note filename fragments, any-match.
+{"id": "address-scheme", "q": "How are deterministic deposit addresses derived across the chains?", "expect_any": ["keccak256", "salt", "nonce"], "expect_cite": ["ref-architecture-map.md"]}
+{"id": "confirmation-number", "q": "Do we need set-tx-confirmation-number on the Sui side?", "expect_any": ["stub", "no-op", "does not need"], "expect_cite": ["ref-sui-tx-confirmation-number-verdict.md"]}
+{"id": "shared-shape", "q": "What is the shared processing shape (pipeline) across chains?", "expect_any": ["kafka", "detect", "pipeline"], "expect_cite": ["ref-architecture-map.md"]}
+{"id": "evm-executor-location", "q": "Where do the EVM and Solana sweep executors live?", "expect_any": ["outside", "external", "wallet-eth"], "expect_cite": ["ref-architecture-map.md"]}
+{"id": "sui-listener-pivot", "q": "What happened to the sui-listener's separate TypeScript publisher?", "expect_any": ["removed", "rust", "bas-99"], "expect_cite": ["ref-decisions.md"]}
+{"id": "sui-executor-state", "q": "Is the Sui sweep executor (sweeping-sui) built as an executor yet?", "expect_any": ["unbuilt", "not an executor", "stub"], "expect_cite": ["ref-architecture-map.md"]}
+{"id": "batchtransfer", "q": "Why was batchTransferFrom removed from the EVM factory?", "expect_any": ["audit", "arbitrary"], "expect_cite": ["ref-decisions.md", "ref-architecture-map.md"]}
+{"id": "role-hierarchy", "q": "What is the admin role hierarchy in the Sui sweep contracts?", "expect_any": ["sweeper", "super_admin"], "expect_cite": ["ref-decisions.md"]}
