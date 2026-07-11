@@ -1,14 +1,10 @@
 import { useState } from "react";
 import { createAgent } from "../api";
+import { ROLE } from "../lib/theme";
 
 const ROLES = ["leader", "thinker", "doer", "evaluator"] as const;
 
-const ROLE_COLORS: Record<string, { active: string; inactive: string }> = {
-  leader:    { active: "bg-purple-600 text-white", inactive: "bg-zinc-800 text-purple-400 hover:bg-zinc-700" },
-  thinker:   { active: "bg-blue-600 text-white",   inactive: "bg-zinc-800 text-blue-400 hover:bg-zinc-700" },
-  doer:      { active: "bg-green-600 text-white",  inactive: "bg-zinc-800 text-green-400 hover:bg-zinc-700" },
-  evaluator: { active: "bg-indigo-600 text-white", inactive: "bg-zinc-800 text-indigo-400 hover:bg-zinc-700" },
-};
+const BRAND = "#e3a45c"; // read-only knower / specialty pills
 
 // Read-only "knower" specialties — thinker + a knower SKILL, run in brainstorm
 // mode. The server (POST /api/agents) maps each to thinker + the canonical SKILL
@@ -86,7 +82,7 @@ export function AgentCreateForm({ onCreated }: { onCreated: () => void }) {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="text-xs text-zinc-500 hover:text-zinc-300 px-2 py-1 border border-dashed border-zinc-700 rounded hover:border-zinc-500"
+        className="text-xs text-muted hover:text-ink px-2 py-1 border border-dashed border-line-soft rounded hover:border-line-dash"
       >
         + Add Agent
       </button>
@@ -94,20 +90,25 @@ export function AgentCreateForm({ onCreated }: { onCreated: () => void }) {
   }
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 space-y-3">
+    <div className="bg-panel border border-line rounded-lg p-4 space-y-3">
       <div>
-        <label className="text-xs text-zinc-500 block mb-1">Role</label>
+        <label className="text-xs text-faint block mb-1">Role</label>
         <div className="flex items-center gap-1 flex-wrap">
           {ROLES.map((r) => {
-            const colors = ROLE_COLORS[r];
+            const c = ROLE[r];
             const isActive = !specialty && role === r;
             return (
               <button
                 key={r}
                 onClick={() => pickRole(r)}
-                className={`px-3 py-1 text-xs rounded-full transition-colors ${
-                  isActive ? colors.active : colors.inactive
+                className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                  isActive ? "" : "bg-chip text-muted border-transparent hover:text-ink"
                 }`}
+                style={
+                  isActive
+                    ? { color: c, background: `${c}1f`, borderColor: `${c}59` }
+                    : undefined
+                }
               >
                 {r}
               </button>
@@ -117,8 +118,8 @@ export function AgentCreateForm({ onCreated }: { onCreated: () => void }) {
       </div>
 
       <div>
-        <label className="text-xs text-zinc-500 block mb-1">
-          Specialty <span className="text-zinc-600">(read-only knower — thinker, brainstorm mode)</span>
+        <label className="text-xs text-faint block mb-1">
+          Specialty <span className="text-dim">(read-only knower — thinker, brainstorm mode)</span>
         </label>
         <div className="flex items-center gap-1 flex-wrap">
           {SPECIALTIES.map((s) => {
@@ -128,11 +129,14 @@ export function AgentCreateForm({ onCreated }: { onCreated: () => void }) {
                 key={s.id}
                 onClick={() => pickSpecialty(s.id)}
                 title={s.blurb}
-                className={`px-3 py-1 text-xs rounded-full transition-colors ${
-                  isActive
-                    ? "bg-amber-600 text-white"
-                    : "bg-zinc-800 text-amber-400 hover:bg-zinc-700"
+                className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                  isActive ? "" : "bg-chip text-muted border-transparent hover:text-ink"
                 }`}
+                style={
+                  isActive
+                    ? { color: BRAND, background: `${BRAND}1f`, borderColor: `${BRAND}59` }
+                    : undefined
+                }
               >
                 {s.id}
               </button>
@@ -140,27 +144,27 @@ export function AgentCreateForm({ onCreated }: { onCreated: () => void }) {
           })}
         </div>
         {specialty && (
-          <p className="text-[11px] text-zinc-500 mt-1.5 leading-snug">
-            {SPECIALTY_DESC[specialty]} · created as a read-only <span className="text-blue-400">thinker</span>.
-            Run it in brainstorm mode: <code className="text-zinc-400">scripts/run-knower.sh &lt;project&gt; {specialty}</code>
+          <p className="text-[11px] text-faint mt-1.5 leading-snug">
+            {SPECIALTY_DESC[specialty]} · created as a read-only <span className="text-running">thinker</span>.
+            Run it in brainstorm mode: <code className="bg-chip text-muted font-mono px-1 rounded">scripts/run-knower.sh &lt;project&gt; {specialty}</code>
             {specialty !== "architect" && " · a deterministic Tier-1 scan runs on create"}.
           </p>
         )}
       </div>
 
       <div>
-        <label className="text-xs text-zinc-500 block mb-1">Name</label>
+        <label className="text-xs text-faint block mb-1">Name</label>
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder={specialty ? specialty : "e.g. my-analyst"}
-          className="w-full px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+          className="w-full px-3 py-1.5 bg-field border border-line-soft rounded text-sm text-ink placeholder-dim focus:outline-none focus:border-line-dash"
         />
       </div>
 
       <div>
-        <label className="text-xs text-zinc-500 block mb-1">
+        <label className="text-xs text-faint block mb-1">
           Description (optional{specialty ? " — defaults to the canonical knower description" : ""})
         </label>
         <input
@@ -168,45 +172,45 @@ export function AgentCreateForm({ onCreated }: { onCreated: () => void }) {
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder={specialty ? "(leave blank to use the canonical knower description)" : "What does this agent do?"}
-          className="w-full px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+          className="w-full px-3 py-1.5 bg-field border border-line-soft rounded text-sm text-ink placeholder-dim focus:outline-none focus:border-line-dash"
         />
       </div>
 
       {!specialty && role === "doer" && (
         <div>
-          <label className="text-xs text-zinc-500 block mb-1">Target directory (optional)</label>
+          <label className="text-xs text-faint block mb-1">Target directory (optional)</label>
           <input
             type="text"
             value={targetDir}
             onChange={(e) => setTargetDir(e.target.value)}
             placeholder="~/path/to/working/dir"
-            className="w-full px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+            className="w-full px-3 py-1.5 bg-field border border-line-soft rounded text-sm text-ink placeholder-dim focus:outline-none focus:border-line-dash"
           />
         </div>
       )}
 
       {!specialty && role === "doer" && (
         <div>
-          <label className="text-xs text-zinc-500 block mb-1">Skill file (optional)</label>
+          <label className="text-xs text-faint block mb-1">Skill file (optional)</label>
           <input
             type="text"
             value={skill}
             onChange={(e) => setSkill(e.target.value)}
             placeholder="e.g. sui-move or path/to/SKILL.md"
-            className="w-full px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+            className="w-full px-3 py-1.5 bg-field border border-line-soft rounded text-sm text-ink placeholder-dim focus:outline-none focus:border-line-dash"
           />
         </div>
       )}
 
       {error && (
-        <p className="text-xs text-red-400 break-words">{error}</p>
+        <p className="text-xs text-closed break-words">{error}</p>
       )}
 
       <div className="flex items-center gap-2 pt-1">
         <button
           onClick={handleCreate}
           disabled={loading || !name.trim()}
-          className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="px-4 py-1.5 text-xs bg-brand hover:bg-brand-bright text-[#1a1410] rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {loading ? "Creating..." : "Create"}
         </button>
@@ -215,7 +219,7 @@ export function AgentCreateForm({ onCreated }: { onCreated: () => void }) {
             resetForm();
             setOpen(false);
           }}
-          className="px-4 py-1.5 text-xs bg-zinc-700 text-zinc-300 rounded hover:bg-zinc-600"
+          className="px-4 py-1.5 text-xs border border-line-dash bg-transparent text-[#c9c3bd] rounded hover:text-ink"
         >
           Cancel
         </button>

@@ -1,178 +1,217 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import type { Conversation, Stats, ProjectConfig, ProjectState, Agent } from "./types";
-import { fetchConversations, fetchStats, fetchConfig, fetchProjects, fetchAgents, fetchDaemonStatus } from "./api";
+import type { Conversation, ProjectState, Agent } from "./types";
+import { fetchConversations, fetchProjects, fetchAgents, fetchDaemonStatus } from "./api";
 import { useSSE } from "./hooks/useSSE";
-import { StatsBanner } from "./components/StatsBanner";
-import { ProjectSelector } from "./components/ProjectSelector";
-import { AgentRoster } from "./components/AgentRoster";
-import { PromptInput } from "./components/PromptInput";
+import { TopBar } from "./components/TopBar";
+import { Sidebar } from "./components/Sidebar";
+import { Composer } from "./components/Composer";
 import { ConversationCard } from "./components/ConversationCard";
+import { ConversationDetail } from "./components/ConversationDetail";
 import { ConfigPanel } from "./components/ConfigPanel";
-import { BudgetPanel } from "./components/BudgetPanel";
-import { AgentCreateForm } from "./components/AgentCreateForm";
-import { AgentContextEditor } from "./components/AgentContextEditor";
+import { BudgetSheet } from "./components/BudgetSheet";
 import { RecapPanel } from "./components/RecapPanel";
+import { AgentContextEditor } from "./components/AgentContextEditor";
+
+type Filter = "all" | "needs" | "running" | "done";
+
+const STATE_ORDER: Record<string, number> = {
+  waiting_for_human: 0,
+  active: 1,
+  paused: 2,
+  done: 3,
+  closed: 4,
+};
+
+const FILTER_FNS: Record<Filter, (c: Conversation) => boolean> = {
+  all: () => true,
+  needs: (c) => c.state === "waiting_for_human",
+  running: (c) => c.state === "active",
+  done: (c) => c.state === "done" || c.state === "closed",
+};
 
 export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [projectConfig, setProjectConfig] = useState<ProjectConfig | null>(null);
-  const [showConfig, setShowConfig] = useState(false);
   const [project, setProject] = useState<ProjectState>({ current: null, recent: [] });
   const [agents, setAgents] = useState<Agent[]>([]);
   const [daemonRunning, setDaemonRunning] = useState(true);
+  const [filter, setFilter] = useState<Filter>("all");
+  const [selected, setSelected] = useState<{ id: number; respond?: boolean } | null>(null);
   const [editingAgent, setEditingAgent] = useState<string | null>(null);
+  const [showConfig, setShowConfig] = useState(false);
+  const [showBudget, setShowBudget] = useState(false);
   const [showRecap, setShowRecap] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [convs, st, daemon] = await Promise.all([
-      fetchConversations(), fetchStats(), fetchDaemonStatus(),
-    ]);
+    const [convs, daemon] = await Promise.all([fetchConversations(), fetchDaemonStatus()]);
     setConversations(convs);
-    setStats(st);
     setDaemonRunning(daemon.running);
   }, []);
 
-  // Initial load — always fetch project state; conversations/stats only if project selected
   useEffect(() => {
     fetchProjects().then((p) => {
       setProject(p);
-      if (p.current) {
-        refresh();
-        fetchConfig().then(setProjectConfig);
-      }
+      if (p.current) refresh();
     });
   }, [refresh]);
 
-  // Reload agents, conversations, config when project changes.
   useEffect(() => {
-    if (project.current) {
-      fetchAgents().then(setAgents);
-      refresh();
-      fetchConfig().then(setProjectConfig);
-    }
-  }, [project.current]);
+    if (!project.current) return;
+    fetchAgents().then(setAgents);
+    refresh();
+  }, [project.current, refresh]);
 
-  // SSE for real-time updates
-  useSSE((convs) => {
-    setConversations(convs);
-    fetchStats().then(setStats);
-  });
+  useSSE((convs) => setConversations(convs));
 
-  // Polling fallback — the SSE stream can stall (dev proxy buffering / dropped
-  // socket, and onerror is a no-op), which leaves the UI frozen until a manual
-  // refresh. Poll every 2.5s while a conversation is actively running so updates
-  // land on their own. A ref holds the latest conversations without re-arming
-  // the interval on every update.
-  const conversationsRef = useRef(conversations);
-  conversationsRef.current = conversations;
+  // Polling fallback while a conversation is actively running (SSE can stall).
+  const convRef = useRef(conversations);
+  convRef.current = conversations;
   useEffect(() => {
     if (!project.current) return;
     const id = setInterval(() => {
-      if (conversationsRef.current.some((c) => c.state === "active")) refresh();
+      if (convRef.current.some((c) => c.state === "active")) refresh();
     }, 2500);
     return () => clearInterval(id);
   }, [project.current, refresh]);
 
-  const handleProjectSelect = async (_path: string) => {
+  const onProjectSelect = async () => {
     const p = await fetchProjects();
     setProject(p);
   };
 
-  const ACTIVE_STATES = new Set(["active", "waiting_for_human"]);
-  const busy = conversations.some((c) => ACTIVE_STATES.has(c.state));
-  const runningConvs = conversations.filter((c) => c.state === "active");
+  const busy = conversations.some((c) => c.state === "active" || c.state === "waiting_for_human");
+  const needsCount = conversations.filter((c) => c.state === "waiting_for_human").length;
+  const runningCount = conversations.filter((c) => c.state === "active").length;
+  const doneCount = conversations.filter((c) => c.state === "done" || c.state === "closed").length;
+  const daemonStale = !daemonRunning && (needsCount > 0 || runningCount > 0);
+
+  const sorted = [...conversations].sort(
+    (a, b) => (STATE_ORDER[a.state] ?? 9) - (STATE_ORDER[b.state] ?? 9) || b.id - a.id,
+  );
+  const visible = sorted.filter(FILTER_FNS[filter]);
+
+  const filterDefs: { id: Filter; label: string; count: number }[] = [
+    { id: "all", label: "all", count: conversations.length },
+    { id: "needs", label: "needs you", count: needsCount },
+    { id: "running", label: "running", count: runningCount },
+    { id: "done", label: "done", count: doneCount },
+  ];
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white">
-      <StatsBanner
-        stats={stats}
-        config={projectConfig}
+    <div className="flex min-h-screen flex-col bg-base text-ink">
+      <TopBar
+        projectCurrent={project.current}
+        projectRecent={project.recent}
+        onProjectSelect={onProjectSelect}
+        daemonRunning={daemonRunning}
+        needsCount={needsCount}
+        convCount={conversations.length}
         onSettingsClick={() => setShowConfig(true)}
-        projectName={project.current ? project.current.split("/").pop() : null}
       />
-      <ProjectSelector
-        current={project.current}
-        recent={project.recent}
-        onSelect={handleProjectSelect}
-      />
-
-      {project.current && !daemonRunning && conversations.some(c =>
-        c.state === "active" || c.state === "waiting_for_human"
-      ) && (
-        <div className="mx-6 mt-3 px-4 py-2 bg-amber-900/30 border border-amber-800 rounded-lg text-amber-400 text-sm">
-          Daemon not running — active conversations may be stale.
-          Run <code className="bg-zinc-800 px-1.5 py-0.5 rounded text-xs">quorum status</code> to trigger recovery.
-        </div>
-      )}
-
-      {project.current && runningConvs.length > 0 && (
-        <div className="mx-6 mt-3 px-4 py-2 bg-blue-950/30 border border-blue-800 rounded-lg text-sm flex items-center gap-2">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
-          </span>
-          <span className="text-blue-300">
-            Running — {runningConvs.map((c) => `${c.current_agent ?? "?"} on #${c.id}`).join(", ")}
-          </span>
-        </div>
-      )}
 
       {project.current ? (
-        <>
-          {agents.length > 0 && (
-            <AgentRoster
-              agents={agents}
-              onAgentClick={setEditingAgent}
-            />
-          )}
-          {project.current && (
-            <div className="px-6 py-1">
-              <AgentCreateForm onCreated={() => fetchAgents().then(setAgents)} />
-            </div>
-          )}
-          <div className="px-6 py-1">
-            <button
-              onClick={() => setShowRecap(true)}
-              className="px-4 py-2 text-sm bg-zinc-800 text-zinc-200 rounded-lg hover:bg-zinc-700 border border-zinc-700"
-            >
-              What's going on?
-            </button>
-          </div>
-          <BudgetPanel />
-          <PromptInput onSubmit={refresh} busy={busy} />
+        <div className="grid flex-1" style={{ gridTemplateColumns: "252px minmax(0,1fr)" }}>
+          <Sidebar
+            agents={agents}
+            onAgentClick={setEditingAgent}
+            onAgentCreated={() => fetchAgents().then(setAgents)}
+            onOpenBudget={() => setShowBudget(true)}
+          />
 
-          <div className="px-6 pb-6">
-            <h2 className="text-sm font-medium text-zinc-500 uppercase tracking-wide mb-3">
-              Conversations
-            </h2>
-            <div className="space-y-3">
-              {conversations.map((conv) => (
-                <ConversationCard key={conv.id} conversation={conv} onAction={refresh} />
-              ))}
-              {conversations.length === 0 && (
-                <p className="text-zinc-600 text-sm">
-                  No conversations yet. Type a goal above to start.
-                </p>
+          <main className="min-w-0 px-8 pb-14 pt-6">
+            <div className="mx-auto flex w-full max-w-[940px] flex-col">
+              {daemonStale && (
+                <div
+                  className="mb-3 rounded-xl px-3.5 py-2 text-[13px] text-brand"
+                  style={{ background: "rgba(227,164,92,0.08)", border: "1px solid rgba(227,164,92,0.3)" }}
+                >
+                  Daemon idle — active conversations may be stale. Run{" "}
+                  <code className="rounded bg-chip px-1.5 py-0.5 font-mono text-xs">quorum status</code> to recover.
+                </div>
               )}
+
+              <Composer onSubmit={refresh} busy={busy} />
+
+              <div className="mb-3.5 mt-[22px] flex items-center gap-2">
+                <span className="font-mono text-[10.5px] font-semibold tracking-[0.14em] text-faint">
+                  CONVERSATIONS
+                </span>
+                <button
+                  onClick={() => setShowRecap(true)}
+                  className="rounded-full border border-line-soft bg-transparent px-3 py-1 text-[11.5px] text-muted hover:border-line-dash hover:text-ink"
+                  title="On-demand recap (quorum ask --agent recap)"
+                >
+                  what's going on?
+                </button>
+                <span className="flex-1" />
+                {filterDefs.map((f) => {
+                  const active = filter === f.id;
+                  const highlight = f.id === "needs" && f.count > 0;
+                  return (
+                    <button
+                      key={f.id}
+                      onClick={() => setFilter(f.id)}
+                      className="rounded-full px-3 py-1.5 font-mono text-[11.5px] tracking-[0.03em] transition-colors"
+                      style={{
+                        background: active ? "#2b2735" : "transparent",
+                        color: highlight ? "#e3a45c" : active ? "#ece7e1" : "#8a8390",
+                        border: `1px solid ${active ? "#3b3546" : "#2a2632"}`,
+                      }}
+                    >
+                      {f.label} · {f.count}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex flex-col gap-3">
+                {visible.map((c) => (
+                  <ConversationCard
+                    key={c.id}
+                    conversation={c}
+                    onOpen={(id, opts) => setSelected({ id, respond: opts?.respond })}
+                    onAction={refresh}
+                  />
+                ))}
+                {visible.length === 0 && (
+                  <p className="mx-1 my-2 text-[13px] text-faint">
+                    {conversations.length === 0
+                      ? "No conversations yet. Set a mode and a goal above to start."
+                      : "Nothing here right now."}
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
-        </>
-      ) : (
-        <div className="px-6 py-16 text-center text-zinc-600">
-          <p className="text-lg mb-2">No project selected</p>
-          <p className="text-sm">Enter a project path above to get started.</p>
+          </main>
         </div>
+      ) : (
+        <div className="flex flex-1 flex-col items-center justify-center px-6 py-16 text-center">
+          <p className="mb-2 text-lg text-muted">No project selected</p>
+          <p className="text-sm text-faint">
+            Use the project menu in the top bar to open a directory with a{" "}
+            <code className="rounded bg-chip px-1.5 py-0.5 font-mono text-xs">.quorum/</code>.
+          </p>
+        </div>
+      )}
+
+      {selected && (
+        <ConversationDetail
+          conversationId={selected.id}
+          initialRespond={selected.respond}
+          agents={agents}
+          onClose={() => setSelected(null)}
+          onAction={refresh}
+        />
       )}
       {editingAgent && (
         <AgentContextEditor
           agentId={editingAgent}
-          agentName={agents.find(a => a.id === editingAgent)?.name ?? editingAgent}
+          agentName={agents.find((a) => a.id === editingAgent)?.name ?? editingAgent}
           onClose={() => setEditingAgent(null)}
         />
       )}
+      {showBudget && <BudgetSheet onClose={() => setShowBudget(false)} />}
       {showRecap && <RecapPanel onClose={() => setShowRecap(false)} />}
-      {showConfig && <ConfigPanel onClose={() => { setShowConfig(false); fetchConfig().then(setProjectConfig); }} />}
+      {showConfig && <ConfigPanel onClose={() => setShowConfig(false)} />}
     </div>
   );
 }

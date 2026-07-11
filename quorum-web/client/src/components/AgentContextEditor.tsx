@@ -33,22 +33,23 @@ export function AgentContextEditor({
 
   return (
     <div
-      className="fixed inset-0 bg-black/60 z-50 flex justify-center items-start"
+      className="fixed inset-0 z-50 flex justify-center items-start q-fade"
+      style={{ background: "rgba(11,9,15,0.55)", backdropFilter: "blur(3px)" }}
       onClick={onClose}
     >
       <div
-        className="max-w-3xl w-full mx-auto mt-20 bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden"
+        className="max-w-3xl w-full mx-auto mt-20 bg-sheet border border-line-edge rounded-xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-line">
           <div>
-            <h2 className="text-white font-semibold text-sm">{agentName}</h2>
-            <span className="text-zinc-500 text-xs font-mono">CONTEXT.md</span>
+            <h2 className="text-ink-bright font-semibold text-sm">{agentName}</h2>
+            <span className="text-faint text-xs font-mono">CONTEXT.md</span>
           </div>
           <button
             onClick={onClose}
-            className="text-zinc-500 hover:text-zinc-300 text-lg"
+            className="rounded border border-line-edge px-1.5 text-lg text-muted hover:text-ink"
           >
             &#x2715;
           </button>
@@ -56,7 +57,7 @@ export function AgentContextEditor({
 
         {/* Body */}
         {loading ? (
-          <div className="px-5 py-16 text-center text-zinc-500 text-sm">
+          <div className="px-5 py-16 text-center text-faint text-sm">
             Loading...
           </div>
         ) : (
@@ -64,7 +65,7 @@ export function AgentContextEditor({
             <textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              className="w-full min-h-[400px] px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-lg text-sm text-zinc-300 font-mono resize-y focus:outline-none focus:border-zinc-600"
+              className="w-full min-h-[400px] px-4 py-3 bg-field border border-line-soft rounded-lg text-sm text-ink font-mono resize-y focus:outline-none focus:border-line-dash"
               placeholder="Write agent instructions here..."
               spellCheck={false}
             />
@@ -72,17 +73,17 @@ export function AgentContextEditor({
         )}
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-zinc-800">
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-line">
           <button
             onClick={onClose}
-            className="px-4 py-1.5 text-xs bg-zinc-700 text-zinc-300 rounded hover:bg-zinc-600"
+            className="px-4 py-1.5 text-xs border border-line-dash bg-transparent text-[#c9c3bd] rounded hover:text-ink"
           >
             Cancel
           </button>
           <button
             onClick={handleSave}
             disabled={saving || loading}
-            className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-1.5 text-xs bg-brand hover:bg-brand-bright text-[#1a1410] rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saving ? "Saving..." : "Save"}
           </button>

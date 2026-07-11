@@ -1,12 +1,131 @@
 @import "tailwindcss";
 
-/* Markdown rendering for agent task results.
-   Scoped to .md-content so Tailwind reset doesn't strip list markers,
+/* ── Design tokens (warm-dark "quorum" theme) ─────────────────────────
+   Semantic chrome colors are exposed as Tailwind utilities via @theme
+   (e.g. bg-base, text-ink, border-line). Dynamic per-mode / per-state /
+   per-role colors live in src/lib/theme.ts (applied as inline styles),
+   since they're chosen at runtime from data. */
+@theme {
+  --font-sans: "Instrument Sans", "Helvetica Neue", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* surfaces */
+  --color-base: #151219;      /* page */
+  --color-rail: #17141d;      /* sidebar */
+  --color-topbar: #18151e;    /* top bar */
+  --color-panel: #1d1a24;     /* composer / raised panels */
+  --color-card: #1f1c25;      /* conversation card */
+  --color-card-alert: #241d20;/* needs-you card */
+  --color-sheet: #1b1822;     /* slide-over detail */
+  --color-field: #16131b;     /* inputs */
+  --color-chip: #221f2a;      /* pills / code chips */
+
+  /* lines */
+  --color-line: #262230;      /* primary border */
+  --color-line-soft: #2c2834; /* subtle border */
+  --color-line-edge: #322d3c; /* panel edge */
+  --color-line-dash: #3a3444; /* dashed / hover border */
+
+  /* ink */
+  --color-ink: #ece7e1;       /* body text */
+  --color-ink-bright: #f2ede6;/* headings */
+  --color-muted: #8a8390;     /* secondary */
+  --color-faint: #6a6470;     /* labels / meta */
+  --color-dim: #5f5966;       /* hints */
+
+  /* brand + modes + states (also mirrored in lib/theme.ts) */
+  --color-brand: #e3a45c;
+  --color-brand-bright: #efb876;
+  --color-generic: #63b3a6;   /* mode: agents may write */
+  --color-brainstorm: #a793e6;/* mode: read-only */
+  --color-running: #8fa9e8;
+  --color-done: #85bd93;
+  --color-paused: #b3aa98;
+  --color-closed: #c98b81;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-base);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+a {
+  color: var(--color-brand);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--color-brand-bright);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #312c3a;
+  border-radius: 6px;
+  border: 3px solid var(--color-base);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-dim);
+}
+
+/* ── Animations ─────────────────────────────────────────────────────── */
+@keyframes qping {
+  0% { transform: scale(1); opacity: 0.6; }
+  80%, 100% { transform: scale(2.6); opacity: 0; }
+}
+@keyframes qpulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+@keyframes qslide {
+  from { transform: translateX(48px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes qfade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes qbar {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.q-ping { animation: qping 2.2s ease-out infinite; }
+.q-pulse { animation: qpulse 1.7s ease-in-out infinite; }
+.q-slide { animation: qslide 0.28s cubic-bezier(0.2, 0.8, 0.3, 1); }
+.q-fade { animation: qfade 0.2s ease; }
+.q-bar {
+  background: linear-gradient(
+    90deg,
+    rgba(143, 169, 232, 0.05),
+    rgba(143, 169, 232, 0.5),
+    rgba(143, 169, 232, 0.05)
+  );
+  background-size: 200% 100%;
+  animation: qbar 1.8s linear infinite;
+}
+
+/* ── Markdown rendering for agent task results ──────────────────────────
+   Scoped to .md-content so the Tailwind reset doesn't strip list markers,
    headings, etc. Kept compact — task bodies are dense diagnostic text. */
 .md-content {
-  color: rgb(212 212 216);
-  font-size: 0.75rem;
-  line-height: 1.45;
+  color: var(--color-ink);
+  font-size: 0.8125rem;
+  line-height: 1.6;
   word-break: break-word;
 }
 .md-content > *:first-child { margin-top: 0; }
@@ -17,7 +136,7 @@
 .md-content h4,
 .md-content h5,
 .md-content h6 {
-  color: rgb(244 244 245);
+  color: var(--color-ink-bright);
   font-weight: 600;
   margin: 0.6rem 0 0.25rem;
   line-height: 1.25;
@@ -37,47 +156,48 @@
 .md-content li { margin: 0.1rem 0; }
 .md-content li > p { margin: 0.15rem 0; }
 .md-content code {
-  background: rgb(39 39 42);
+  background: var(--color-chip);
   padding: 0.05rem 0.3rem;
   border-radius: 0.2rem;
-  font-size: 0.72rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
 }
 .md-content pre {
-  background: rgb(24 24 27);
+  background: #16131b;
   padding: 0.5rem 0.6rem;
-  border-radius: 0.3rem;
+  border-radius: 0.4rem;
   overflow-x: auto;
   margin: 0.4rem 0;
-  font-size: 0.72rem;
-  line-height: 1.4;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  border: 1px solid var(--color-line-soft);
 }
 .md-content pre code {
   background: transparent;
   padding: 0;
   font-size: inherit;
 }
-.md-content strong { color: rgb(244 244 245); font-weight: 600; }
+.md-content strong { color: var(--color-ink-bright); font-weight: 600; }
 .md-content em { font-style: italic; }
 .md-content blockquote {
-  border-left: 3px solid rgb(82 82 91);
+  border-left: 3px solid var(--color-line-dash);
   padding-left: 0.75rem;
   margin: 0.4rem 0;
-  color: rgb(161 161 170);
+  color: var(--color-muted);
 }
 .md-content table {
   border-collapse: collapse;
   margin: 0.4rem 0;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 .md-content th,
 .md-content td {
-  border: 1px solid rgb(63 63 70);
+  border: 1px solid var(--color-line-soft);
   padding: 0.25rem 0.55rem;
   text-align: left;
   vertical-align: top;
 }
-.md-content th { background: rgb(39 39 42); font-weight: 600; color: rgb(244 244 245); }
-.md-content a { color: rgb(96 165 250); text-decoration: underline; }
-.md-content hr { border: 0; border-top: 1px solid rgb(63 63 70); margin: 0.6rem 0; }
+.md-content th { background: var(--color-chip); font-weight: 600; color: var(--color-ink-bright); }
+.md-content a { color: var(--color-running); text-decoration: underline; }
+.md-content hr { border: 0; border-top: 1px solid var(--color-line-soft); margin: 0.6rem 0; }
 .md-content input[type="checkbox"] { margin-right: 0.35rem; }

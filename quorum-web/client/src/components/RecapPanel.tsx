@@ -56,31 +56,32 @@ export function RecapPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div
-      className="fixed inset-0 bg-black/60 z-50 flex justify-center items-start"
+      className="fixed inset-0 z-50 flex justify-center items-start q-fade"
+      style={{ background: "rgba(11,9,15,0.55)", backdropFilter: "blur(3px)" }}
       onClick={onClose}
     >
       <div
-        className="max-w-3xl w-full mx-auto mt-20 bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden flex flex-col max-h-[80vh]"
+        className="max-w-3xl w-full mx-auto mt-20 bg-sheet border border-line-edge rounded-xl overflow-hidden flex flex-col max-h-[80vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-line">
           <div>
-            <h2 className="text-white font-semibold text-sm">What's going on?</h2>
-            <span className="text-zinc-500 text-xs">
+            <h2 className="text-ink-bright font-semibold text-sm">What's going on?</h2>
+            <span className="text-faint text-xs">
               On-demand recap (quorum ask --agent recap)
             </span>
           </div>
           <button
             onClick={onClose}
-            className="text-zinc-500 hover:text-zinc-300 text-lg"
+            className="rounded border border-line-edge px-1.5 text-lg text-muted hover:text-ink"
           >
             &#x2715;
           </button>
         </div>
 
         {/* Controls */}
-        <div className="px-5 py-4 border-b border-zinc-800 space-y-3">
+        <div className="px-5 py-4 border-b border-line space-y-3">
           <div className="flex flex-wrap gap-2">
             {CANNED.map((c) => (
               <button
@@ -89,7 +90,7 @@ export function RecapPanel({ onClose }: { onClose: () => void }) {
                 onClick={() => run(c.prompt)}
                 disabled={loading}
                 title={c.prompt}
-                className="px-3 py-1.5 text-xs bg-zinc-800 text-zinc-200 rounded-lg hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-3 py-1.5 text-xs bg-chip text-ink rounded-lg hover:bg-line-soft disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {c.label}
               </button>
@@ -102,12 +103,12 @@ export function RecapPanel({ onClose }: { onClose: () => void }) {
               onChange={(e) => setFreeText(e.target.value)}
               placeholder="Ask the recap agent anything..."
               disabled={loading}
-              className="flex-1 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500 disabled:opacity-50"
+              className="flex-1 px-4 py-2 bg-field border border-line-soft rounded-lg text-sm text-ink placeholder-dim focus:outline-none focus:border-line-dash disabled:opacity-50"
             />
             <button
               type="submit"
               disabled={loading || !freeText.trim()}
-              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 text-sm bg-brand hover:bg-brand-bright text-[#1a1410] rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Ask
             </button>
@@ -117,27 +118,30 @@ export function RecapPanel({ onClose }: { onClose: () => void }) {
         {/* Answer */}
         <div className="px-5 py-4 overflow-y-auto">
           {askedPrompt && (
-            <p className="text-xs text-zinc-500 mb-3">
-              <span className="text-zinc-400">Asked:</span> {askedPrompt}
+            <p className="text-xs text-faint mb-3">
+              <span className="text-muted">Asked:</span> {askedPrompt}
             </p>
           )}
           {loading && (
-            <div className="text-zinc-500 text-sm">
+            <div className="text-faint text-sm">
               Asking the recap agent… (this can take a few minutes)
             </div>
           )}
           {!loading && error && (
-            <div className="px-4 py-3 bg-red-900/30 border border-red-800 rounded-lg text-red-400 text-sm whitespace-pre-wrap">
+            <div
+              className="px-4 py-3 rounded-lg text-closed text-sm whitespace-pre-wrap"
+              style={{ background: "rgba(201,139,129,0.08)", border: "1px solid rgba(201,139,129,0.35)" }}
+            >
               {error}
             </div>
           )}
           {!loading && !error && answer != null && (
-            <div className="prose prose-invert prose-sm max-w-none text-sm text-zinc-300">
+            <div className="prose prose-invert prose-sm max-w-none text-sm text-muted">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
             </div>
           )}
           {!loading && !error && answer == null && (
-            <p className="text-zinc-600 text-sm">
+            <p className="text-faint text-sm">
               Pick a prompt above or ask a question to get a recap of the active
               project.
             </p>

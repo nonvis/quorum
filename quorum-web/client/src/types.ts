@@ -10,6 +10,11 @@ export interface Conversation {
   completed_at: string | null;
   paused_reason: string | null;
   current_agent: string | null;
+  // Already persisted by the daemon and returned via SELECT * — the mode a
+  // conversation was started in (generic | brainstorm).
+  mode: string;
+  no_vault_write?: number;
+  team?: string | null;
   tasks?: Task[];
 }
 
