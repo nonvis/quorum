@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import type { Conversation, Task } from "../types";
-import { fetchConversation, updateMaxRounds } from "../api";
+import { fetchConversation, respondToLeader, updateMaxRounds } from "../api";
 import { lastHumanGateMessage } from "../lib/segments";
 import { deriveVerdict, VERDICT_COLOR } from "../lib/verdict";
+import { GateChips } from "./GateActions";
 import {
   modeOf,
   stateOf,
@@ -60,6 +61,18 @@ export function ConversationCard({
   const resume10 = async () => {
     await updateMaxRounds(c.id, c.max_rounds + 10);
     onAction();
+  };
+
+  const [sending, setSending] = useState(false);
+  const sendCanned = async (text: string) => {
+    if (sending) return;
+    setSending(true);
+    try {
+      await respondToLeader(c.id, text);
+      onAction();
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -148,24 +161,49 @@ export function ConversationCard({
 
       {needsYou && (
         <div
-          className="mt-3 flex items-center gap-3.5 rounded-xl px-3 py-[11px]"
+          className="mt-3 rounded-xl px-3 py-[11px]"
           style={{ background: "rgba(227,164,92,0.08)", border: "1px solid rgba(227,164,92,0.30)" }}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="min-w-0 flex-1">
-            <div className="mb-1 font-mono text-[10px] font-bold tracking-[0.12em] text-brand">
-              {(c.current_agent ?? "leader").toUpperCase()} ASKS
+          <div className="flex items-center gap-3.5">
+            <div className="min-w-0 flex-1">
+              <div className="mb-1 font-mono text-[10px] font-bold tracking-[0.12em] text-brand">
+                {(c.current_agent ?? "leader").toUpperCase()} ASKS
+              </div>
+              <div className="line-clamp-2 text-[13px] leading-[1.5] text-[#d8d2ca]">
+                {gatePreview}
+              </div>
             </div>
-            <div className="line-clamp-2 text-[13px] leading-[1.5] text-[#d8d2ca]">
-              {gatePreview}
-            </div>
+            <button
+              onClick={() => onOpen(c.id, { respond: true })}
+              className="flex-shrink-0 rounded-lg bg-brand px-4 py-2 text-[13px] font-bold text-[#1a1410] hover:bg-brand-bright"
+            >
+              Respond →
+            </button>
           </div>
-          <button
-            onClick={() => onOpen(c.id, { respond: true })}
-            className="flex-shrink-0 rounded-lg bg-brand px-4 py-2 text-[13px] font-bold text-[#1a1410] hover:bg-brand-bright"
-          >
-            Respond →
-          </button>
+          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+            {c.mode === "brainstorm" ? (
+              <>
+                <button
+                  disabled={sending}
+                  onClick={() => sendCanned("yes")}
+                  className="rounded-full px-3.5 py-1.5 text-[12.5px] font-bold text-[#171319] disabled:opacity-45"
+                  style={{ background: "#a793e6" }}
+                  title='sends: "yes" — approve all staged vault notes'
+                >
+                  Yes — save all
+                </button>
+                <button
+                  onClick={() => onOpen(c.id, { respond: true })}
+                  className="rounded-full border border-line-soft px-3.5 py-1.5 text-[12.5px] font-semibold text-muted hover:border-line-dash hover:text-ink"
+                >
+                  Review notes…
+                </button>
+              </>
+            ) : (
+              <GateChips onSend={sendCanned} disabled={sending} compact />
+            )}
+          </div>
         </div>
       )}
 

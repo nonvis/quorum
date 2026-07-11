@@ -23,6 +23,7 @@ import {
   getConversations,
   getConversation,
   getTasksForConversation,
+  getPendingVaultUpdates,
   getStats,
   freshQuery,
   dbWrite,
@@ -349,6 +350,13 @@ app.get("/api/conversations/:id", (c) => {
 app.get("/api/conversations/:id/tasks", (c) => {
   const id = Number(c.req.param("id"));
   return c.json(getTasksForConversation(id));
+});
+
+// Staged VAULT_UPDATEs awaiting the brainstorm approval gate — the manifest
+// the operator approves note-by-note in the UI.
+app.get("/api/conversations/:id/pending-vault", (c) => {
+  const id = Number(c.req.param("id"));
+  return c.json(getPendingVaultUpdates(id));
 });
 
 app.get("/api/stats", (c) => {

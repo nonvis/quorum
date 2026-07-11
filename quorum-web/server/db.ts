@@ -84,6 +84,32 @@ export function getTasksForConversation(id: number): Task[] {
   return result;
 }
 
+// Brainstorm staging — the rows behind the human approval gate. The daemon
+// stages every VAULT_UPDATE here while a brainstorm awaits `respond`; rows
+// are flushed once the gate clears. This is the source of truth for the
+// approval manifest (better than parsing the leader's prose).
+export interface PendingVaultUpdate {
+  id: number;
+  conversation_id: number;
+  agent_id: string;
+  role: string;
+  mode: string;
+  path: string;
+  content: string;
+  created_at: string;
+}
+
+export function getPendingVaultUpdates(conversationId: number): PendingVaultUpdate[] {
+  try {
+    return freshQuery<PendingVaultUpdate>(
+      "SELECT * FROM pending_vault_updates WHERE conversation_id = ? ORDER BY id ASC",
+      [conversationId],
+    );
+  } catch {
+    return []; // table absent on older DBs
+  }
+}
+
 export function getStats() {
   const db = new Database(getDbPath(), { readonly: true });
   const totalConversations = db

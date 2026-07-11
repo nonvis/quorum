@@ -74,6 +74,19 @@ export interface AgentCost {
   avg_cost: number;
 }
 
+// A staged VAULT_UPDATE awaiting the brainstorm human-approval gate
+// (daemon's pending_vault_updates table). The approval manifest renders these.
+export interface PendingVaultUpdate {
+  id: number;
+  conversation_id: number;
+  agent_id: string;
+  role: string;
+  mode: string;
+  path: string;
+  content: string;
+  created_at: string;
+}
+
 // ── autopilot (second execution engine) ──────────────────────────────
 // Read model for a "flight" — an overnight `claude --agent supervisor` run.
 // Mirrors quorum-web/server/autopilot.ts; sourced from SUPERVISOR.md +

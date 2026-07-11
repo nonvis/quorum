@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Conversation, Task, Agent } from "../types";
-import { fetchConversation, respondToLeader, updateMaxRounds } from "../api";
+import type { Conversation, Task, Agent, PendingVaultUpdate } from "../types";
+import { fetchConversation, fetchPendingVault, respondToLeader, updateMaxRounds } from "../api";
 import { parseSegments, extractHumanResponse, lastHumanGateMessage } from "../lib/segments";
 import { deriveVerdict, VERDICT_COLOR } from "../lib/verdict";
 import { DiffBlock } from "./DiffBlock";
+import { GateChips, VaultManifest } from "./GateActions";
 import {
   modeOf,
   stateOf,
@@ -172,6 +173,7 @@ export function ConversationDetail({
 }) {
   const [conv, setConv] = useState<Conversation | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [pendingVault, setPendingVault] = useState<PendingVaultUpdate[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [respondText, setRespondText] = useState("");
   const [sending, setSending] = useState(false);
@@ -193,6 +195,12 @@ export function ConversationDetail({
     fetchConversation(conversationId).then((data) => {
       setConv(data);
       setTasks(data.tasks ?? []);
+      // The approval manifest only exists while a brainstorm holds the gate.
+      if (data.state === "waiting_for_human" && data.mode === "brainstorm") {
+        fetchPendingVault(conversationId).then(setPendingVault);
+      } else {
+        setPendingVault([]);
+      }
     });
 
   useEffect(() => {
@@ -217,17 +225,24 @@ export function ConversationDetail({
     if (initialRespond) respondRef.current?.focus();
   }, [initialRespond, conv?.state]);
 
-  const send = async () => {
-    if (!respondText.trim() || sending) return;
+  // Send a response — canned chip text or the textarea's contents.
+  const send = async (canned?: string) => {
+    const text = (canned ?? respondText).trim();
+    if (!text || sending) return;
     setSending(true);
     try {
-      await respondToLeader(conversationId, respondText.trim());
+      await respondToLeader(conversationId, text);
       setRespondText("");
       await load();
       onAction();
     } finally {
       setSending(false);
     }
+  };
+
+  const focusDiscuss = () => {
+    setRespondText((t) => t || "Not yet — ");
+    respondRef.current?.focus();
   };
 
   const resume = async (rounds: number) => {
@@ -336,10 +351,10 @@ export function ConversationDetail({
               </div>
             </div>
 
-            {/* respond footer */}
+            {/* respond footer — canned actions first, free text second */}
             {waiting && (
               <div
-                className="flex-shrink-0 px-6 pb-[18px] pt-[15px]"
+                className="max-h-[46vh] flex-shrink-0 overflow-y-auto px-6 pb-[18px] pt-[15px]"
                 style={{ borderTop: "1px solid rgba(227,164,92,0.3)", background: "rgba(227,164,92,0.05)" }}
               >
                 <div className="mx-auto mb-[7px] max-w-[720px] font-mono text-[10px] font-bold tracking-[0.14em] text-brand">
@@ -350,6 +365,18 @@ export function ConversationDetail({
                     {gateText}
                   </div>
                 )}
+                <div className="mx-auto mt-3 max-w-[720px]">
+                  {conv.mode === "brainstorm" && pendingVault.length > 0 ? (
+                    <VaultManifest
+                      rows={pendingVault}
+                      onSend={(text) => send(text)}
+                      onDiscuss={focusDiscuss}
+                      disabled={sending}
+                    />
+                  ) : (
+                    <GateChips onSend={(text) => send(text)} disabled={sending} />
+                  )}
+                </div>
                 <textarea
                   ref={respondRef}
                   value={respondText}
@@ -357,12 +384,12 @@ export function ConversationDetail({
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
                   }}
-                  placeholder="Your answer — ⌘⏎ to send"
-                  className="mx-auto mt-[11px] block h-[72px] w-full max-w-[720px] resize-y rounded-xl border border-line-dash bg-field px-3 py-2.5 text-[13.5px] leading-[1.5] text-ink outline-none focus:border-[rgba(227,164,92,0.6)]"
+                  placeholder="Or type your answer — ⌘⏎ to send"
+                  className="mx-auto mt-3 block h-[72px] w-full max-w-[720px] resize-y rounded-xl border border-line-dash bg-field px-3 py-2.5 text-[13.5px] leading-[1.5] text-ink outline-none focus:border-[rgba(227,164,92,0.6)]"
                 />
                 <div className="mx-auto mt-2.5 flex max-w-[720px] justify-end">
                   <button
-                    onClick={send}
+                    onClick={() => send()}
                     disabled={!respondText.trim() || sending}
                     className="rounded-lg bg-brand px-[18px] py-2.5 text-[13.5px] font-bold text-[#1a1410] hover:bg-brand-bright disabled:opacity-45"
                   >

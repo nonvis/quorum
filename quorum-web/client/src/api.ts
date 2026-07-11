@@ -10,6 +10,7 @@ import type {
   Flight,
   PlanPayload,
   PlanResult,
+  PendingVaultUpdate,
 } from "./types";
 
 const BASE = "/api";
@@ -48,6 +49,13 @@ export async function startConversation(
       mode: mode ?? undefined,
     }),
   });
+  return res.json();
+}
+
+// Staged VAULT_UPDATEs behind a brainstorm's approval gate.
+export async function fetchPendingVault(id: number): Promise<PendingVaultUpdate[]> {
+  const res = await fetch(`${BASE}/conversations/${id}/pending-vault`);
+  if (!res.ok) return [];
   return res.json();
 }
 
