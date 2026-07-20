@@ -82,21 +82,33 @@ only recommends it). Do this **before** the final checkpoint + graceful
 morning-halt:
 
 ```bash
-quorum knower refresh --project <root> --all
+# Refresh each lens as its OWN command, in cartographer→architect order (architect
+# reads the cartographer index). Do NOT wrap these in a single tight timeout.
+quorum knower refresh --project <root> --knower cartographer
+quorum knower refresh --project <root> --knower architect
+quorum knower refresh --project <root> --knower historian
+quorum knower refresh --project <root> --knower recap
 ```
 
-- Run `--all` (cartographer → architect → historian → recap, in that order; the
-  architect reads the cartographer's index) unless the flight touched only one
-  lens — then refresh just the **affected** knower(s):
+- **Prefer per-lens commands over a single `--all`.** `recap` is the slowest lens
+  (a full timeline mine) and under one `--all` it runs LAST — if the earlier three
+  consume the run's time budget, a wrapping timeout kills the command mid-`recap`
+  and that lens is left stale (observed 2026-07-21, Crucible dogfood). Per-lens
+  commands give each lens its own budget, so one slow lens can't starve the rest,
+  and a lens that fails can be retried in isolation on resume. (`--all` still works
+  and keeps the same order; a *daemon-side* parallelization of `--all` is proposed
+  in `docs/proposals/knower-refresh-scaling.md`, gated on validating concurrent-
+  `converse` SQLite/WAL safety.) If the flight touched only one lens, refresh just
+  the **affected** knower(s):
   - layout / new-files / moved-modules change → `--knower cartographer`
   - cross-module wiring / new edges → `--knower architect`
   - merged decisions / PRs → `--knower historian`
   - "what changed / where we left off" → `--knower recap` (refresh always when in doubt)
 - Each pass is a read-only `converse --mode brainstorm` scan that self-writes the
   knower's `knowledge/ref-*.md`. It spends tokens but mutates no source.
-- If a refresh fails (budget/timeout), note it in the morning review
-  `blocked-on:` and continue to checkpoint — never crash the halt on a refresh
-  failure.
+- If a lens refresh fails (budget/timeout), note the specific lens in the morning
+  review `blocked-on:` (with its `--knower <name>` retry command) and continue to
+  checkpoint — never crash the halt on a refresh failure.
 
 Then proceed to the final checkpoint + morning review (the graceful stop).
 
