@@ -1,7 +1,9 @@
 # Proposal: parallelize `knower refresh --all`
 
-**Status:** implemented behind `--parallel` (default serial) — validation gate
-OPEN · **Origin:** Crucible autopilot dogfood, 2026-07-21
+**Status:** implemented behind `--parallel` — **validation gate PASSED
+2026-07-21** (option 1: WAL sufficient, 5/5 clean live runs; see Validation
+result below). Default stays serial as a UX choice (live streaming), not a
+safety gate. · **Origin:** Crucible autopilot dogfood, 2026-07-21
 
 ## Problem
 
@@ -92,6 +94,26 @@ contention or "database is locked" errors. Before merging, validate one of:
 
 Add a `--parallel` opt-in flag first (default stays serial) so the risky path is
 gated until validated, then flip the default once (1)/(2)/(3) is proven.
+
+## ✅ Validation result (2026-07-21) — option 1 PASSED
+
+Five consecutive `quorum knower refresh --all --parallel` runs against the live
+Crucible project (`~/nonvis/crucible`, warm knowers, real Tier-2 `converse`
+passes sharing one `.quorum/quorum.db` in WAL mode):
+
+- **5/5 runs exit 0; 20/20 lens refreshes clean** — zero `database is locked` /
+  `SQLITE_BUSY` / I/O errors in any captured log.
+- Completion order varied across runs (recap/historian finishing before the
+  cartographer→architect chain), confirming genuinely concurrent tracks.
+- The project working tree and git history were untouched throughout (also a
+  live confirmation of the F6 scoped auto-commit fix).
+
+**WAL is sufficient — options (2)/(3) are unnecessary.** `--parallel` is safe to
+use, including by the autopilot supervisor at end-of-flight. The **default
+remains serial** as a deliberate UX choice: serial `std::system` streams each
+lens's progress live to the operator's terminal, while parallel mode buffers
+per-lens output to completion order. Flip the default only if/when the operator
+decides buffered output is acceptable for the interactive path.
 
 ## Test impact
 
