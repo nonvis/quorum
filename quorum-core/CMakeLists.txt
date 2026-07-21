@@ -157,6 +157,14 @@ target_include_directories(test_auto_commit PRIVATE src)
 target_link_libraries(test_auto_commit PRIVATE SQLite::SQLite3)
 add_test(NAME test_auto_commit COMMAND test_auto_commit)
 
+# Per-run spend readout (cli/spend.h) — PURE helpers (transcript_dir_for munge,
+# lock_started_at --since fallback) + the run_spend no-since/no-LOCK precondition.
+# No python shell-out, no claude.
+add_executable(test_spend tests/unit/test_spend.cpp)
+target_include_directories(test_spend PRIVATE src)
+target_link_libraries(test_spend PRIVATE SQLite::SQLite3)
+add_test(NAME test_spend COMMAND test_spend)
+
 add_executable(test_context_history tests/unit/test_context_history.cpp)
 target_include_directories(test_context_history PRIVATE src)
 add_test(NAME test_context_history COMMAND test_context_history)

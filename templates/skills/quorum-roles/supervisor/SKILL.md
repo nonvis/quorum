@@ -15,7 +15,7 @@ operator-prepared **flight plan** unattended by fanning out **parallel
 subagents** that reuse the existing Quorum specialties. You are a *coordinator,
 not a doer* — you delegate heavy work and keep your own context lean.
 
-The authoritative contract is `templates/specs/autopilot-protocol.md` (v0.4).
+The authoritative contract is `templates/specs/autopilot-protocol.md` (v0.5).
 This skill implements it. You complement the daemon; you do not replace it.
 
 ## How you were started
@@ -114,11 +114,13 @@ quorum knower refresh --project <root> --knower recap
   consume the run's time budget, a wrapping timeout kills the command mid-`recap`
   and that lens is left stale (observed 2026-07-21, Crucible dogfood). Per-lens
   commands give each lens its own budget, so one slow lens can't starve the rest,
-  and a lens that fails can be retried in isolation on resume. (`--all` still works
-  and keeps the same order; a *daemon-side* parallelization of `--all` is now
-  implemented behind `--parallel` (opt-in; default stays serial) in
-  `docs/proposals/knower-refresh-scaling.md`, still gated on validating
-  concurrent-`converse` SQLite/WAL safety before it becomes the default.) If the
+  and a lens that fails can be retried in isolation on resume. (Alternatively:
+  `--all --parallel` runs the three independent tracks concurrently —
+  {cartographer→architect} ∥ {historian} ∥ {recap} — cutting wall time to
+  roughly the slowest track, with per-lens buffered output and per-track failure
+  isolation. **WAL-validated 2026-07-21**: 5/5 clean live runs, zero SQLite lock
+  errors — see `docs/proposals/knower-refresh-scaling.md`. Either form is fine
+  at end-of-flight; the CLI default stays serial for live streaming.) If the
   flight touched only one lens, refresh just
   the **affected** knower(s):
   - layout / new-files / moved-modules change → `--knower cartographer`
@@ -184,10 +186,16 @@ You do NOT auto-relaunch and you do NOT puppet a TUI. On any stop, the operator
 resumes by restarting `claude --agent supervisor` — your Step 0 startup gate
 reads the checkpoint + SUPERVISOR.md + records and continues where you left off.
 
-**On EVERY stop route** — after the final checkpoint + morning review are
-written — **release repo ownership:** `rm -f .quorum/autopilot/LOCK`. The LOCK
-must not survive a graceful stop; a stranded LOCK blocks the operator's post-run
-git and forces the next session to treat it as stale.
+**On EVERY stop route** — before releasing repo ownership — **capture the spend
+readout:** run `quorum spend --project <root>` and copy its `TOTAL` line + the
+`window_budget_usd` comparison into the morning review's `spend:` field. Run this
+**BEFORE** `rm -f LOCK`: spend defaults its `--since` to the LOCK's line-1 flight
+start time, so it must read the LOCK while it still exists. If the readout fails,
+record `spend: unavailable` and continue — never crash the halt on it.
+
+Then **release repo ownership:** `rm -f .quorum/autopilot/LOCK`. The LOCK must not
+survive a graceful stop; a stranded LOCK blocks the operator's post-run git and
+forces the next session to treat it as stale.
 
 ## Morning review (what the operator wakes to)
 
@@ -197,6 +205,8 @@ Before any stop, update the checkpoint's `## Morning review`:
 - **pending:** the tasks not yet started (and the resume point inside an
   in-flight task)
 - **blocked-on:** any human question that caused a `needs_human` stop, or `none`
+- **spend:** the `quorum spend` total + `window_budget_usd` comparison, captured
+  at halt before LOCK removal; `unavailable` if the readout failed
 
 This is the "wake to completed work + refreshed knower vaults + paused items"
 experience — produced by you, recorded durably.

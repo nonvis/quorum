@@ -21,7 +21,7 @@ Load and follow the behavioral skill at
 `~/.claude/skills/quorum-roles/supervisor/SKILL.md` (installed by
 `scripts/install-skills.sh`; canonical source
 `templates/skills/quorum-roles/supervisor/SKILL.md`). The authoritative contract
-is `templates/specs/autopilot-protocol.md` (v0.4).
+is `templates/specs/autopilot-protocol.md` (v0.5).
 
 The loop, in brief (the SKILL is the full version):
 
@@ -43,7 +43,8 @@ The loop, in brief (the SKILL is the full version):
    lean. When context nears full, checkpoint + summarize + halt.
 5. **Stop → checkpoint → operator resumes (Model A):** on complete /
    context-full / window-exhausted / needs-human / configured-stop, write the
-   checkpoint + morning-review state, remove `.quorum/autopilot/LOCK`, and STOP.
+   checkpoint + morning-review state (incl. the `quorum spend` readout, captured
+   before LOCK removal), remove `.quorum/autopilot/LOCK`, and STOP.
    The operator resumes by restarting `claude --agent supervisor`. No
    auto-relaunch, no TUI-puppeting.
 

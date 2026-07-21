@@ -448,7 +448,7 @@ export function generateSupervisorMd(projectPath: string, plan: PlanPayload): st
   out += "---\n";
   out += "title: Autopilot flight plan\n";
   out += "generated_by: quorum-web autopilot composer\n";
-  out += "spec_version: 0.4\n";
+  out += "spec_version: 0.5\n";
   out += `project_root: ${projectPath}\n`;
   out += `mode: ${plan.mode}\n`;
   out += `goal: ${oneLineGoal}\n`;
@@ -542,6 +542,7 @@ export function renderCheckpointSkeleton(utc: string): string {
   out += "- done: none yet\n";
   out += "- pending: (populated on first run)\n";
   out += "- blocked-on: none\n";
+  out += "- spend: (captured at halt)\n";
   return out;
 }
 

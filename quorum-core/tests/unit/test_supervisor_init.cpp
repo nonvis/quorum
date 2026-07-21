@@ -93,7 +93,7 @@ static void test_A_generate_with_roster(const fs::path& tdir) {
           "A(a): frontmatter title present");
     check(contains(md, "generated_by: quorum supervisor init"),
           "A(a): frontmatter generated_by present");
-    check(contains(md, "spec_version: 0.4"),
+    check(contains(md, "spec_version: 0.5"),
           "A(a): frontmatter spec_version present");
     check(contains(md, "## Project"), "A(a): Project heading present");
     check(contains(md, "- name: A_roster"),
@@ -194,6 +194,8 @@ static void test_C_checkpoint_skeleton() {
           "C: morning-review pending line");
     check(contains(cp, "- blocked-on: none"),
           "C: morning-review blocked-on line");
+    check(contains(cp, "- spend: (captured at halt)"),
+          "C: morning-review spend line");
 }
 
 // ---- Case D: run_supervisor_init (bootstrap discipline) -------------------

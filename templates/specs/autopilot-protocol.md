@@ -5,7 +5,7 @@
 > output-parity discipline. Skill authors and the `quorum supervisor init`
 > generator both implement this spec. Read it before changing either.
 
-Spec version: 0.4
+Spec version: 0.5
 Last updated: 2026-07-21
 Lineage: Research/04 - Autopilot Engine (Phase 13 design source-of-truth);
 companion to `handoff-protocol.md`. (Phase 14 retired the scribe and librarian;
@@ -121,7 +121,7 @@ Canonical structure:
 ---
 title: Autopilot flight plan
 generated_by: quorum supervisor init
-spec_version: 0.4
+spec_version: 0.5
 project_root: <abs path>
 ---
 
@@ -217,6 +217,7 @@ Flight spec: 0.1
 - done: <tasks | none yet>
 - pending: <tasks>
 - blocked-on: <none | the human question>
+- spend: <the `quorum spend` total + window-budget comparison | unavailable>
 ```
 
 Field rules:
@@ -225,7 +226,12 @@ Field rules:
 - **Condensed outcomes** hold conclusions, never raw work detail (context
   discipline — the records are the supervisor's external memory).
 - `Updated at:` refreshed on every checkpoint write; `Created at:` written once.
-- **Morning review** is what the operator wakes to: done / pending / blocked-on.
+- **Morning review** is what the operator wakes to: done / pending / blocked-on /
+  spend.
+- **spend** is the `quorum spend` total + window-budget comparison, captured at
+  halt BEFORE LOCK removal (spend reads the LOCK's line-1 flight-start time as its
+  `--since`, so it must run while the LOCK still exists); `unavailable` if the
+  readout failed.
 
 ## Output parity (the core correctness rule)
 
@@ -310,6 +316,14 @@ and the `quorum supervisor init` generator; add a changelog entry.
 
 ## Changelog
 
+- **0.5** (2026-07-21): Per-run spend readout added. The checkpoint Morning
+  review gains a `spend:` field — the `quorum spend` total + window-budget
+  comparison, captured at halt BEFORE LOCK removal (spend reads the LOCK's line-1
+  flight-start time as its `--since`), `unavailable` on readout failure.
+  `quorum spend` is a deterministic ($0), no-LLM readout that sums the Claude Code
+  transcripts against `window_budget_usd`, with the daemon SQLite
+  (`conversations.spent_usd`) reported as a separate cross-check (never summed into
+  the transcript estimate).
 - **0.4** (2026-07-21): Git discipline formalized after the Crucible autopilot
   dogfood. The supervisor commits per major task, staging only the paths the task
   touched (never `git add -A`); the daemon's completion auto-commit is scoped to

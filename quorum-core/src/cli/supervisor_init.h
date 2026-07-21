@@ -144,7 +144,7 @@ namespace detail {
     out += "---\n";
     out += "title: Autopilot flight plan\n";
     out += "generated_by: quorum supervisor init\n";
-    out += "spec_version: 0.4\n";
+    out += "spec_version: 0.5\n";
     out += "project_root: " + project_root + "\n";
     out += "---\n\n";
 
@@ -248,6 +248,7 @@ namespace detail {
     out += "- done: none yet\n";
     out += "- pending: (populated on first run)\n";
     out += "- blocked-on: none\n";
+    out += "- spend: (captured at halt)\n";
     return out;
 }
 

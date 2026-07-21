@@ -35,6 +35,7 @@
 #include "cli/search.h"
 #include "cli/supervisor_init.h"
 #include "cli/knower_refresh.h"
+#include "cli/spend.h"
 #include "utils/discover.h"
 #include "utils/self_path.h"
 
@@ -152,6 +153,9 @@ static void print_usage(const char* prog) {
               << "                                          Re-run the read-only knower scan(s) so the knower vaults re-survey the codebase\n"
               << "                                          --parallel (with --all): refresh independent lenses concurrently (cartographer->architect stays ordered);\n"
               << "                                            output is buffered per lens. Opt-in — see docs/proposals/knower-refresh-scaling.md\n"
+              << "  " << prog << " spend [--project <path|name>] [--since <ISO8601>] [--until <ISO8601>] [--json]\n"
+              << "                                          Per-run token/$ spend readout from the Claude Code transcripts (deterministic, $0);\n"
+              << "                                            --since defaults to the flight start in .quorum/autopilot/LOCK\n"
               << "  " << prog << " benchmark --role <r> --task <name>          Run one synthetic benchmark for a role-specialty\n"
               << "  " << prog << " benchmark --role <r>                        Run all benchmarks for a role-specialty (aggregate)\n"
               << "  " << prog << " benchmark --role <r> --dry-run              Smoke-test setup; skip the daemon spawn\n"
@@ -506,6 +510,7 @@ int main(int argc, char* argv[]) {
     std::string supervisor_subcmd_arg;
     sui::quorum::cli::KnowerRefreshOptions knower_refresh_opts;    // Phase 14 T3
     std::string knower_subcmd_arg;
+    sui::quorum::cli::SpendOptions spend_opts;                     // per-run spend readout
 
     if (subcommand == "converse") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
@@ -699,6 +704,20 @@ int main(int argc, char* argv[]) {
                       << ">] [--project <path|name>]\n";
             return 1;
         }
+    } else if (subcommand == "spend") {
+        // Per-run token/$ spend readout — `quorum spend [--project <path|name>]
+        //   [--since <ISO8601>] [--until <ISO8601>] [--json]`.
+        for (size_t i = 0; i < sub_args.size(); ++i) {
+            if (sub_args[i] == "--project" && i + 1 < sub_args.size()) {
+                spend_opts.project = sub_args[++i];
+            } else if (sub_args[i] == "--since" && i + 1 < sub_args.size()) {
+                spend_opts.since = sub_args[++i];
+            } else if (sub_args[i] == "--until" && i + 1 < sub_args.size()) {
+                spend_opts.until = sub_args[++i];
+            } else if (sub_args[i] == "--json") {
+                spend_opts.json = true;
+            }
+        }
     } else if (!subcommand.empty() && subcommand != "status") {
         std::cerr << "Unknown subcommand: " << subcommand << "\n";
         print_usage(argv[0]);
@@ -845,6 +864,16 @@ int main(int argc, char* argv[]) {
         knower_refresh_opts.quorum_root =
             sui::quorum::quorum_repo_root_from_exe(argv[0]);
         return sui::quorum::cli::run_knower_refresh(knower_refresh_opts);
+    }
+
+    // Per-run spend readout — `quorum spend`. No --config needed: shells out to
+    // scripts/spend_readout.py (deterministic, read-only, $0). Resolve the quorum
+    // repo root from the OS's real executable path (same self-resolution as
+    // knower refresh, robust to the installed `quorum` PATH symlink).
+    if (subcommand == "spend") {
+        spend_opts.quorum_root =
+            sui::quorum::quorum_repo_root_from_exe(argv[0]);
+        return sui::quorum::cli::run_spend(spend_opts);
     }
 
     // Agent list/modify/history don't need --config -- they work with .quorum/ directly
