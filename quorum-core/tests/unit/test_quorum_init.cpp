@@ -209,6 +209,104 @@ static void test_agent_create_detects_quorum_dir() {
     cleanup_temp(tmp);
 }
 
+// --- Test G: detect_repo_specialties ----------------------------------------
+
+static void test_detect_repo_specialties() {
+    std::cout << "\n=== G. detect_repo_specialties ===\n\n";
+
+    auto tmp = make_temp_dir();
+
+    auto s0 = sui::quorum::cli::detect_repo_specialties(tmp);
+    check(s0.empty(), "G: empty dir -> no specialties");
+
+    { std::ofstream f(fs::path(tmp) / "Move.toml"); f << "[package]\nname = \"x\"\n"; }
+    auto s1 = sui::quorum::cli::detect_repo_specialties(tmp);
+    check(s1.size() == 1, "G: Move.toml -> 1 specialty");
+    check(s1.size() == 1 && s1[0].name == "move-dev",
+          "G: Move.toml -> {move-dev}");
+
+    { std::ofstream f(fs::path(tmp) / "package.json"); f << "{}\n"; }
+    { std::ofstream f(fs::path(tmp) / "CMakeLists.txt"); f << "cmake_minimum_required(VERSION 3.20)\n"; }
+    auto s3 = sui::quorum::cli::detect_repo_specialties(tmp);
+    check(s3.size() == 3, "G: all three markers -> 3 specialties");
+    check(s3.size() == 3 && s3[0].name == "move-dev" && s3[1].name == "ts-dev"
+              && s3[2].name == "cpp-dev",
+          "G: deterministic order move-dev, ts-dev, cpp-dev");
+
+    cleanup_temp(tmp);
+}
+
+// --- Test H: ensure_gitignore_entries ---------------------------------------
+
+static void test_ensure_gitignore_entries() {
+    std::cout << "\n=== H. ensure_gitignore_entries ===\n\n";
+
+    auto tmp = make_temp_dir();
+
+    // 1. No existing file -> creates with comment + entries, returns count.
+    auto gi = (fs::path(tmp) / ".gitignore").string();
+    int n1 = sui::quorum::cli::ensure_gitignore_entries(
+        gi, {".DS_Store", ".idea/", ".vscode/"});
+    check(n1 == 3, "H: fresh file appends 3 entries");
+    auto c1 = read_file(gi);
+    check(c1.find("# added by quorum init") != std::string::npos,
+          "H: comment marker written");
+    check(c1.find(".idea/") != std::string::npos, "H: .idea/ present");
+
+    // 2. Existing file with trailing-whitespace variants -> only missing
+    //    appended; existing content preserved verbatim as a prefix.
+    auto gi2 = (fs::path(tmp) / "gi2").string();
+    { std::ofstream f(gi2, std::ios::binary); f << "node_modules/\n.idea/   \n"; }
+    auto prefix = read_file(gi2);
+    int n2 = sui::quorum::cli::ensure_gitignore_entries(
+        gi2, {".DS_Store", ".idea/", ".vscode/", "node_modules/"});
+    check(n2 == 2, "H: appends only the 2 missing (.idea/ + node_modules/ dedup)");
+    auto c2 = read_file(gi2);
+    check(c2.rfind(prefix, 0) == 0,
+          "H: existing content preserved verbatim as prefix");
+    check(c2.find(".DS_Store") != std::string::npos
+              && c2.find(".vscode/") != std::string::npos,
+          "H: the 2 missing entries appended");
+
+    // 3. Second identical call -> returns 0, file byte-for-byte unchanged.
+    auto before = read_file(gi2);
+    int n3 = sui::quorum::cli::ensure_gitignore_entries(
+        gi2, {".DS_Store", ".idea/", ".vscode/", "node_modules/"});
+    check(n3 == 0, "H: idempotent second call returns 0");
+    check(read_file(gi2) == before, "H: file unchanged on second call");
+
+    cleanup_temp(tmp);
+}
+
+// --- Test I: init auto-attaches the language specialty (F10 + F7) ------------
+
+static void test_init_attaches_move_specialty() {
+    std::cout << "\n=== I. init auto-attaches move-dev for a Move repo ===\n\n";
+
+    auto tmp = make_temp_dir();
+    auto original_cwd = fs::current_path();
+    fs::current_path(tmp);
+
+    { std::ofstream f("Move.toml"); f << "[package]\nname = \"demo\"\n"; }
+
+    int rc = sui::quorum::cli::init_project();
+    check(rc == 0, "I: init_project returns 0");
+
+    check(fs::exists(".quorum/agents/move-dev.yaml"),
+          "I: .quorum/agents/move-dev.yaml exists");
+
+    auto ctx = read_file(".quorum/vaults/move-dev/CONTEXT.md");
+    check(ctx.find("sui-dev-skills") != std::string::npos,
+          "I: move-dev CONTEXT.md mentions sui-dev-skills");
+
+    auto gi = read_file(".gitignore");
+    check(gi.find(".idea/") != std::string::npos,
+          "I: root .gitignore contains .idea/");
+
+    fs::current_path(original_cwd);
+    cleanup_temp(tmp);
+}
+
 // --- main -------------------------------------------------------------------
 
 int main() {
@@ -220,6 +318,9 @@ int main() {
     test_init_refuses_double_init();
     test_init_creates_gitignore();
     test_agent_create_detects_quorum_dir();
+    test_detect_repo_specialties();
+    test_ensure_gitignore_entries();
+    test_init_attaches_move_specialty();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)
               << " tests passed ---\n";

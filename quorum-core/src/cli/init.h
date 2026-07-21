@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,162 @@
 
 namespace fs = std::filesystem;
 namespace sui::quorum::cli {
+
+// A language "specialty" doer that init can auto-attach to a fresh project
+// based on a root-level marker file (F10). `marker` records which file
+// triggered detection (surfaced in init's summary); `description` is the
+// one-line agent description passed to create_agent.
+struct RepoSpecialty {
+    std::string name;         // e.g. "move-dev"
+    std::string language;     // e.g. "Sui Move 2024"
+    std::string marker;       // root-level marker file, e.g. "Move.toml"
+    std::string description;  // one-line agent description
+};
+
+// Detect language specialties from ROOT-LEVEL marker files in `dir`. A repo may
+// match several; order is deterministic: move-dev, ts-dev, cpp-dev.
+inline std::vector<RepoSpecialty> detect_repo_specialties(const fs::path& dir) {
+    std::vector<RepoSpecialty> out;
+    if (fs::exists(dir / "Move.toml")) {
+        out.push_back({
+            "move-dev", "Sui Move 2024", "Move.toml",
+            "move-dev: Sui Move 2024 smart-contract doer — implements and tests "
+            "Move modules; invokes the sui-dev-skills + move-code-quality skills"});
+    }
+    if (fs::exists(dir / "package.json")) {
+        out.push_back({
+            "ts-dev", "TypeScript", "package.json",
+            "ts-dev: TypeScript doer — implements and tests TypeScript; matches "
+            "the project's existing lint/format config (no extra skill)"});
+    }
+    if (fs::exists(dir / "CMakeLists.txt")) {
+        out.push_back({
+            "cpp-dev", "C++", "CMakeLists.txt",
+            "cpp-dev: C++ doer — implements and tests C++ code; invokes the "
+            "cpp-code-quality skill"});
+    }
+    return out;
+}
+
+// Build the deterministic, project-agnostic CONTEXT.md for a specialty doer.
+//
+// ☠️ This content is mirrored, byte-for-byte, by write_specialty_context() in
+// scripts/setup-knowers.sh (which seeds specialties into ALREADY-initialized
+// projects). The two MUST move together — same precedent as the knower
+// descriptions duplicated between this file and that script.
+inline std::string specialty_context_md(const std::string& name,
+                                        const std::string& language) {
+    std::string domain;  // "## Domain skills" body (ends with a newline)
+    std::string gate;    // "## Gate discipline" body (ends with a newline)
+    if (name == "move-dev") {
+        domain =
+            "Behavioral patterns come from the **quorum-roles/doer** skill (loaded via `skill_file`). Invoke these globally-installed domain skills when you write Move:\n"
+            "\n"
+            "- **sui-dev-skills** — Move contracts, the Sui object model, PTBs, on-chain testing\n"
+            "- **move-code-quality** — the Move 2024 code-quality checklist\n";
+        gate =
+            "- Run `sui move build` AND `sui move test` before declaring a task done.\n"
+            "- Report the ACTUAL result line (paste the `Test result:` line). A gate you didn't execute is not a gate.\n";
+    } else if (name == "cpp-dev") {
+        domain =
+            "Behavioral patterns come from the **quorum-roles/doer** skill (loaded via `skill_file`). Invoke this globally-installed domain skill when you write C++:\n"
+            "\n"
+            "- **cpp-code-quality** — the C++ code-quality checklist\n";
+        gate =
+            "- Run the project's cmake build AND `ctest` before declaring a task done.\n"
+            "- Report the ACTUAL result line (paste the ctest pass/fail summary). A gate you didn't execute is not a gate.\n";
+    } else {  // ts-dev (and any other TS-flavored specialty)
+        domain =
+            "Behavioral patterns come from the **quorum-roles/doer** skill (loaded via `skill_file`). There is no TypeScript-specific skill — write plain TypeScript and match the project's existing lint/format config (eslint/prettier/tsconfig).\n";
+        gate =
+            "- Run the project's `build` / `typecheck` scripts (and its test script, if one exists) before declaring a task done.\n"
+            "- Report the ACTUAL result line. A gate you didn't execute is not a gate.\n";
+    }
+
+    std::string s;
+    s += "# " + name + " — Agent Context\n";
+    s += "\n";
+    s += "## Role\n";
+    s += "\n";
+    s += "You are the **" + name + "** (doer). A " + language +
+         " developer for this project. You implement and test; you do not route or plan.\n";
+    s += "\n";
+    s += "## Domain skills\n";
+    s += "\n";
+    s += domain;
+    s += "\n";
+    s += "## Repo conventions\n";
+    s += "\n";
+    s += "(fill in per project — replace these placeholders with the specifics)\n";
+    s += "\n";
+    s += "- Verified build/test commands — the exact invocations that pass on this machine.\n";
+    s += "- Edition / toolchain pins — compiler, framework, and language-edition versions.\n";
+    s += "- The ground-truth design doc — the file that outranks tickets and code.\n";
+    s += "- Mock seams — what is mocked, and where the real-implementation markers live.\n";
+    s += "\n";
+    s += "## Gate discipline (non-negotiable)\n";
+    s += "\n";
+    s += gate;
+    // universal_rules_for_role() begins with "\n## Universal Rules\n\n..." — the
+    // leading newline yields the blank line between the gate block and the header.
+    s += universal_rules_for_role("doer");
+    return s;
+}
+
+// Append-only .gitignore maintenance (F7). Reads existing lines (file may be
+// absent), compares after trimming trailing whitespace/CR, and appends only the
+// entries not already present — under a single "# added by quorum init" comment
+// (written once, and only when appending ≥1 entry and the marker isn't already
+// present). Existing content is preserved byte-for-byte as a prefix. Returns the
+// number of entries appended. Best-effort: never throws init into failure.
+inline int ensure_gitignore_entries(const fs::path& gitignore_path,
+                                     const std::vector<std::string>& entries) {
+    std::string raw;
+    bool had_content = false;
+    bool ends_with_newline = true;  // absent/empty file = clean boundary
+    std::vector<std::string> existing;
+    if (fs::exists(gitignore_path)) {
+        std::ifstream in(gitignore_path, std::ios::binary);
+        raw.assign(std::istreambuf_iterator<char>(in),
+                   std::istreambuf_iterator<char>());
+        had_content = !raw.empty();
+        ends_with_newline = raw.empty() || raw.back() == '\n';
+        std::istringstream ss(raw);
+        std::string line;
+        while (std::getline(ss, line)) {
+            size_t end = line.find_last_not_of(" \t\r");
+            existing.push_back(end == std::string::npos ? std::string()
+                                                        : line.substr(0, end + 1));
+        }
+    }
+
+    auto contains = [&existing](const std::string& e) {
+        for (const auto& l : existing) if (l == e) return true;
+        return false;
+    };
+
+    std::vector<std::string> to_add;
+    for (const auto& e : entries) {
+        bool already = contains(e);
+        for (const auto& a : to_add) if (a == e) already = true;  // dedup in-call
+        if (!already) to_add.push_back(e);
+    }
+    if (to_add.empty()) return 0;
+
+    const std::string marker = "# added by quorum init";
+    const bool has_marker = contains(marker);
+
+    std::ofstream out(gitignore_path, std::ios::binary | std::ios::app);
+    if (!out.is_open()) return 0;  // best-effort; init must not fail on this
+
+    if (had_content && !ends_with_newline) out << "\n";  // close a dangling line
+    if (!has_marker) {
+        if (had_content) out << "\n";  // blank separator before our block
+        out << marker << "\n";
+    }
+    for (const auto& e : to_add) out << e << "\n";
+    return static_cast<int>(to_add.size());
+}
 
 // Resolve the shipped SKILL.md for a knower specialty. First hit wins:
 //   (a) <quorum_root>/templates/skills/<knower>/SKILL.md  (when known)
@@ -220,15 +377,76 @@ inline int init_project(const std::string& quorum_root = "") {
         sui::quorum::cli::create_agent(p);
     }
 
+    // 6c. Auto-attach language specialty doers (F10). For each root-level
+    // marker file detected in the CWD, create a no_ai doer (zero tokens) via
+    // the same create_agent path, then OVERWRITE its CONTEXT.md with the
+    // deterministic, project-agnostic specialty context (like the leader
+    // CONTEXT.md at step 5). create_agent auto-detects the quorum-roles/doer
+    // SKILL from $HOME (matches the Crucible move-dev reference shape).
+    auto specialties = detect_repo_specialties(fs::current_path());
+    std::vector<RepoSpecialty> created_specialties;
+    for (const auto& sp : specialties) {
+        sui::quorum::cli::AgentCreateParams p;
+        p.role = "doer";
+        p.name = sp.name;
+        p.description = sp.description;
+        p.target_dir = ".";
+        p.no_ai = true;
+        if (sui::quorum::cli::create_agent(p) == 0) {
+            auto ctx = std::string(".quorum/vaults/") + sp.name + "/CONTEXT.md";
+            std::ofstream out(ctx, std::ios::trunc);
+            if (out.is_open()) out << specialty_context_md(sp.name, sp.language);
+            created_specialties.push_back(sp);
+            std::cout << "  Auto-attached specialty doer: " << sp.name
+                      << " (detected " << sp.marker << " at repo root)\n";
+        }
+    }
+
+    // 6d. Seed/extend the project's ROOT .gitignore (F7): always ignore IDE +
+    // OS cruft; add per-specialty build output. Append-only — never rewrites
+    // existing content (that's why the dogfood committed .idea/).
+    {
+        std::vector<std::string> ignore = {".DS_Store", ".idea/", ".vscode/"};
+        for (const auto& sp : created_specialties) {
+            if (sp.name == "move-dev") {
+                ignore.push_back("build/");
+            } else if (sp.name == "cpp-dev") {
+                ignore.push_back("build/");
+                ignore.push_back("cmake-build-*/");
+            } else if (sp.name == "ts-dev") {
+                ignore.push_back("node_modules/");
+                ignore.push_back("dist/");
+            }
+        }
+        int added = ensure_gitignore_entries(".gitignore", ignore);
+        if (added > 0) {
+            std::cout << "  .gitignore: appended " << added << " entr"
+                      << (added == 1 ? "y" : "ies")
+                      << " (IDE/OS cruft + build output)\n";
+        } else {
+            std::cout << "  .gitignore: already covers the recommended entries\n";
+        }
+    }
+
     // 7. Print next steps
     std::cout << "  Created: .quorum/vaults/leader/knowledge/\n";
     std::cout << "  Created: .quorum/knowledge/  "
               << "(project-wide rules and references that apply to all agents)\n";
     std::cout << "  Created: .quorum/knowledge/roles/{leader,thinker,doer,evaluator}/  "
               << "(role-specific rules apply to every agent of that role)\n";
-    std::cout << "\nQuorum initialized with 6 agents "
-              << "(leader, thinker, cartographer, architect, historian, recap).\n"
-              << "Next steps:\n";
+    const int total_agents = 6 + static_cast<int>(created_specialties.size());
+    std::cout << "\nQuorum initialized with " << total_agents << " agents "
+              << "(leader, thinker, cartographer, architect, historian, recap";
+    for (const auto& sp : created_specialties) std::cout << ", " << sp.name;
+    std::cout << ").\n";
+    if (!created_specialties.empty()) {
+        std::cout << "Auto-attached language specialties (why):\n";
+        for (const auto& sp : created_specialties) {
+            std::cout << "  - " << sp.name << " — " << sp.language
+                      << ", from " << sp.marker << " at repo root\n";
+        }
+    }
+    std::cout << "Next steps:\n";
     std::cout << "  1. Attach knower specialty skills + Tier-1 scans (token-free):\n";
     std::cout << "     scripts/setup-knowers.sh <project-dir>\n";
     std::cout << "  2. Add more agents (auto-discovered from .quorum/agents/):\n";
