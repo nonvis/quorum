@@ -27,17 +27,30 @@
 // (tests/unit/test_knower_refresh.cpp). The only process I/O that spends tokens
 // is the run-knower.sh shell-out inside run_knower_refresh.
 //
+// ⚠️ PARALLEL MODE (--parallel, OPT-IN, --all only): `--all` can refresh the
+// INDEPENDENT lenses concurrently (see parallel_tracks below). This path is GATED
+// and default-OFF because parallel `converse` instances SHARE the one
+// <project>/.quorum/quorum.db in WAL mode (a quorum.db-wal is present) —
+// concurrent writers there can hit SQLite lock contention / "database is locked".
+// Do NOT flip the default to parallel until the validation gate in
+// docs/proposals/knower-refresh-scaling.md passes (WAL proven sufficient across
+// repeated real runs, OR per-invocation db isolation, OR a write-serializing
+// advisory lock). Serial (std::system, live-streamed) stays the default UX.
+//
 // Header-only, matches the cli/ask.h convention.
 
 #include <cstdlib>
 #include <filesystem>
+#include <future>       // std::async / std::future (parallel path)
 #include <iostream>
+#include <mutex>        // std::mutex — serialize per-lens output blocks
 #include <string>
 #include <vector>
 
 #include <sys/wait.h>   // WIFEXITED / WEXITSTATUS
 
-#include "cli/ask.h"    // resolve_project_path (reused, not reimplemented)
+#include "cli/ask.h"            // resolve_project_path (reused, not reimplemented)
+#include "utils/subprocess.h"   // run_command — capture per-lens output in parallel
 
 namespace sui::quorum::cli {
 
@@ -45,6 +58,8 @@ struct KnowerRefreshOptions {
     std::string project;        // path OR project name; empty = cwd (".")
     std::string knower;         // one of the valid names; empty unless --knower
     bool all = false;           // --all: refresh every knower in dependency order
+    bool parallel = false;      // --parallel (--all only, OPT-IN): run independent
+                                // tracks concurrently. GATED — see header ⚠️ note.
     // Resolved during run: the repo root that contains scripts/run-knower.sh.
     // Set from argv[0] in main.cpp (fs::canonical self-resolution); empty = let
     // run-knower.sh resolution fall back to a best-effort sibling lookup.
@@ -138,6 +153,88 @@ namespace knower_refresh_detail {
     return (fs::path(quorum_root) / "scripts" / "run-knower.sh").string();
 }
 
+// Group the refresh `targets` into concurrency TRACKS: lenses WITHIN a track run
+// SEQUENTIALLY (a track is a dependency chain), and tracks run CONCURRENTLY. PURE.
+//
+// WHY cartographer and architect share ONE track (a real dependency edge, not a
+// cosmetic ordering): the architect SKILL opportunistically reads cartographer's
+// *Tier-2* output. templates/skills/architect/SKILL.md:17 ("Read those first")
+// directs architect to read `.quorum/cartographer/layout.json` AND, when present,
+// cartographer's annotated `ref-project-index.md` as its component inventory. A
+// fresh cartographer Tier-2 pass therefore improves architect's input, so
+// architect must run AFTER cartographer — same track, cartographer first. The
+// other two lenses read only their OWN Tier-1 inputs (historian:
+// decisions-raw.json, recap: timeline-raw.json), so each is an independent
+// single-lens track that can run fully in parallel.
+//
+// Contract:
+//   - cartographer AND architect both in targets -> one track
+//     {cartographer, architect} (cartographer first).
+//   - a LONE architect (cartographer NOT in targets) -> its own single-lens track.
+//   - every other knower -> its own single-lens track.
+//   - relative order follows ordered_knowers().
+// For the full --all list this yields {{cartographer, architect}, {historian},
+// {recap}} — three tracks, so wall time = max(carto+arch, historian, recap), NOT
+// a 4-way flatten (the carto->arch chain forbids that).
+[[nodiscard]] inline std::vector<std::vector<std::string>> parallel_tracks(
+    const std::vector<std::string>& targets) {
+    auto in_targets = [&](const std::string& name) {
+        for (const auto& t : targets)
+            if (t == name) return true;
+        return false;
+    };
+    const bool has_carto = in_targets("cartographer");
+
+    std::vector<std::vector<std::string>> tracks;
+    // Iterate the canonical order so relative order is preserved and cartographer
+    // is always processed (its track created) before architect.
+    for (const auto& k : ordered_knowers()) {
+        if (!in_targets(k)) continue;
+        if (k == "architect" && has_carto) {
+            // Chain architect onto cartographer's (already-created) track.
+            for (auto& track : tracks) {
+                if (!track.empty() && track.front() == "cartographer") {
+                    track.push_back("architect");
+                    break;
+                }
+            }
+        } else {
+            tracks.push_back({k});
+        }
+    }
+    return tracks;
+}
+
+// One lens's outcome in a parallel refresh run. PURE data.
+//   exit_code == 0 && !skipped -> refreshed
+//   exit_code != 0 && !skipped -> failed (ran, nonzero exit)
+//   skipped                    -> never ran (an earlier lens in ITS track failed)
+struct LensResult {
+    std::string knower;
+    int exit_code = 0;
+    bool skipped = false;
+};
+
+// The reduced tally of a parallel run. PURE data.
+struct RefreshTally {
+    int failed_count = 0;
+    int skipped_count = 0;
+    int refreshed_count = 0;
+};
+
+// Reduce per-lens results to counts. PURE — the parallel path's summary math, so
+// it is unit-testable without spawning anything.
+[[nodiscard]] inline RefreshTally summarize_results(
+    const std::vector<LensResult>& results) {
+    RefreshTally t;
+    for (const auto& r : results) {
+        if (r.skipped) ++t.skipped_count;
+        else if (r.exit_code != 0) ++t.failed_count;
+        else ++t.refreshed_count;
+    }
+    return t;
+}
+
 }  // namespace knower_refresh_detail
 
 // Top-level entrypoint for `quorum knower refresh`. Resolves the project root
@@ -168,6 +265,14 @@ namespace knower_refresh_detail {
     if (!opts.all && !is_valid_knower(opts.knower)) {
         std::cerr << "ERROR: unknown knower '" << opts.knower
                   << "' (valid: " << valid_knowers_list() << ")\n";
+        return 1;
+    }
+
+    // 1b. --parallel is --all-only. Reject it early (BEFORE project resolution,
+    //     so this needs no fixture project) — parallelism only makes sense across
+    //     the multi-lens --all set.
+    if (opts.parallel && !opts.all) {
+        std::cerr << "ERROR: --parallel requires --all\n";
         return 1;
     }
 
@@ -211,6 +316,118 @@ namespace knower_refresh_detail {
         }
     }
 
+    // 5p. PARALLEL path (opt-in, --all only — enforced at step 1b). Run each TRACK
+    //     concurrently; within a track lenses run SEQUENTIALLY (cartographer ->
+    //     architect). A lens failure skips only the REMAINING lenses of ITS OWN
+    //     track — other tracks run to completion (a historian failure must NOT
+    //     skip recap).
+    //
+    //     OUTPUT DISCIPLINE: three concurrent std::system calls would interleave
+    //     their line-buffered progress into garbage. So in parallel mode we
+    //     CAPTURE each lens's combined stdout+stderr with run_command (popen) and
+    //     print it as ONE block when that lens finishes, under a header, guarded
+    //     by a std::mutex. TRADE-OFF: this forgoes the LIVE streaming that serial
+    //     std::system gives the operator — which is exactly WHY serial stays the
+    //     default UX. stdout here is in lens-COMPLETION order, not launch order.
+    if (opts.parallel) {
+        auto tracks = parallel_tracks(targets);
+
+        std::cout << "knower refresh: launching " << tracks.size()
+                  << " track(s) in parallel (project: " << project_root
+                  << "):\n";
+        for (const auto& track : tracks) {
+            std::cout << "  - ";
+            for (size_t i = 0; i < track.size(); ++i)
+                std::cout << (i ? " -> " : "") << track[i];
+            std::cout << "\n";
+        }
+        std::cout.flush();
+
+        std::mutex print_mu;
+        auto quote = [](const std::string& s) { return "\"" + s + "\""; };
+
+        // Run one track sequentially; return a LensResult per lens in it. Captures
+        // by ref are safe: every future is .get()'d before this function returns.
+        auto run_track =
+            [&](const std::vector<std::string>& track)
+            -> std::vector<LensResult> {
+            std::vector<LensResult> out;
+            bool track_failed = false;
+            for (const auto& k : track) {
+                if (track_failed) {
+                    // An earlier lens in THIS track failed -> skip the rest of it.
+                    out.push_back(LensResult{k, 0, /*skipped=*/true});
+                    std::lock_guard<std::mutex> lk(print_mu);
+                    std::cout << "=== knower " << k
+                              << " skipped (upstream lens in its track failed) "
+                                 "===\n";
+                    std::cout.flush();
+                    continue;
+                }
+                // 2>&1: fold stderr into the captured stream so nothing is lost
+                // (run_command reads stdout only). run-knower.sh re-resolves the
+                // project to an absolute path itself.
+                std::string cmd = quote(script) + " " + quote(project_root) +
+                                  " " + k + " 2>&1";
+                auto res = sui::quorum::run_command(cmd);
+                int exit_code = res ? res->exit_code : -1;
+                {
+                    std::lock_guard<std::mutex> lk(print_mu);
+                    std::cout << "=== knower " << k << " finished (exit "
+                              << exit_code << ") ===\n";
+                    if (res) std::cout << res->output;
+                    std::cout.flush();
+                }
+                out.push_back(LensResult{k, exit_code, /*skipped=*/false});
+                if (exit_code != 0) track_failed = true;
+            }
+            return out;
+        };
+
+        // Launch every track concurrently, then collect (blocks per track).
+        std::vector<std::future<std::vector<LensResult>>> futs;
+        futs.reserve(tracks.size());
+        for (const auto& track : tracks)
+            futs.push_back(std::async(std::launch::async, run_track, track));
+
+        std::vector<LensResult> results;
+        for (auto& f : futs) {
+            auto track_res = f.get();
+            for (auto& r : track_res) results.push_back(std::move(r));
+        }
+
+        // End summary: per-lens one-liner, then the existing-style final line.
+        auto tally = summarize_results(results);
+        std::cout << "\n=== knower refresh summary ===\n";
+        for (const auto& r : results) {
+            if (r.skipped)
+                std::cout << "  " << r.knower << ": skipped\n";
+            else if (r.exit_code != 0)
+                std::cout << "  " << r.knower << ": FAILED (exit "
+                          << r.exit_code << ")\n";
+            else
+                std::cout << "  " << r.knower << ": refreshed\n";
+        }
+        // Retry hint: the exact single-lens command per failed/skipped lens.
+        if (tally.failed_count + tally.skipped_count > 0) {
+            std::cout << "retry the un-refreshed lens(es):\n";
+            for (const auto& r : results) {
+                if (r.skipped || r.exit_code != 0)
+                    std::cout << "  quorum knower refresh --knower " << r.knower
+                              << " --project " << project_root << "\n";
+            }
+            std::cerr << "knower refresh: " << tally.failed_count
+                      << " knower(s) failed, " << tally.skipped_count
+                      << " skipped\n";
+            return 1;
+        }
+        std::cout << "knower refresh: " << tally.refreshed_count
+                  << " knower(s) refreshed\n";
+        return 0;
+    }
+
+    // 5s. SERIAL path (default): std::system live-streams each pass to the
+    //     operator's terminal. Stop on the first failure (ordered).
     int failures = 0;
     for (const auto& k : targets) {
         std::cout << "=== refreshing knower: " << k << " (project: "

@@ -115,9 +115,11 @@ quorum knower refresh --project <root> --knower recap
   and that lens is left stale (observed 2026-07-21, Crucible dogfood). Per-lens
   commands give each lens its own budget, so one slow lens can't starve the rest,
   and a lens that fails can be retried in isolation on resume. (`--all` still works
-  and keeps the same order; a *daemon-side* parallelization of `--all` is proposed
-  in `docs/proposals/knower-refresh-scaling.md`, gated on validating concurrent-
-  `converse` SQLite/WAL safety.) If the flight touched only one lens, refresh just
+  and keeps the same order; a *daemon-side* parallelization of `--all` is now
+  implemented behind `--parallel` (opt-in; default stays serial) in
+  `docs/proposals/knower-refresh-scaling.md`, still gated on validating
+  concurrent-`converse` SQLite/WAL safety before it becomes the default.) If the
+  flight touched only one lens, refresh just
   the **affected** knower(s):
   - layout / new-files / moved-modules change → `--knower cartographer`
   - cross-module wiring / new edges → `--knower architect`

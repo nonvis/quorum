@@ -1,7 +1,7 @@
 # Proposal: parallelize `knower refresh --all`
 
-**Status:** proposed (interim mitigation shipped) · **Origin:** Crucible autopilot
-dogfood, 2026-07-21
+**Status:** implemented behind `--parallel` (default serial) — validation gate
+OPEN · **Origin:** Crucible autopilot dogfood, 2026-07-21
 
 ## Problem
 
@@ -31,11 +31,16 @@ Parallelize the independent lenses in `run_knower_refresh`:
 - **Dependency:** only cartographer→architect is stated ("architect reads the
   cartographer index"). `historian` and `recap` read their own Tier-1 inputs
   (`decisions-raw.json`, `timeline-raw.json`) and are independent.
-  - *Confirm first:* the precondition (`required_input_rel`) shows architect
-    depends on the **Tier-1** `cartographer/layout.json` (produced by
-    `setup-knowers.sh`, always present pre-refresh), NOT on cartographer's Tier-2
-    `ref-project-index.md`. If architect does not actually consume cartographer's
-    Tier-2 output, **all four lenses are independent** and can run fully parallel.
+  - *Confirm first — **RESOLVED (2026-07-21):*** the architect SKILL DOES
+    opportunistically read cartographer's **Tier-2** output, not just the Tier-1
+    `layout.json`. `templates/skills/architect/SKILL.md` → "Build on the
+    cartographer index" (line 17, "Read those first") directs architect to read
+    `.quorum/cartographer/layout.json` **AND**, when present, cartographer's
+    annotated `ref-project-index.md` as its component inventory. So a fresh
+    cartographer Tier-2 pass improves architect's input — the carto→arch edge is
+    REAL and stays. The lenses are therefore **not** fully independent; the
+    concurrency shape is three tracks: `{cartographer→architect} ∥ {historian} ∥
+    {recap}` (sequential within a track), NOT a 4-way flatten.
 - **Sketch:** run `{cartographer, historian, recap}` concurrently via
   `std::async(std::launch::async, run_one, lens)`; launch `architect` after
   `cartographer` resolves (or immediately, if the confirm above clears it). Tally
@@ -43,6 +48,34 @@ Parallelize the independent lenses in `run_knower_refresh`:
 - **Expected win:** wall time drops from `Σ(4 lenses)` to
   `max(cartographer+architect, historian, recap)` — roughly halved, more if fully
   independent.
+
+## Implementation (2026-07-21)
+
+Landed daemon-side in `quorum-core/src/cli/knower_refresh.h` (parsed in
+`main.cpp`), unit-tested in `tests/unit/test_knower_refresh.cpp`.
+
+- **Flag:** `--parallel` on `knower refresh` — **opt-in, `--all` only** (rejected
+  with `ERROR: --parallel requires --all` before any project resolution). Default
+  stays **serial**: unchanged behavior, live `std::system` streaming, stop on
+  first failure.
+- **Track model:** targets are grouped by `parallel_tracks()` into concurrency
+  tracks — sequential *within* a track, concurrent *across* tracks. For `--all`
+  this is `{cartographer→architect} ∥ {historian} ∥ {recap}` (the carto→arch
+  Tier-2 edge, RESOLVED above, keeps those two in one ordered track). Each track
+  runs in a `std::async(std::launch::async, …)`. A lens failure skips only the
+  remaining lenses of *its own* track (cartographer failure skips architect); a
+  historian failure does **not** skip recap. Exit 1 if any lens failed or was
+  skipped, with a per-lens `--knower <name>` retry hint.
+- **Buffered-output trade-off:** three concurrent `std::system` calls would
+  interleave line-buffered output into garbage, so parallel mode instead CAPTURES
+  each lens's combined stdout+stderr (via `run_command`/popen) and prints it as
+  one mutex-guarded block under a `=== knower <name> finished (exit N) ===` header
+  when the lens completes. stdout is in completion order, not launch order. This
+  forgoes serial's live streaming — which is exactly why serial remains the
+  default UX.
+- **Still gated:** the ⚠️ Validation gate section below remains the blocker for
+  flipping the default to parallel — `--parallel` exists so the risky
+  shared-`quorum.db` (WAL) path can be validated before it becomes the default.
 
 ## ⚠️ Validation gate (do NOT merge without this)
 

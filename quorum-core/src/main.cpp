@@ -148,8 +148,10 @@ static void print_usage(const char* prog) {
               << "                                          Ask a project's manager (or a specific --agent) a question, read-only\n"
               << "  " << prog << " search \"<query>\" [--project <path|name>] [--agent <name>] [--limit N] [--json]\n"
               << "                                          Deterministic (no-LLM) ranked keyword search over the project's ref-*.md knower notes\n"
-              << "  " << prog << " knower refresh [--all | --knower <name>] [--project <path|name>]\n"
+              << "  " << prog << " knower refresh [--all [--parallel] | --knower <name>] [--project <path|name>]\n"
               << "                                          Re-run the read-only knower scan(s) so the knower vaults re-survey the codebase\n"
+              << "                                          --parallel (with --all): refresh independent lenses concurrently (cartographer->architect stays ordered);\n"
+              << "                                            output is buffered per lens. Opt-in — see docs/proposals/knower-refresh-scaling.md\n"
               << "  " << prog << " benchmark --role <r> --task <name>          Run one synthetic benchmark for a role-specialty\n"
               << "  " << prog << " benchmark --role <r>                        Run all benchmarks for a role-specialty (aggregate)\n"
               << "  " << prog << " benchmark --role <r> --dry-run              Smoke-test setup; skip the daemon spawn\n"
@@ -684,13 +686,15 @@ int main(int argc, char* argv[]) {
                 knower_refresh_opts.knower = sub_args[++i];
             } else if (sub_args[i] == "--all") {
                 knower_refresh_opts.all = true;
+            } else if (sub_args[i] == "--parallel") {
+                knower_refresh_opts.parallel = true;
             } else if (sub_args[i] == "--project" && i + 1 < sub_args.size()) {
                 knower_refresh_opts.project = sub_args[++i];
             }
         }
         if (knower_subcmd_arg.empty()) {
             std::cerr << "ERROR: knower requires a sub-subcommand (refresh)\n";
-            std::cerr << "Usage: quorum knower refresh [--all | --knower <"
+            std::cerr << "Usage: quorum knower refresh [--all [--parallel] | --knower <"
                       << sui::quorum::cli::knower_refresh_detail::valid_knowers_list()
                       << ">] [--project <path|name>]\n";
             return 1;
