@@ -144,7 +144,7 @@ namespace detail {
     out += "---\n";
     out += "title: Autopilot flight plan\n";
     out += "generated_by: quorum supervisor init\n";
-    out += "spec_version: 0.3\n";
+    out += "spec_version: 0.4\n";
     out += "project_root: " + project_root + "\n";
     out += "---\n\n";
 
@@ -194,6 +194,20 @@ namespace detail {
            "surveys + live code) or\n";
     out += "`quorum ask --agent recap`. There is no separate curated layer to "
            "maintain.\n\n";
+
+    // Git discipline (findings F1/F6/F4) — fixed section. The supervisor commits
+    // per task with explicit paths (never a whole-tree add) before the
+    // end-of-flight refresh, and holds the working tree while it runs.
+    out += "## Git discipline\n\n";
+    out += "- Commit each completed major task BEFORE advancing, staging ONLY "
+           "the paths that task touched: `git add <paths>` then "
+           "`git commit -m \"Task N: <title>\"`. Never `git add -A` / `git add "
+           ".` — a shared working tree may hold another writer's in-flight "
+           "work.\n";
+    out += "- No external git in this repo while the supervisor runs: it holds "
+           "the working tree via `.quorum/autopilot/LOCK` (written at startup, "
+           "removed on every graceful stop). Operators review + commit only "
+           "after it stops.\n\n";
 
     // Stop conditions — the four bullets per spec.
     out += "## Stop conditions\n\n";

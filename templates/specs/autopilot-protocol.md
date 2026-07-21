@@ -5,8 +5,8 @@
 > output-parity discipline. Skill authors and the `quorum supervisor init`
 > generator both implement this spec. Read it before changing either.
 
-Spec version: 0.3
-Last updated: 2026-06-03
+Spec version: 0.4
+Last updated: 2026-07-21
 Lineage: Research/04 - Autopilot Engine (Phase 13 design source-of-truth);
 companion to `handoff-protocol.md`. (Phase 14 retired the scribe and librarian;
 the knowers are the sole accumulators — see Decision #46.)
@@ -28,6 +28,10 @@ safe:
   startup (the startup gate).
 - **`.quorum/autopilot/checkpoint.md`** — the resume + morning-review state the
   supervisor writes after each major task.
+- **`.quorum/autopilot/LOCK`** — an advisory repo-ownership marker: present ⇔ a
+  supervisor session is live. Written at startup after the gate passes, removed on
+  every graceful stop. While it exists, no external git touches the repo (finding
+  F4).
 - **Output parity** — the rule that the supervisor's knowledge writes go through
   the *same* code the daemon uses (`quorum knower refresh`), so the knower vaults
   accumulate the way an interactive refresh would across engines. The knowers are
@@ -117,7 +121,7 @@ Canonical structure:
 ---
 title: Autopilot flight plan
 generated_by: quorum supervisor init
-spec_version: 0.3
+spec_version: 0.4
 project_root: <abs path>
 ---
 
@@ -144,6 +148,14 @@ project_root: <abs path>
 
 Humans read project state on demand via `quorum ask` (knower surveys + live code)
 or `quorum ask --agent recap`. There is no separate curated layer to maintain.
+
+## Git discipline
+
+- Commit each completed major task BEFORE advancing, staging ONLY the paths that
+  task touched (`git add <paths>` then `git commit -m "Task N: <title>"`); never
+  `git add -A` / `git add .`.
+- No external git while the supervisor runs — it holds the working tree via
+  `.quorum/autopilot/LOCK` (written at startup, removed on every graceful stop).
 
 ## Stop conditions
 
@@ -234,6 +246,29 @@ The knowers are the **sole accumulators** (Decision #46). There is no scribe, no
 the knowers at end-of-flight is the entire record-keeping path, so parity concerns
 the **knower-refresh path only**.
 
+## Git discipline
+
+Autopilot commits under three rules and holds the working tree while it runs:
+
+1. **Per-task commit (the supervisor).** After each completed major task the
+   supervisor commits *that task's* work, staging **only the paths the task
+   touched**, with message `Task N: <title>`. It NEVER runs `git add -A` /
+   `git add .` — a shared working tree may hold another writer's in-flight work,
+   and a whole-tree add sweeps it into the wrong commit. Each per-task commit is a
+   resumable / rollback-able boundary (finding F1).
+2. **Daemon completion auto-commit — `.quorum/**` only.** The daemon's
+   conversation-completion backstop commits its OWN bookkeeping (vault / config /
+   checkpoint changes under `.quorum/`) via a **pathspec commit**
+   (`git add -- .quorum && git commit -- .quorum`). It never sweeps the project
+   working tree and never swallows a foreign pre-staged index (findings F1/F6,
+   Crucible dogfood 2026-07-21: a whole-tree `git add -A` had swept unrelated
+   in-flight work into one mislabeled "Conv N:" commit).
+3. **The LOCK protocol (repo ownership).** `.quorum/autopilot/LOCK` is written at
+   startup after the gate passes and removed on **every** graceful stop. While it
+   exists, **no external git runs in the repo** — operators review + commit only
+   after the supervisor stops (finding F4). A LOCK found at startup is stale from a
+   dead session: replace it and note `stale LOCK replaced` in the checkpoint.
+
 ## Two-level concurrency
 
 - **Parallel *within* a major task** — the supervisor fans out the task's slices
@@ -275,6 +310,14 @@ and the `quorum supervisor init` generator; add a changelog entry.
 
 ## Changelog
 
+- **0.4** (2026-07-21): Git discipline formalized after the Crucible autopilot
+  dogfood. The supervisor commits per major task, staging only the paths the task
+  touched (never `git add -A`); the daemon's completion auto-commit is scoped to
+  `.quorum/**` via a pathspec commit that never sweeps the project tree or a
+  foreign index (findings F1/F6). New `.quorum/autopilot/LOCK` advisory
+  repo-ownership marker — written at startup, removed on every graceful stop;
+  while present, no external git touches the repo (finding F4). Added the
+  "## Git discipline" section and listed the LOCK among the artifacts.
 - **0.3** (2026-06-03): Phase 14 retired the scribe and librarian. Record-keeping
   is now a single end-of-flight `quorum knower refresh` (the knowers are the sole
   accumulators, Decision #46). Output parity concerns the knower-refresh path;

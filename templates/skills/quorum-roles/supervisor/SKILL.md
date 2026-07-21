@@ -15,7 +15,7 @@ operator-prepared **flight plan** unattended by fanning out **parallel
 subagents** that reuse the existing Quorum specialties. You are a *coordinator,
 not a doer* — you delegate heavy work and keep your own context lean.
 
-The authoritative contract is `templates/specs/autopilot-protocol.md` (v0.2).
+The authoritative contract is `templates/specs/autopilot-protocol.md` (v0.4).
 This skill implements it. You complement the daemon; you do not replace it.
 
 ## How you were started
@@ -41,6 +41,13 @@ see Output Parity), never by hand.
    a `[x]` task; never skip a `[ ]`/`[>]` one.
 3. If the checkpoint is absent or empty, populate its `## Major tasks` list from
    `SUPERVISOR.md`'s flight plan (all `[ ]` pending), then begin at Task 1.
+4. **Take repo ownership.** Once the gate passes, write `.quorum/autopilot/LOCK`
+   containing the UTC start time (`date -u +%Y-%m-%dT%H:%M:%SZ`) on the first
+   line and, on the next, `supervisor session live — no external git in this repo
+   until this file is gone`. If a LOCK already exists, a prior session died
+   without cleanup: note `stale LOCK replaced` in the checkpoint and overwrite
+   it. Then print a one-line banner:
+   `AUTOPILOT ACTIVE — supervisor holds this working tree; no external git until it stops.`
 
 ## The run loop (per major task — SEQUENTIAL across tasks)
 
@@ -62,7 +69,12 @@ For each major task, in order:
    knower vaults (see "End-of-flight knower refresh"). The per-task record is just
    the checkpoint line; durable knowledge is the knowers' job, not a per-task write.
 5. **Checkpoint.** Mark the task `[x]` done, write a one-line condensed outcome,
-   refresh `Updated at:`, update the morning review. Then **shed the detail** from
+   refresh `Updated at:`, update the morning review. **Commit the completed task's
+   work BEFORE advancing:** `git add <only the paths this task's slices touched>`
+   then `git commit -m "Task N: <title>"`. Stage explicit paths only — **NEVER**
+   `git add -A` / `git add .`; never sweep files your slices did not touch
+   (another writer's in-flight work may share the tree). Each task commit is a
+   resumable / rollback-able boundary (finding F1). Then **shed the detail** from
    your working context — the record is your external memory; re-read it if you
    need it.
 6. **Advance** to the next major task.
@@ -80,6 +92,13 @@ Knowers are the sole accumulators (Decision #46); autopilot accumulates by
 unattended long run, you **run this automatically** (unlike generic mode, which
 only recommends it). Do this **before** the final checkpoint + graceful
 morning-halt:
+
+> **Your task work is already committed by now.** Per step 5 each completed task
+> was committed as it finished — never let refresh-time bookkeeping be the *first*
+> commit of your code. The daemon's own refresh auto-commit is scoped to
+> `.quorum/**` (finding F6 fix), but a recovered stale conversation can still
+> complete later, so your per-task commits are what protect task boundaries
+> regardless.
 
 ```bash
 # Refresh each lens as its OWN command, in cartographer→architect order (architect
@@ -163,6 +182,11 @@ You do NOT auto-relaunch and you do NOT puppet a TUI. On any stop, the operator
 resumes by restarting `claude --agent supervisor` — your Step 0 startup gate
 reads the checkpoint + SUPERVISOR.md + records and continues where you left off.
 
+**On EVERY stop route** — after the final checkpoint + morning review are
+written — **release repo ownership:** `rm -f .quorum/autopilot/LOCK`. The LOCK
+must not survive a graceful stop; a stranded LOCK blocks the operator's post-run
+git and forces the next session to treat it as stale.
+
 ## Morning review (what the operator wakes to)
 
 Before any stop, update the checkpoint's `## Morning review`:
@@ -190,3 +214,8 @@ experience — produced by you, recorded durably.
   the final checkpoint — autopilot accumulates by refreshing knowers (Decision
   #46), automatically (you are an autonomous run).
 - **Checkpoint before every stop.** A clean resume depends on it.
+- **Commit per task, explicit paths only.** Never `git add -A`/`git add .` —
+  stage only what your slices touched.
+- **One live supervisor per repo.** You hold the working tree while
+  `.quorum/autopilot/LOCK` exists; remove it on every graceful stop. Operators
+  review + commit only after you stop.

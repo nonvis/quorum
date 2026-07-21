@@ -93,7 +93,7 @@ static void test_A_generate_with_roster(const fs::path& tdir) {
           "A(a): frontmatter title present");
     check(contains(md, "generated_by: quorum supervisor init"),
           "A(a): frontmatter generated_by present");
-    check(contains(md, "spec_version: 0.3"),
+    check(contains(md, "spec_version: 0.4"),
           "A(a): frontmatter spec_version present");
     check(contains(md, "## Project"), "A(a): Project heading present");
     check(contains(md, "- name: A_roster"),
@@ -106,6 +106,12 @@ static void test_A_generate_with_roster(const fs::path& tdir) {
           "A(a): Stop conditions heading present");
     check(contains(md, "## Flight plan"),
           "A(a): Flight plan heading present");
+    check(contains(md, "## Git discipline"),
+          "A(a): Git discipline heading present");
+    check(contains(md, "`git add -A`"),
+          "A(a): Git discipline warns against a whole-tree add");
+    check(contains(md, ".quorum/autopilot/LOCK"),
+          "A(a): Git discipline names the repo-ownership LOCK");
 
     // (b) roster rows for foo + bar, with foo's role + skill.
     check(contains(md, "| agent | role | skill |"),

@@ -448,7 +448,7 @@ export function generateSupervisorMd(projectPath: string, plan: PlanPayload): st
   out += "---\n";
   out += "title: Autopilot flight plan\n";
   out += "generated_by: quorum-web autopilot composer\n";
-  out += "spec_version: 0.3\n";
+  out += "spec_version: 0.4\n";
   out += `project_root: ${projectPath}\n`;
   out += `mode: ${plan.mode}\n`;
   out += `goal: ${oneLineGoal}\n`;
@@ -485,6 +485,21 @@ export function generateSupervisorMd(projectPath: string, plan: PlanPayload): st
   out += "  (or a single lens: `--knower <cartographer|architect|historian|recap>`)\n\n";
   out += "Humans read project state on demand via `quorum ask` (knower surveys + live code) or\n";
   out += "`quorum ask --agent recap`. There is no separate curated layer to maintain.\n\n";
+
+  // Git discipline (findings F1/F6/F4) — fixed section, byte-parallel with the
+  // CLI generator (quorum-core/src/cli/supervisor_init.h). Keep the two in sync.
+  out += "## Git discipline\n\n";
+  out +=
+    "- Commit each completed major task BEFORE advancing, staging ONLY " +
+    "the paths that task touched: `git add <paths>` then " +
+    '`git commit -m "Task N: <title>"`. Never `git add -A` / `git add ' +
+    ".` — a shared working tree may hold another writer's in-flight " +
+    "work.\n";
+  out +=
+    "- No external git in this repo while the supervisor runs: it holds " +
+    "the working tree via `.quorum/autopilot/LOCK` (written at startup, " +
+    "removed on every graceful stop). Operators review + commit only " +
+    "after it stops.\n\n";
 
   out += "## Stop conditions\n\n";
   out += "- context_near_full: checkpoint + write morning review + STOP\n";

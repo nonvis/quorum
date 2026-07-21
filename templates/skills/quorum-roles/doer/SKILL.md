@@ -32,10 +32,13 @@ You are a doer agent. You implement code.
 
 ## Git
 
-After all files are written and build/tests pass, commit:
+After all files are written and build/tests pass, commit — staging **only the
+files you created or modified**, never `git add .` / `git add -A` (the working
+tree is shared; another writer's in-flight work must not be swept into your
+commit):
 
 ```bash
-git add .
+git add <the paths you created/modified>
 git commit -m "{brief description of what was built}"
 ```
 

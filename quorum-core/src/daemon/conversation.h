@@ -56,17 +56,25 @@ inline std::string generic_refresh_recommendation(int64_t conv_id,
            " --knower <cartographer|architect|historian|recap>)\n";
 }
 
-// Phase 14 Track 4 (Decision L4) — deterministic auto-commit backstop.
+// Phase 14 Track 4 (Decision L4) — deterministic auto-commit backstop, SCOPED
+// to `.quorum/**` only.
 //
-// The retired scribe's "Job 0" auto-committed outstanding changes on
-// completion. That bookkeeping now lives in the daemon, mirroring the
-// phase-plan checkoff backstop: on a conversation reaching is_done, if there
-// are uncommitted changes in `target_dir`, run `git add -A && git commit`.
+// This backstop commits the daemon's OWN bookkeeping — the vault / config /
+// checkpoint changes under `.quorum/` a completing conversation produces — and
+// NEVER the project working tree. An earlier whole-tree `git add -A` swept
+// unrelated in-flight work (multiple tasks) into one commit under a misleading
+// "Conv N:" message in the 2026-07-21 Crucible dogfood (finding F6). The fix is
+// a PATHSPEC commit (`git commit -- .quorum`): it commits ONLY `.quorum` paths,
+// so anything a human — or another session — pre-staged in the index is left
+// staged and untouched (finding F4). Code / task commits are the operator's and
+// the flight plan's job, not this backstop's.
 //
-// Defensive by design: SILENT no-op on ANY git error (no repo, nothing
-// staged, commit hook failure, detached HEAD, etc.) so the completion path is
-// NEVER blocked. `target_dir` empty/"." falls back to `project_root`. The
-// commit message embeds the conversation id + a short goal/summary label.
+// Defensive by design: SILENT no-op on ANY git error (no repo, nothing under
+// `.quorum` to commit, commit hook failure, detached HEAD, etc.) so the
+// completion path is NEVER blocked. Dir resolution prefers `project_root` (where
+// `.quorum/` lives by definition — this commit is `.quorum` bookkeeping, not
+// `target_dir` work); falls back to `target_dir`; both empty => no-op. The commit
+// message embeds the conversation id + a short goal/summary label.
 //
 // Returns true iff a commit was actually created (for an optional one-line
 // operator log); false on no-op. Generic mode only is fine — brainstorm is
@@ -75,8 +83,10 @@ inline bool auto_commit_on_completion(int64_t conv_id,
                                       const std::string& target_dir,
                                       const std::string& project_root,
                                       const std::string& label) {
-    std::string dir = target_dir;
-    if (dir.empty() || dir == ".") dir = project_root;
+    // Prefer project_root (that's where `.quorum/` lives); fall back to
+    // target_dir; bail if both empty.
+    std::string dir = project_root;
+    if (dir.empty()) dir = target_dir;
     if (dir.empty()) return false;
 
     // Quote the dir for the shell; bail if it isn't a git work tree (silent).
@@ -86,10 +96,11 @@ inline bool auto_commit_on_completion(int64_t conv_id,
         " && git rev-parse --is-inside-work-tree 2>/dev/null");
     if (!in_tree || in_tree->exit_code != 0) return false;
 
-    // Anything to commit? `git status --porcelain` prints nothing on a clean
-    // tree. Empty output => no-op.
+    // Anything of OURS to commit? Restrict the status to the `.quorum` pathspec:
+    // empty output => nothing under `.quorum` changed (also naturally empty when
+    // `.quorum` does not exist) => no-op.
     auto status = sui::quorum::run_command(
-        "cd " + q(dir) + " && git status --porcelain 2>/dev/null");
+        "cd " + q(dir) + " && git status --porcelain -- .quorum 2>/dev/null");
     if (!status || status->output.empty()) return false;
 
     // Build a single-line, shell-safe commit subject. Strip any double-quotes
@@ -103,9 +114,13 @@ inline bool auto_commit_on_completion(int64_t conv_id,
     std::string msg = "Conv " + std::to_string(conv_id) +
                       (subject.empty() ? "" : ": " + subject);
 
+    // PATHSPEC commit — stage and commit ONLY `.quorum` paths. `git commit --
+    // .quorum` records exactly those paths, leaving any foreign pre-staged index
+    // entry staged and untouched. NEVER `git add -A` / `git add .` / a bare
+    // `git commit` here — those would sweep the whole working tree.
     auto commit = sui::quorum::run_command(
-        "cd " + q(dir) + " && git add -A && git commit -m " + q(msg) +
-        " >/dev/null 2>&1");
+        "cd " + q(dir) + " && git add -- .quorum && git commit -m " + q(msg) +
+        " -- .quorum >/dev/null 2>&1");
     return commit && commit->exit_code == 0;
 }
 
@@ -488,10 +503,12 @@ public:
             }
 
             // Phase 14 Track 4 (Decision L4) — deterministic auto-commit
-            // backstop (absorbs the retired scribe's Job 0). Mirrors the
-            // checkoff backstop's defensive style: silent no-op on any git
-            // error so completion is never blocked. The goal seeds the commit
-            // subject. Brainstorm is read-only so this is a no-op there.
+            // backstop, SCOPED to `.quorum/**` (findings F6/F4). Mirrors the
+            // checkoff backstop's defensive style: silent no-op on any git error
+            // so completion is never blocked. It commits ONLY the daemon's own
+            // `.quorum` bookkeeping via a pathspec commit — never the project
+            // working tree, never a foreign pre-staged index. The goal seeds the
+            // commit subject. Brainstorm is read-only so this is a no-op there.
             {
                 std::string goal;
                 if (auto conv_done = db_.get_conversation(conv_id)) {
@@ -501,7 +518,7 @@ public:
                     conv_id, cfg_.target_dir, project_root_, goal);
                 if (committed) {
                     std::cout << "[conversation " << conv_id
-                              << "] auto-committed outstanding changes\n";
+                              << "] auto-committed .quorum bookkeeping\n";
                 }
             }
 

@@ -149,6 +149,14 @@ target_include_directories(test_phase_plan_checkoff PRIVATE src)
 target_link_libraries(test_phase_plan_checkoff PRIVATE SQLite::SQLite3)
 add_test(NAME test_phase_plan_checkoff COMMAND test_phase_plan_checkoff)
 
+# Findings F6/F4 — daemon completion auto-commit scoped to .quorum
+# (daemon/conversation.h). Real temp git repo: the pathspec commit never sweeps
+# the project tree or a foreign pre-staged index.
+add_executable(test_auto_commit tests/unit/test_auto_commit.cpp)
+target_include_directories(test_auto_commit PRIVATE src)
+target_link_libraries(test_auto_commit PRIVATE SQLite::SQLite3)
+add_test(NAME test_auto_commit COMMAND test_auto_commit)
+
 add_executable(test_context_history tests/unit/test_context_history.cpp)
 target_include_directories(test_context_history PRIVATE src)
 add_test(NAME test_context_history COMMAND test_context_history)
