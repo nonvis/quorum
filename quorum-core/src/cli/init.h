@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdlib>   // std::getenv — role-skill auto-detect + resolve_knower_skill
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -318,7 +319,25 @@ inline int init_project(const std::string& quorum_root = "") {
     std::cout << "  Created: .quorum/config.yaml\n";
 
     // 4. Write .quorum/agents/leader.yaml
+    //
+    // The leader is the ONE default agent written directly here rather than
+    // through create_agent, so it used to be the one agent that never got a
+    // skill_file: its prompt carried CONTEXT.md plus the assembler's built-in
+    // blocks and nothing from quorum-roles/leader. Twin: the auto-detect at
+    // step 4b of create_agent() in cli/agent_create.h — same $HOME resolution,
+    // same message. That code is inline in create_agent's body (no shared
+    // helper to call), hence the replication; keep the two in step.
     {
+        std::string leader_skill;
+        if (const char* home = std::getenv("HOME")) {
+            auto role_skill = std::string(home)
+                + "/.claude/skills/quorum-roles/leader/SKILL.md";
+            if (fs::exists(role_skill)) {
+                leader_skill = role_skill;
+                std::cout << "  Auto-detected skill: quorum-roles/leader\n";
+            }
+        }
+
         std::ofstream out(".quorum/agents/leader.yaml", std::ios::trunc);
         if (!out.is_open()) {
             std::cerr << "ERROR: cannot write .quorum/agents/leader.yaml\n";
@@ -331,6 +350,9 @@ inline int init_project(const std::string& quorum_root = "") {
             << "\n"
             << "vault_path: .quorum/vaults/leader/\n"
             << "context_file: .quorum/vaults/leader/CONTEXT.md\n";
+        if (!leader_skill.empty()) {
+            out << "skill_file: " << leader_skill << "\n";
+        }
     }
     std::cout << "  Created: .quorum/agents/leader.yaml\n";
 

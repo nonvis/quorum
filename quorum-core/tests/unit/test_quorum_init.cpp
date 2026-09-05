@@ -13,6 +13,8 @@
 
 #include "cli/init.h"
 #include "cli/agent_create.h"
+#include "utils/config.h"
+#include "agent/context_assembler.h"
 
 namespace fs = std::filesystem;
 
@@ -404,6 +406,110 @@ static void test_init_attaches_child_specialties() {
     cleanup_temp(tmp);
 }
 
+// --- Test L: init attaches the leader's quorum-roles/leader SKILL ------------
+//
+// `quorum init` writes leader.yaml by hand (step 4) instead of going through
+// create_agent, so the leader used to be the ONE default agent with no
+// skill_file: its stored system_prompt was CONTEXT.md plus the assembler's
+// built-in blocks, and nothing from quorum-roles/leader ever reached it.
+// Step 4 now mirrors create_agent's step-4b auto-detect.
+//
+// HOME is the injection point (both code paths read $HOME), so each case runs
+// under a fake HOME and restores the real one before returning.
+
+// RAII: swap $HOME for the duration, restore the previous value (or unset).
+class ScopedHome {
+public:
+    explicit ScopedHome(const std::string& home) {
+        if (const char* prev = std::getenv("HOME")) {
+            had_prev_ = true;
+            prev_ = prev;
+        }
+        ::setenv("HOME", home.c_str(), 1);
+    }
+    ~ScopedHome() {
+        if (had_prev_) ::setenv("HOME", prev_.c_str(), 1);
+        else ::unsetenv("HOME");
+    }
+    ScopedHome(const ScopedHome&) = delete;
+    ScopedHome& operator=(const ScopedHome&) = delete;
+
+private:
+    bool had_prev_ = false;
+    std::string prev_;
+};
+
+static std::string write_fake_leader_skill(const std::string& home) {
+    auto dir = fs::path(home) / ".claude" / "skills" / "quorum-roles" / "leader";
+    fs::create_directories(dir);
+    auto skill = dir / "SKILL.md";
+    std::ofstream f(skill, std::ios::trunc);
+    f << "# Leader Role\n\nLEADER_SKILL_TOKEN_L\n";
+    return skill.string();
+}
+
+static void test_init_attaches_leader_role_skill() {
+    std::cout << "\n=== L. init attaches quorum-roles/leader to leader.yaml ===\n\n";
+
+    auto original_cwd = fs::current_path();
+
+    // (i) SKILL present under $HOME -> leader.yaml carries skill_file.
+    {
+        auto tmp = make_temp_dir();
+        auto home = make_temp_dir();
+        auto skill_path = write_fake_leader_skill(home);
+        ScopedHome scoped(home);
+        fs::current_path(tmp);
+
+        check(sui::quorum::cli::init_project() == 0, "L(i): init_project returns 0");
+
+        auto yaml = read_file(".quorum/agents/leader.yaml");
+        check(yaml.find("skill_file: " + skill_path + "\n") != std::string::npos,
+              "L(i): leader.yaml carries skill_file pointing at the role SKILL");
+
+        // The daemon's own reader must see it -- a raw line nobody parses is
+        // not a wiring. load_agent_config() is what the engine calls.
+        auto meta = sui::quorum::load_agent_config(".quorum/agents/leader.yaml");
+        check(meta.has_value(), "L(i): load_agent_config parses leader.yaml");
+        check(meta && meta->skill_file == skill_path,
+              "L(i): load_agent_config surfaces the leader's skill_file");
+
+        // ...and the assembler must actually load that file into the stable
+        // system prompt (TESTED != CALLED: prove the SKILL text lands).
+        sui::quorum::ContextAssembler assembler;
+        auto split = assembler.assemble_split(
+            "leader", meta ? meta->vault_path : std::string(),
+            "turn", "task body L", /*team_roster=*/{},
+            /*skill_file=*/meta ? meta->skill_file : std::string(),
+            /*project_root=*/".", /*agent_role=*/"leader");
+        check(split.system_prompt.find("LEADER_SKILL_TOKEN_L") != std::string::npos,
+              "L(i): the SKILL body reaches the leader's system_prompt");
+
+        fs::current_path(original_cwd);
+        cleanup_temp(tmp);
+        cleanup_temp(home);
+    }
+
+    // (ii) No SKILL under $HOME -> no skill_file line at all (today's shape).
+    //      Liveness of the absent case: init must not invent a dangling path.
+    {
+        auto tmp = make_temp_dir();
+        auto home = make_temp_dir();  // bare -- no .claude/skills/
+        ScopedHome scoped(home);
+        fs::current_path(tmp);
+
+        check(sui::quorum::cli::init_project() == 0, "L(ii): init_project returns 0");
+
+        auto yaml = read_file(".quorum/agents/leader.yaml");
+        check(yaml.find("skill_file:") == std::string::npos,
+              "L(ii): no SKILL under $HOME -> leader.yaml has no skill_file line");
+
+        fs::current_path(original_cwd);
+        cleanup_temp(tmp);
+        cleanup_temp(home);
+    }
+}
+
 // --- main -------------------------------------------------------------------
 
 int main() {
@@ -420,6 +526,7 @@ int main() {
     test_init_attaches_move_specialty();
     test_detect_specialties_depth1();
     test_init_attaches_child_specialties();
+    test_init_attaches_leader_role_skill();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)
               << " tests passed ---\n";

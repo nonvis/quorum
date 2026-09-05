@@ -819,7 +819,19 @@ public:
         system_prompt += "(sqlite3, cat, ls, grep), but never write, move, or delete.\n";
         system_prompt += "3. **ALL findings must use structured blocks** in your response: ";
         system_prompt += "VAULT_UPDATE, OBSERVATION, PROPOSAL, SUMMARY.\n";
-        system_prompt += "4. **Only write to YOUR vault.** VAULT_UPDATE paths must start with `knowledge/` or `inbox/`.\n\n";
+        system_prompt += "4. **Only write to YOUR vault.** VAULT_UPDATE paths must start with `knowledge/` or `inbox/`.\n";
+        // Tier 1 of the daemon's task summary (output_parser.h
+        // extract_summary) prefers an explicit `VERDICT:` line. The four
+        // quorum-roles SKILLs carry the same bullet, but a SKILL is not a
+        // reliable carrier: every knower loads its DOMAIN skill instead of the
+        // role skill (the assembler loads exactly one skill_file), and an agent
+        // may carry none at all. This block is the only one EVERY agent
+        // prompt gets, in every mode — so the rule lives here too, in the
+        // stable system_prompt half (never the per-task user_message, which
+        // would break prefix-cache reuse).
+        system_prompt += "5. **End with a one-line verdict.** The last line of your reply before any HANDOFF block is ";
+        system_prompt += "`VERDICT: <one sentence — what you did or decided, ≤ 25 words>`. ";
+        system_prompt += "The daemon stores it as the task's summary. Never leave it blank.\n\n";
         system_prompt += "The daemon extracts these blocks from your response text and routes them. ";
         system_prompt += "If you write files directly, the daemon cannot track your output.\n\n";
 

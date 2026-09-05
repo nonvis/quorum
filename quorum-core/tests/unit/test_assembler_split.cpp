@@ -218,6 +218,75 @@ static void test_s6_rules_and_roster_in_user_message() {
     cleanup(vault);
 }
 
+// --- S7: the VERDICT rule rides in the stable Output Rules block ------------
+//
+// Tier 1 of the daemon's task summary (output_parser.h extract_summary) prefers
+// an explicit `VERDICT:` line. The four quorum-roles SKILLs carry the same
+// bullet, but a SKILL is not a reliable carrier: a `quorum init` leader has no
+// skill_file at all, and every knower loads its DOMAIN skill instead of the
+// role skill (the assembler loads exactly one skill_file). The Output Rules
+// block is the one block EVERY agent prompt gets, so the rule lives there.
+//
+// NOTE ON SCOPE: the assembler has exactly ONE Output Rules emitter — it is
+// unconditional, so the analyst / executor / brainstorm shapes below all run
+// the same code. They are regression guards against the block being made
+// conditional again: it WAS suppressed for team mode before Phase 7 Track 5
+// (see the comment at the emitter). A single mutation therefore reds S7a-S7c
+// together; S7d (placement) is independent.
+
+static const char* const kVerdictLead = "**End with a one-line verdict.**";
+static const char* const kVerdictForm =
+    "`VERDICT: <one sentence — what you did or decided, ≤ 25 words>`";
+
+static void test_s7_verdict_rule_in_output_rules() {
+    std::cout << "\n=== S7. VERDICT rule in the stable Output Rules block ===\n\n";
+
+    auto vault = make_temp_vault();
+    sui::quorum::ContextAssembler assembler;
+
+    // S7a: analyst-class agent (role `thinker`).
+    auto analyst = assembler.assemble_split(
+        "agent-s7-analyst", vault, "turn", "task body S7 analyst",
+        /*team_roster=*/{}, /*skill_file=*/{}, /*project_root=*/{},
+        /*agent_role=*/"thinker");
+    check(analyst.system_prompt.find(kVerdictLead) != std::string::npos,
+          "S7a: analyst system_prompt carries the VERDICT rule");
+    check(analyst.system_prompt.find(kVerdictForm) != std::string::npos,
+          "S7a: analyst system_prompt carries the exact VERDICT line form");
+
+    // S7b: executor-class agent (role `doer`).
+    auto executor = assembler.assemble_split(
+        "agent-s7-doer", vault, "turn", "task body S7 doer",
+        /*team_roster=*/{}, /*skill_file=*/{}, /*project_root=*/{},
+        /*agent_role=*/"doer");
+    check(executor.system_prompt.find(kVerdictLead) != std::string::npos,
+          "S7b: executor system_prompt carries the VERDICT rule");
+
+    // S7c: brainstorm mode, with a roster (the team-mode suppression hazard).
+    auto brainstorm = assembler.assemble_split(
+        "agent-s7-brain", vault, "turn", "task body S7 brainstorm",
+        /*team_roster=*/"## Your Team\n- agent-s7-brain <- you\n",
+        /*skill_file=*/{}, /*project_root=*/{}, /*agent_role=*/"thinker",
+        /*budget=*/{}, /*conversation_mode=*/"brainstorm");
+    check(brainstorm.system_prompt.find(kVerdictLead) != std::string::npos,
+          "S7c: brainstorm-mode system_prompt carries the VERDICT rule");
+
+    // S7d: placement — stable half only. The per-task user_message must not
+    // mention VERDICT at all, or the cached prefix stops being the whole rule
+    // set and every turn re-sends it.
+    check(analyst.user_message.find("VERDICT") == std::string::npos,
+          "S7d: VERDICT absent from user_message (prefix-cache hygiene)");
+
+    // S7e: the legacy single-string assemble() shim carries it too — that is
+    // the path test_assembler_rule_cap and the pipeline test still use.
+    auto legacy = assembler.assemble(
+        "agent-s7-legacy", vault, "turn", "task body S7 legacy");
+    check(legacy.find(kVerdictLead) != std::string::npos,
+          "S7e: legacy assemble() output carries the VERDICT rule");
+
+    cleanup(vault);
+}
+
 // --- main -------------------------------------------------------------------
 
 int main() {
@@ -231,6 +300,7 @@ int main() {
     test_s4_task_in_user_message();
     test_s5_system_prompt_stable_across_tasks();
     test_s6_rules_and_roster_in_user_message();
+    test_s7_verdict_rule_in_output_rules();
 
     std::cout << "\n---------------------------------------------------\n";
     std::cout << "  passed: " << g_passed << "  failed: " << g_failed << "\n";
