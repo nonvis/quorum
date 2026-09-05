@@ -199,6 +199,17 @@ target_include_directories(test_spend PRIVATE src)
 target_link_libraries(test_spend PRIVATE SQLite::SQLite3)
 add_test(NAME test_spend COMMAND test_spend)
 
+# A3 (2026-09-04) — spend_readout.py's absent != zero contract
+# (scripts/spend_readout_test.py). Python, so no add_executable: ctest runs the
+# script, which drives the real CLI as a subprocess with an injected HOME (never
+# reads the operator's ~/.claude). Bare `python3` on purpose — it is exactly what
+# cli/spend.h shells out to, so a missing interpreter SHOULD red here rather than
+# surface at `quorum spend`. First python ctest in the repo (recap_mine_test.py is
+# manual-only by its own docstring).
+add_test(NAME test_spend_readout
+         COMMAND python3
+                 ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/spend_readout_test.py)
+
 add_executable(test_context_history tests/unit/test_context_history.cpp)
 target_include_directories(test_context_history PRIVATE src)
 add_test(NAME test_context_history COMMAND test_context_history)

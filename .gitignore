@@ -7,6 +7,9 @@ quorum-core/build/
 # Dependencies
 node_modules/
 
+# Python bytecode (scripts/*_test.py)
+__pycache__/
+
 # C++ artifacts
 *.o
 *.a
