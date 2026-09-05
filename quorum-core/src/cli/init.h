@@ -1,10 +1,12 @@
 #pragma once
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "storage/schema.h"
@@ -14,37 +16,98 @@ namespace fs = std::filesystem;
 namespace sui::quorum::cli {
 
 // A language "specialty" doer that init can auto-attach to a fresh project
-// based on a root-level marker file (F10). `marker` records which file
-// triggered detection (surfaced in init's summary); `description` is the
-// one-line agent description passed to create_agent.
+// based on a marker file (F10). `marker` records WHICH file triggered detection,
+// relative to the project root ("Move.toml" or "quorum-core/CMakeLists.txt") and
+// is surfaced in init's summary; `description` is the one-line agent description
+// passed to create_agent.
+//
+// ☠️ `marker` never reaches an artifact: the agent YAML carries `description`
+// (fixed per specialty) and the vault CONTEXT.md comes from
+// specialty_context_md(name, language). That is what keeps the C++ path and the
+// setup-knowers.sh path byte-identical even though they report different paths.
 struct RepoSpecialty {
     std::string name;         // e.g. "move-dev"
     std::string language;     // e.g. "Sui Move 2024"
-    std::string marker;       // root-level marker file, e.g. "Move.toml"
+    std::string marker;       // marker path relative to the project root
     std::string description;  // one-line agent description
 };
 
-// Detect language specialties from ROOT-LEVEL marker files in `dir`. A repo may
-// match several; order is deterministic: move-dev, ts-dev, cpp-dev.
+namespace detect_detail {
+
+// Child directories never scanned for a marker. A marker inside any of these
+// describes a dependency, a build artifact or a fixture -- not the project.
+// Mirrored, case for case, by find_marker() in scripts/setup-knowers.sh.
+inline bool is_skipped_child_dir(const std::string& name) {
+    if (name.empty() || name[0] == '.') return true;  // .git, .quorum, dot-dirs
+    if (name.rfind("build", 0) == 0) return true;     // build, build-w1, builds
+    static const char* const kSkip[] = {
+        "node_modules", "dist", "target", "templates", "sample",
+    };
+    for (const auto* s : kSkip) {
+        if (name == s) return true;
+    }
+    return false;
+}
+
+inline bool is_marker_file(const fs::path& p) {
+    std::error_code ec;
+    return fs::is_regular_file(p, ec);  // matches the shell mirror's `[ -f ]`
+}
+
+}  // namespace detect_detail
+
+// Detect language specialties from marker files at the ROOT of `dir` or ONE
+// level down. Per language the first hit wins: the root is checked first, then
+// the immediate child directories in sorted order. Depth 2 and below is never
+// scanned, and the skip list above is honoured. A repo may match several
+// languages; that order stays deterministic: move-dev, ts-dev, cpp-dev.
+//
+// Motivating case: a repo whose root carries no marker because each language
+// lives in its own subdirectory (Quorum itself -- quorum-core/CMakeLists.txt
+// and quorum-web/package.json).
 inline std::vector<RepoSpecialty> detect_repo_specialties(const fs::path& dir) {
+    const std::vector<RepoSpecialty> languages = {
+        {"move-dev", "Sui Move 2024", "Move.toml",
+         "move-dev: Sui Move 2024 smart-contract doer — implements and tests "
+         "Move modules; invokes the sui-dev-skills + move-code-quality skills"},
+        {"ts-dev", "TypeScript", "package.json",
+         "ts-dev: TypeScript doer — implements and tests TypeScript; matches "
+         "the project's existing lint/format config (no extra skill)"},
+        {"cpp-dev", "C++", "CMakeLists.txt",
+         "cpp-dev: C++ doer — implements and tests C++ code; invokes the "
+         "cpp-code-quality skill"},
+    };
+
+    // Scannable immediate children, sorted by name so "first hit wins" is
+    // reproducible regardless of directory-iteration order.
+    std::vector<std::string> children;
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        std::error_code dir_ec;
+        if (!entry.is_directory(dir_ec)) continue;
+        auto name = entry.path().filename().string();
+        if (detect_detail::is_skipped_child_dir(name)) continue;
+        children.push_back(name);
+    }
+    std::sort(children.begin(), children.end());
+
     std::vector<RepoSpecialty> out;
-    if (fs::exists(dir / "Move.toml")) {
-        out.push_back({
-            "move-dev", "Sui Move 2024", "Move.toml",
-            "move-dev: Sui Move 2024 smart-contract doer — implements and tests "
-            "Move modules; invokes the sui-dev-skills + move-code-quality skills"});
-    }
-    if (fs::exists(dir / "package.json")) {
-        out.push_back({
-            "ts-dev", "TypeScript", "package.json",
-            "ts-dev: TypeScript doer — implements and tests TypeScript; matches "
-            "the project's existing lint/format config (no extra skill)"});
-    }
-    if (fs::exists(dir / "CMakeLists.txt")) {
-        out.push_back({
-            "cpp-dev", "C++", "CMakeLists.txt",
-            "cpp-dev: C++ doer — implements and tests C++ code; invokes the "
-            "cpp-code-quality skill"});
+    for (const auto& lang : languages) {
+        std::string found;  // marker path relative to `dir`
+        if (detect_detail::is_marker_file(dir / lang.marker)) {
+            found = lang.marker;  // root wins
+        } else {
+            for (const auto& child : children) {
+                if (detect_detail::is_marker_file(dir / child / lang.marker)) {
+                    found = child + "/" + lang.marker;
+                    break;
+                }
+            }
+        }
+        if (found.empty()) continue;
+        RepoSpecialty sp = lang;
+        sp.marker = found;
+        out.push_back(sp);
     }
     return out;
 }
@@ -398,7 +461,7 @@ inline int init_project(const std::string& quorum_root = "") {
             if (out.is_open()) out << specialty_context_md(sp.name, sp.language);
             created_specialties.push_back(sp);
             std::cout << "  Auto-attached specialty doer: " << sp.name
-                      << " (detected " << sp.marker << " at repo root)\n";
+                      << " (detected " << sp.marker << ")\n";
         }
     }
 
@@ -443,7 +506,7 @@ inline int init_project(const std::string& quorum_root = "") {
         std::cout << "Auto-attached language specialties (why):\n";
         for (const auto& sp : created_specialties) {
             std::cout << "  - " << sp.name << " — " << sp.language
-                      << ", from " << sp.marker << " at repo root\n";
+                      << ", from " << sp.marker << "\n";
         }
     }
     std::cout << "Next steps:\n";

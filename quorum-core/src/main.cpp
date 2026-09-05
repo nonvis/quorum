@@ -38,6 +38,11 @@
 #include "cli/spend.h"
 #include "utils/discover.h"
 #include "utils/self_path.h"
+#include "utils/version.h"
+// Generated at BUILD time by src/version_stamp.cmake (build dir, never
+// committed): QUORUM_VERSION / QUORUM_GIT_SHA / QUORUM_GIT_DIRTY /
+// QUORUM_BUILD_UTC. The sha is baked in -- `quorum version` never runs git.
+#include "quorum_version.h"
 
 namespace fs = std::filesystem;
 
@@ -160,6 +165,7 @@ static void print_usage(const char* prog) {
               << "  " << prog << " benchmark --role <r>                        Run all benchmarks for a role-specialty (aggregate)\n"
               << "  " << prog << " benchmark --role <r> --dry-run              Smoke-test setup; skip the daemon spawn\n"
               << "  " << prog << " benchmark --role <r> --keep-tempdir         Skip tempdir cleanup; print path for inspection\n"
+              << "  " << prog << " version                                   Print the build identity (version, git sha, build stamp); also --version\n"
               << "  " << prog << " status                                    List conversations\n"
               << "  " << prog << " --config <path>                            Start daemon\n"
               << "  " << prog << " --config <path> resume --conversation <id> Resume paused\n"
@@ -190,6 +196,14 @@ static void print_usage(const char* prog) {
               << "  --target-dir <path>  Working directory for doer agents (optional)\n"
               << "  --no-ai              Skip AI generation, copy template as-is\n"
               << "  --regenerate         Regenerate CONTEXT.md without changing fields\n";
+}
+
+// The single line `quorum version` / `quorum --version` prints. Every fact is
+// baked into the generated quorum_version.h at build time -- no runtime git.
+static std::string build_identity_line() {
+    return sui::quorum::format_version_line(QUORUM_VERSION, QUORUM_GIT_SHA,
+                                            QUORUM_GIT_DIRTY != 0,
+                                            QUORUM_BUILD_UTC);
 }
 
 // Check if a column exists in a table (used to guard ALTER TABLE migrations)
@@ -467,6 +481,11 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--help") {
             print_usage(argv[0]);
             return 0;
+        } else if (arg == "--version") {
+            // Alias of the `version` subcommand; answered here so it works
+            // with no .quorum/, no config and no subcommand at all.
+            std::cout << build_identity_line() << "\n";
+            return 0;
         }
     }
 
@@ -718,10 +737,20 @@ int main(int argc, char* argv[]) {
                 spend_opts.json = true;
             }
         }
+    } else if (subcommand == "version") {
+        // No flags. Dispatched below, before any .quorum/ discovery or config
+        // load -- `quorum version` must answer outside a project.
     } else if (!subcommand.empty() && subcommand != "status") {
         std::cerr << "Unknown subcommand: " << subcommand << "\n";
         print_usage(argv[0]);
         return 1;
+    }
+
+    // `quorum version` — the binary's identity. Config-free like `search`, and
+    // deliberately the first thing dispatched: no .quorum/, no DB, no git.
+    if (subcommand == "version") {
+        std::cout << build_identity_line() << "\n";
+        return 0;
     }
 
     // Init doesn't need --config -- it creates the config.

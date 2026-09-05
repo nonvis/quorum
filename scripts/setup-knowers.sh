@@ -30,7 +30,10 @@ fi
 PROJECT_DIR="$(cd "$PROJECT_DIR_RAW" && pwd)"
 
 QUORUM="$(cd "$(dirname "$0")/.." && pwd)"
-DAEMON="$QUORUM/build/quorum_daemon"
+# Default: the canonical build dir (what the installed `quorum` symlink points
+# at). QUORUM_DAEMON_PATH overrides it so a scratch build can be exercised
+# without touching the installed binary — the same env name benchmark.h honours.
+DAEMON="${QUORUM_DAEMON_PATH:-$QUORUM/build/quorum_daemon}"
 if [ ! -x "$DAEMON" ]; then
     echo "ERROR: quorum_daemon not found at $DAEMON" >&2
     echo "       Build it first:  make build  (from $QUORUM)" >&2
@@ -114,7 +117,8 @@ create_agent recap "$RECAP_SKILL" \
     "Recap: knows what changed recently + where you left off (WHAT/WHEN). Reads the Tier-1 windowed timeline (.quorum/recap/timeline-raw.json) + operator-dumped timestamped messages, weaves one dated component-grouped timeline, drafts where-i-left-off, with a by-intent read-only Linear status overlay. Read-only; never queries Linear/Slack/Telegram."
 
 # ── 4b. Auto-attach language specialty doers (F10) ──────────────────────────
-# Detect the same ROOT-LEVEL markers `quorum init` detects, and for each with no
+# Detect the same markers `quorum init` detects (root, then one level down; see
+# find_marker() below), and for each with no
 # agent yaml yet, create the specialty doer exactly as init does (agent create
 # --role doer --no-ai; the daemon auto-detects the quorum-roles/doer skill),
 # then overwrite its vault CONTEXT.md with the SAME deterministic content init
@@ -280,22 +284,51 @@ create_specialty() {
         "$PROJECT_DIR/.quorum/vaults/$name/CONTEXT.md"
 }
 
-echo "==> [4b/9] auto-attach language specialty doers (if a root marker is present)"
-if [ -f "$PROJECT_DIR/Move.toml" ]; then
-    create_specialty move-dev "Sui Move 2024" "Move.toml" \
+# find_marker <filename>
+# Mirror of detect_repo_specialties() in quorum-core/src/cli/init.h: the ROOT is
+# checked first, then the immediate child directories in sorted order; the first
+# hit wins. Depth 2 and below is never scanned. Skipped children: dot-dirs
+# (.git, .quorum, …), anything starting with `build`, and
+# node_modules / dist / target / templates / sample.
+# Prints the marker path relative to $PROJECT_DIR, or nothing (rc 1) if absent.
+find_marker() {
+    local marker="$1"
+    if [ -f "$PROJECT_DIR/$marker" ]; then
+        printf '%s\n' "$marker"
+        return 0
+    fi
+    local child base
+    while IFS= read -r child; do
+        base="$(basename "$child")"
+        case "$base" in
+            .*|build*|node_modules|dist|target|templates|sample) continue ;;
+        esac
+        if [ -f "$child/$marker" ]; then
+            printf '%s\n' "$base/$marker"
+            return 0
+        fi
+    done < <(find "$PROJECT_DIR" -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort)
+    return 1
+}
+
+echo "==> [4b/9] auto-attach language specialty doers (root or one level down)"
+MOVE_MARKER="$(find_marker Move.toml || true)"
+TS_MARKER="$(find_marker package.json || true)"
+CPP_MARKER="$(find_marker CMakeLists.txt || true)"
+if [ -n "$MOVE_MARKER" ]; then
+    create_specialty move-dev "Sui Move 2024" "$MOVE_MARKER" \
         "move-dev: Sui Move 2024 smart-contract doer — implements and tests Move modules; invokes the sui-dev-skills + move-code-quality skills"
 fi
-if [ -f "$PROJECT_DIR/package.json" ]; then
-    create_specialty ts-dev "TypeScript" "package.json" \
+if [ -n "$TS_MARKER" ]; then
+    create_specialty ts-dev "TypeScript" "$TS_MARKER" \
         "ts-dev: TypeScript doer — implements and tests TypeScript; matches the project's existing lint/format config (no extra skill)"
 fi
-if [ -f "$PROJECT_DIR/CMakeLists.txt" ]; then
-    create_specialty cpp-dev "C++" "CMakeLists.txt" \
+if [ -n "$CPP_MARKER" ]; then
+    create_specialty cpp-dev "C++" "$CPP_MARKER" \
         "cpp-dev: C++ doer — implements and tests C++ code; invokes the cpp-code-quality skill"
 fi
-if [ ! -f "$PROJECT_DIR/Move.toml" ] && [ ! -f "$PROJECT_DIR/package.json" ] \
-   && [ ! -f "$PROJECT_DIR/CMakeLists.txt" ]; then
-    echo "    - no root-level language marker found (Move.toml / package.json / CMakeLists.txt) — no specialty attached"
+if [ -z "$MOVE_MARKER" ] && [ -z "$TS_MARKER" ] && [ -z "$CPP_MARKER" ]; then
+    echo "    - no language marker found at the root or one level down (Move.toml / package.json / CMakeLists.txt) — no specialty attached"
 fi
 
 # init seeds the project's root .gitignore; this script does NOT touch it — but

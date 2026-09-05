@@ -307,6 +307,103 @@ static void test_init_attaches_move_specialty() {
     cleanup_temp(tmp);
 }
 
+// --- Test J: depth-1 auto-attach --------------------------------------------
+//
+// detect_repo_specialties() scans the root AND the immediate child directories
+// (first hit per language wins, root before children, children sorted). Test G
+// above still covers the root-only cases, unchanged.
+
+static void touch_marker(const std::string& root, const std::string& rel) {
+    auto p = fs::path(root) / rel;
+    fs::create_directories(p.parent_path());
+    std::ofstream f(p);
+    f << "x\n";
+}
+
+// Fixture helper: a fresh temp dir carrying `markers`, detected and cleaned up.
+static std::vector<sui::quorum::cli::RepoSpecialty> detect_with(
+    const std::vector<std::string>& markers) {
+    auto tmp = make_temp_dir();
+    for (const auto& m : markers) touch_marker(tmp, m);
+    auto out = sui::quorum::cli::detect_repo_specialties(tmp);
+    cleanup_temp(tmp);
+    return out;
+}
+
+static void check_none(const std::vector<std::string>& markers, const char* msg) {
+    auto s = detect_with(markers);
+    if (!s.empty()) {
+        std::cerr << "  unexpectedly detected: " << s[0].name << " from "
+                  << s[0].marker << "\n";
+    }
+    check(s.empty(), msg);
+}
+
+static void test_detect_specialties_depth1() {
+    std::cout << "\n=== J. detect_repo_specialties scans one level down ===\n\n";
+
+    // (v) Root AND a child of the same language: ONE agent, and the root wins.
+    {
+        auto s = detect_with({"Move.toml", "pkg/Move.toml"});
+        check(s.size() == 1, "J1: root + child of one language -> exactly ONE agent");
+        check(s.size() == 1 && s[0].marker == "Move.toml",
+              "J2: the ROOT marker wins over the child");
+    }
+
+    // (ii) The motivating case: no root marker, one language per subdirectory.
+    {
+        auto s = detect_with({"quorum-core/CMakeLists.txt", "quorum-web/package.json"});
+        check(s.size() == 2, "J3: child-only markers -> cpp-dev + ts-dev");
+        check(s.size() == 2 && s[0].name == "ts-dev" && s[1].name == "cpp-dev",
+              "J4: language order stays deterministic (move, ts, cpp)");
+        check(s.size() == 2 && s[0].marker == "quorum-web/package.json"
+                  && s[1].marker == "quorum-core/CMakeLists.txt",
+              "J5: the marker records the child path, not the bare filename");
+    }
+
+    // (iii) Depth 2 is out of scope.
+    check_none({"a/b/Move.toml", "node_modules/x/package.json"},
+               "J6: a marker two levels down is NOT attached");
+
+    // (iv) Skipped child directories — one assertion per independent rule.
+    check_none({".git/Move.toml", ".quorum/Move.toml"},
+               "J7: dot-directories are skipped");
+    check_none({"build/CMakeLists.txt", "build-w1/CMakeLists.txt"},
+               "J8: any directory starting with 'build' is skipped");
+    check_none({"node_modules/package.json"}, "J9: node_modules/ is skipped");
+    check_none({"dist/package.json"}, "J10: dist/ is skipped");
+    check_none({"target/CMakeLists.txt"}, "J11: target/ is skipped");
+    check_none({"templates/Move.toml"}, "J12: templates/ is skipped");
+    check_none({"sample/Move.toml"}, "J13: sample/ is skipped");
+}
+
+// --- Test K: init attaches a child-detected specialty end to end -------------
+
+static void test_init_attaches_child_specialties() {
+    std::cout << "\n=== K. init auto-attaches from child markers ===\n\n";
+
+    auto tmp = make_temp_dir();
+    auto original_cwd = fs::current_path();
+    fs::current_path(tmp);
+
+    touch_marker(tmp, "quorum-core/CMakeLists.txt");
+    touch_marker(tmp, "quorum-web/package.json");
+
+    int rc = sui::quorum::cli::init_project();
+    check(rc == 0, "K: init_project returns 0");
+    check(fs::exists(".quorum/agents/cpp-dev.yaml"),
+          "K: cpp-dev attached from quorum-core/CMakeLists.txt");
+    check(fs::exists(".quorum/agents/ts-dev.yaml"),
+          "K: ts-dev attached from quorum-web/package.json");
+
+    auto ctx = read_file(".quorum/vaults/cpp-dev/CONTEXT.md");
+    check(ctx == sui::quorum::cli::specialty_context_md("cpp-dev", "C++"),
+          "K: CONTEXT.md is the deterministic specialty text (no marker path in it)");
+
+    fs::current_path(original_cwd);
+    cleanup_temp(tmp);
+}
+
 // --- main -------------------------------------------------------------------
 
 int main() {
@@ -321,6 +418,8 @@ int main() {
     test_detect_repo_specialties();
     test_ensure_gitignore_entries();
     test_init_attaches_move_specialty();
+    test_detect_specialties_depth1();
+    test_init_attaches_child_specialties();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)
               << " tests passed ---\n";
