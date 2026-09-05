@@ -2,11 +2,10 @@
 // ONE always-visible line (the verdict); full prose stays collapsed and
 // not-expanding is the happy path.
 //
-// Today the verdict is derived: an explicit `VERDICT:`/`Verdict:`/`TL;DR:`
-// line wins, else the first sentence of the first prose paragraph. The
-// `summary` field on Task is the hook for a real daemon-emitted summary — the
-// moment the DB grows that column it takes precedence here and nothing else
-// changes.
+// A daemon-emitted `summary` on Task is authoritative: it wins, and it is
+// rendered as sent. Everything else is DERIVED here — an explicit
+// `VERDICT:`/`Verdict:`/`TL;DR:` line, else the first sentence of the first
+// prose paragraph — and only derived text gets the 180-char clip.
 import { parseSegments } from "./segments";
 
 export interface Verdict {
@@ -19,8 +18,20 @@ export interface Verdict {
 
 const MAX_LEN = 180;
 
+// Every verdict is one line, whatever its source.
+function oneLine(s: string): string {
+  return s.trim().replace(/\s+/g, " ");
+}
+
+// Clip a CLIENT-DERIVED verdict (a VERDICT: line, a first sentence, a handoff
+// preview) — text we cut out of prose ourselves, at an arbitrary point.
+//
+// A daemon-provided `task.summary` does NOT come through here. The daemon
+// already clipped it: 200 bytes, at a word boundary, with its own "…". Passing
+// it through a second, shorter, non-word-aware clip would cut mid-word and
+// stack an ellipsis on an ellipsis — the daemon's summary is authoritative.
 function clip(s: string): string {
-  const t = s.trim().replace(/\s+/g, " ");
+  const t = oneLine(s);
   return t.length > MAX_LEN ? t.slice(0, MAX_LEN - 1).trimEnd() + "…" : t;
 }
 
@@ -57,9 +68,10 @@ export function deriveVerdict(task: {
   status: string;
   summary?: string | null;
 }): Verdict {
-  // The real-summary hook: a daemon-provided summary always wins.
+  // A daemon-provided summary always wins, and is rendered verbatim — see
+  // clip() above for why it is not re-clipped here.
   if (task.summary?.trim()) {
-    return { text: clip(plain(task.summary)), kind: "verdict", explicit: true };
+    return { text: oneLine(plain(task.summary)), kind: "verdict", explicit: true };
   }
 
   if (task.error?.trim()) {

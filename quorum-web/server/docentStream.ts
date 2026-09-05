@@ -57,7 +57,8 @@ export function isStepLine(line: string): boolean {
   return line.includes("[step");
 }
 
-function fmtDuration(ms: number): string {
+/** Human duration for a timeout message. Shared with the buffered sibling. */
+export function fmtDuration(ms: number): string {
   return ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : `${(ms / 1000).toFixed(1)} s`;
 }
 

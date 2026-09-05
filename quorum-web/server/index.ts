@@ -34,6 +34,7 @@ import { createSSEStream } from "./sse";
 import { buildFlights, writePlan, setReviewed, type PlanPayload } from "./autopilot";
 import { refreshArgs } from "./refreshArgs";
 import { createDocentStreamApp } from "./docentStream";
+import { createDocentAskApp } from "./docentAsk";
 
 const app = new Hono();
 
@@ -652,45 +653,18 @@ app.route(
   }),
 );
 
-app.post("/api/docent/ask", async (c) => {
-  const state = getState();
-  if (!state.currentProject) return c.json({ error: "No project selected" }, 400);
-  const body = await c.req.json<{ question: string; singleShot?: boolean }>();
-  if (!body.question?.trim()) return c.json({ error: "question is required" }, 400);
-
-  // no --quiet: stdout = answer only, stderr = the step log we surface below
-  const args = ["ownagent.py", "ask", "--project", state.currentProject];
-  if (body.singleShot) args.push("--single-shot");
-  args.push(body.question.trim());
-
-  const proc = Bun.spawn(["python3", ...args], {
-    cwd: DOCENT_DIR,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    try { proc.kill(); } catch {}
-  }, DOCENT_TIMEOUT_MS);
-
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  const exitCode = await proc.exited;
-  clearTimeout(timer);
-
-  if (timedOut) return c.json({ error: `docent timed out after ${DOCENT_TIMEOUT_MS / 60000} min` }, 500);
-  if (exitCode !== 0) {
-    return c.json({ error: stderr.trim().split("\n").pop() || "docent failed" }, 500);
-  }
-  // stderr carries the step log ("[step 1] ACTION: search(…)") — surface it so
-  // the panel can show how the answer was reached.
-  const steps = stderr
-    .split("\n")
-    .filter((l) => l.includes("[step"))
-    .map((l) => l.trim());
-  return c.json({ answer: stdout.trim(), steps });
-});
+// POST /api/docent/ask — the buffered fallback, also its own module. It used
+// to be inline here with a timeout that could not fire: it awaited the stderr
+// pipe unconditionally, and the `claude -p` grandchild holds that pipe open
+// after the kill. See docentAsk.ts.
+app.route(
+  "/",
+  createDocentAskApp({
+    getProject: () => getState().currentProject,
+    docentDir: DOCENT_DIR,
+    timeoutMs: DOCENT_TIMEOUT_MS,
+  }),
+);
 
 // Docent history — the transcript bank (D12) doubles as the panel's memory:
 // every ask is already banked per-project, so history is a read, not a store.
