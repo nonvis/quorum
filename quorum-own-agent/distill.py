@@ -75,6 +75,7 @@ def harvest(project: Path, brain, n: int, max_steps: int = 6, k: int = 6, log=pr
                 answer=result["answer"],
                 steps=result["steps"],
                 transcript=result["transcript"],
+                origin="distill",  # generated questions, not operator ones
             )
             banked += 1
             log(f"    banked ({result['steps']} steps)")

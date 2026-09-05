@@ -13,8 +13,20 @@ bundled assertions cannot be owned separately and a mutation would red them as a
 block. Case map:
   absent dir      -> no "$0.00" anywhere · exit 3 · the ABSENT header wording ·
                      JSON status no_transcript_dir · JSON total.est_usd null
+  absent + db     -> the daemon ledger IS read and labelled the only reading
+                     (sum + conversation count, out-of-window rows excluded),
+                     and the TOTAL still says n/a — one readable source does not
+                     become the missing one's number (Decision #64)
+  absent, no db   -> "db cross-check: unavailable (no .quorum/quorum.db)"
   empty dir       -> "$0.00" · exit 0 · "sessions scanned: 0"  — the LIVENESS
                      case the absent-refusal must NOT fire on
+  exact rates     -> sonnet-5 $2/$10 vs sonnet-4-6 $3/$15 (the substring table
+                     mispriced the first as the second) · a dated id resolves to
+                     its base row · fable 1h cache creation bills 2x and 5m
+                     1.25x · fable cache READ is flat $0.25/MTok while a
+                     non-exempt model reads at 0.1x input · an untiered record
+                     prices at 5m AND says so · an unlisted id that still
+                     matches a family is priced at the family rate and FLAGGED
   unknown family  -> fable still priced · unknown est null · named in JSON ·
                      JSON total flagged a floor · human "TOTAL is a FLOOR" ·
                      the unrated row still shows its tokens
@@ -29,6 +41,7 @@ Run manually: python3 scripts/spend_readout_test.py   (exit 0 = pass)
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -52,19 +65,23 @@ def iso(dt):
 
 
 def assistant_record(model, ts, tokens=1000):
+    return usage_record(model, ts, input_tokens=tokens, output_tokens=tokens)
+
+
+def usage_record(model, ts, **usage):
+    """One assistant record with an arbitrary `usage` object.
+
+    Defaults every counter to 0 so a case can name ONLY the field it prices —
+    a rate test that silently carried 1000 input tokens would not isolate the
+    multiplier it claims to measure.
+    """
+    u = {"input_tokens": 0, "output_tokens": 0,
+         "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+    u.update(usage)
     return json.dumps({
         "type": "assistant",
         "timestamp": iso(ts),
-        "message": {
-            "id": "msg_%s" % model,
-            "model": model,
-            "usage": {
-                "input_tokens": tokens,
-                "output_tokens": tokens,
-                "cache_creation_input_tokens": 0,
-                "cache_read_input_tokens": 0,
-            },
-        },
+        "message": {"id": "msg_%s" % model, "model": model, "usage": u},
     })
 
 
@@ -73,10 +90,15 @@ class SpendReadoutCase(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix="spend_gate_home_"))
         (self.home / ".claude" / "projects").mkdir(parents=True)
+        # A REAL project dir, for the cases that need a .quorum/quorum.db on
+        # disk. Its transcript dir is still absent unless a case makes it.
+        self.proj = Path(tempfile.mkdtemp(prefix="spend_gate_proj_"))
+        (self.proj / ".quorum").mkdir()
         self.now = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
 
     def tearDown(self):
         shutil.rmtree(self.home, ignore_errors=True)
+        shutil.rmtree(self.proj, ignore_errors=True)
 
     # -- helpers ---------------------------------------------------------
 
@@ -86,14 +108,32 @@ class SpendReadoutCase(unittest.TestCase):
     def write_settings(self, obj):
         (self.home / ".claude" / "settings.json").write_text(json.dumps(obj))
 
-    def run_readout(self, since, extra=()):
+    def run_readout(self, since, extra=(), project=PROJECT):
         env = dict(os.environ)
         env["HOME"] = str(self.home)
         p = subprocess.run(
-            [sys.executable, str(SCRIPT), "--project", PROJECT,
+            [sys.executable, str(SCRIPT), "--project", str(project),
              "--since", since] + list(extra),
             env=env, capture_output=True, text=True)
         return p
+
+    def seed_db(self, rows):
+        """Write a minimal conversations table — the columns the script reads.
+
+        Deliberately NOT the daemon's full schema: the cross-check must depend
+        only on (spent_usd, created_at), and a drift into reading more would red
+        here rather than at `quorum spend`.
+        """
+        db = self.proj / ".quorum" / "quorum.db"
+        con = sqlite3.connect(str(db))
+        con.execute("CREATE TABLE conversations (id INTEGER PRIMARY KEY, "
+                    "goal TEXT, spent_usd REAL, created_at TEXT)")
+        con.executemany(
+            "INSERT INTO conversations(goal, spent_usd, created_at) "
+            "VALUES(?,?,?)", rows)
+        con.commit()
+        con.close()
+        return db
 
     # -- 1. absent dir: the refusal --------------------------------------
     # One assertion per method: a mutation stops at the first failure in a
@@ -126,6 +166,70 @@ class SpendReadoutCase(unittest.TestCase):
     def test_absent_dir_json_total_is_null(self):
         p = self.run_readout(iso(self.now - timedelta(hours=1)), ["--json"])
         self.assertIsNone(json.loads(p.stdout)["total"]["est_usd"])
+
+    # -- 1b. absent dir, but the daemon ledger is still a real reading ----
+    # The transcript source is unreadable; the db is a DIFFERENT source and is
+    # readable. Refusing to look at it too would throw away the only measurement
+    # left — but it also must not be promoted into the TOTAL (Decision #64: the
+    # daemon only records `converse`, so it is a partial view of the window).
+
+    def db_window(self):
+        return (iso(self.now - timedelta(hours=3)), iso(self.now))
+
+    def seed_window_db(self):
+        def at(delta):
+            return (self.now - delta).strftime("%Y-%m-%d %H:%M:%S")
+        return self.seed_db([
+            ("in-window a", 1.25, at(timedelta(hours=2))),
+            ("in-window b", 2.50, at(timedelta(hours=1))),
+            ("OUTSIDE the window", 99.0, at(timedelta(hours=30))),
+        ])
+
+    def run_absent_with_db(self, extra=()):
+        self.seed_window_db()
+        since, until = self.db_window()
+        p = self.run_readout(since, ["--until", until] + list(extra),
+                             project=self.proj)
+        self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+        return p
+
+    def test_absent_dir_runs_the_db_cross_check(self):
+        """The line the operator reads: labelled, summed, counted."""
+        p = self.run_absent_with_db()
+        self.assertIn("db cross-check (daemon-recorded, the only reading for "
+                      "this window): $3.75 across 2 conversations", p.stdout)
+
+    def test_absent_dir_db_cross_check_excludes_out_of_window(self):
+        """The $99 row sits outside [since, until] and must not be counted."""
+        r = json.loads(self.run_absent_with_db(["--json"]).stdout)
+        self.assertEqual(r["db_cross_check_conversations"], 2)
+
+    def test_absent_dir_db_cross_check_json_carries_the_sum(self):
+        r = json.loads(self.run_absent_with_db(["--json"]).stdout)
+        self.assertAlmostEqual(r["db_cross_check_usd"], 3.75, places=6)
+
+    def test_absent_dir_db_figure_never_becomes_the_total(self):
+        """Decision #64: a readable second source is NOT the missing first one.
+        The TOTAL row stays n/a even though we now print a real dollar figure."""
+        p = self.run_absent_with_db()
+        self.assertRegex(p.stdout, r"TOTAL\s+n/a\s+n/a\s+n/a\s+n/a\s+n/a")
+
+    def test_absent_dir_db_figure_never_becomes_the_json_total(self):
+        r = json.loads(self.run_absent_with_db(["--json"]).stdout)
+        self.assertIsNone(r["total"]["est_usd"])
+
+    def test_absent_dir_without_a_db_says_unavailable(self):
+        """No transcripts AND no ledger: name the reason, claim no number."""
+        since, until = self.db_window()
+        p = self.run_readout(since, ["--until", until], project=self.proj)
+        self.assertIn("db cross-check: unavailable (no .quorum/quorum.db)",
+                      p.stdout)
+
+    def test_absent_dir_without_a_db_prints_no_dollar_zero(self):
+        """`unavailable` must not degrade into a $0.00 anywhere on the page."""
+        since, until = self.db_window()
+        p = self.run_readout(since, ["--until", until], project=self.proj)
+        self.assertNotIn("$0.00", p.stdout, p.stdout)
 
     # -- 2. empty dir: the LIVENESS case the refusal must not fire on -----
 
@@ -193,6 +297,131 @@ class SpendReadoutCase(unittest.TestCase):
         self.seed_two_families()
         p = self.run_readout(iso(self.now - timedelta(hours=1)))
         self.assertRegex(p.stdout, r"some-future-model-9\s+1,000\s+1,000.*n/a")
+
+    # -- 3b. EXACT-id rates, cache tiers, and the flagged family fallback --
+    # Source of the numbers under test: claude-api skill (Claude Code 2.1.261
+    # bundle), pricing table cached 2026-06-24.
+
+    def seed_one(self, model, **usage):
+        d = self.tdir()
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "s1.jsonl").write_text(
+            usage_record(model, self.now - timedelta(minutes=1), **usage) + "\n")
+
+    def price_of(self, model, **usage):
+        """EST $ for a single record of `model` with exactly this usage."""
+        self.seed_one(model, **usage)
+        p = self.run_readout(iso(self.now - timedelta(hours=1)), ["--json"])
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        rows = {m["model"]: m for m in json.loads(p.stdout)["models"]}
+        return rows[model]["est_usd"]
+
+    def test_sonnet_5_prices_at_its_own_rate(self):
+        """$2/$10 — the substring table charged it Sonnet 4.6's $3/$15."""
+        self.assertAlmostEqual(
+            self.price_of("claude-sonnet-5", input_tokens=1000,
+                          output_tokens=1000), 0.012, places=6)
+
+    def test_sonnet_4_6_keeps_the_older_rate(self):
+        """The discriminator: same family, different price. $3/$15."""
+        self.assertAlmostEqual(
+            self.price_of("claude-sonnet-4-6", input_tokens=1000,
+                          output_tokens=1000), 0.018, places=6)
+
+    def test_dated_model_id_resolves_to_its_base_row(self):
+        """Longest-prefix: a dated/suffixed id is not an unknown model."""
+        self.assertAlmostEqual(
+            self.price_of("claude-sonnet-5-20260101", input_tokens=1000,
+                          output_tokens=1000), 0.012, places=6)
+
+    def test_bracket_suffix_id_still_reads_at_the_flat_rate(self):
+        """The FLAT-read table matches by prefix too: `claude-fable-5-1[1m]`
+        reads at $0.25/MTok, not 0.1x its input rate."""
+        self.assertAlmostEqual(
+            self.price_of("claude-fable-5-1[1m]",
+                          cache_read_input_tokens=4000), 0.001, places=6)
+
+    def test_bracket_suffix_id_resolves_as_an_exact_row(self):
+        """…and it is EXACT, not a family guess — the price happens to match the
+        family rate, so only rate_source can tell prefix resolution worked."""
+        self.seed_one("claude-fable-5-1[1m]", input_tokens=1000)
+        p = self.run_readout(iso(self.now - timedelta(hours=1)), ["--json"])
+        rows = {m["model"]: m for m in json.loads(p.stdout)["models"]}
+        self.assertEqual(rows["claude-fable-5-1[1m]"]["rate_source"], "exact")
+
+    def test_one_hour_cache_creation_bills_double(self):
+        """1h tier = 2x input. fable $10 => $20/MTok on 1000 tok = $0.02."""
+        self.assertAlmostEqual(
+            self.price_of("claude-fable-5-1",
+                          cache_creation={"ephemeral_5m_input_tokens": 0,
+                                          "ephemeral_1h_input_tokens": 1000}),
+            0.02, places=6)
+
+    def test_five_minute_cache_creation_bills_1_25x(self):
+        """The tier's partner case: same tokens, 1.25x => $0.0125."""
+        self.assertAlmostEqual(
+            self.price_of("claude-fable-5-1",
+                          cache_creation={"ephemeral_5m_input_tokens": 1000,
+                                          "ephemeral_1h_input_tokens": 0}),
+            0.0125, places=6)
+
+    def test_fable_5_1_cache_read_is_a_flat_rate(self):
+        """$0.25/MTok flat, NOT 0.1x$10=$1. 4000 tok => $0.001, not $0.004."""
+        self.assertAlmostEqual(
+            self.price_of("claude-fable-5-1", cache_read_input_tokens=4000),
+            0.001, places=6)
+
+    def test_non_exempt_cache_read_is_ten_percent_of_input(self):
+        """The flat rate's liveness partner: sonnet-5 reads at 0.1x$2=$0.20."""
+        self.assertAlmostEqual(
+            self.price_of("claude-sonnet-5", cache_read_input_tokens=4000),
+            0.0008, places=6)
+
+    def test_untiered_cache_creation_prices_at_the_5m_rate(self):
+        """An older record with no TTL split: 1.25x, not 2x. 1000 tok @ $2."""
+        self.assertAlmostEqual(
+            self.price_of("claude-sonnet-5",
+                          cache_creation_input_tokens=1000), 0.0025, places=6)
+
+    def test_untiered_cache_creation_says_it_assumed_5m(self):
+        """An assumption the reader cannot see is an assumption they'll quote."""
+        self.seed_one("claude-sonnet-5", cache_creation_input_tokens=1000)
+        p = self.run_readout(iso(self.now - timedelta(hours=1)))
+        self.assertIn("cache-creation TTL split absent for claude-sonnet-5",
+                      p.stdout)
+
+    def test_tiered_record_does_not_claim_an_assumption(self):
+        """Liveness for that warning: a split record must NOT print it."""
+        self.seed_one("claude-sonnet-5",
+                      cache_creation={"ephemeral_5m_input_tokens": 1000,
+                                      "ephemeral_1h_input_tokens": 0})
+        p = self.run_readout(iso(self.now - timedelta(hours=1)))
+        self.assertNotIn("cache-creation TTL split absent", p.stdout)
+
+    def test_unlisted_id_falls_back_to_the_family_rate(self):
+        """No row for claude-opus-9, but 'opus' is known: $5/$25, not n/a."""
+        self.assertAlmostEqual(
+            self.price_of("claude-opus-9", input_tokens=1000,
+                          output_tokens=1000), 0.03, places=6)
+
+    def test_family_fallback_is_flagged_in_json(self):
+        self.seed_one("claude-opus-9", input_tokens=1000, output_tokens=1000)
+        p = self.run_readout(iso(self.now - timedelta(hours=1)), ["--json"])
+        rows = {m["model"]: m for m in json.loads(p.stdout)["models"]}
+        self.assertEqual(rows["claude-opus-9"]["rate_source"], "family")
+
+    def test_family_fallback_is_flagged_in_the_human_readout(self):
+        """A guessed rate has to announce itself where the operator reads it."""
+        self.seed_one("claude-opus-9", input_tokens=1000, output_tokens=1000)
+        p = self.run_readout(iso(self.now - timedelta(hours=1)))
+        self.assertIn("family-rate: claude-opus-9 has no row in the priced "
+                      "table", p.stdout)
+
+    def test_exact_id_is_not_flagged_as_a_family_rate(self):
+        """Liveness for the flag: a priced id must not wear the warning."""
+        self.seed_one("claude-sonnet-5", input_tokens=1000, output_tokens=1000)
+        p = self.run_readout(iso(self.now - timedelta(hours=1)))
+        self.assertNotIn("family-rate:", p.stdout)
 
     # -- 4/5. the retention horizon warning, and its liveness -------------
 

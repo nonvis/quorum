@@ -10,6 +10,11 @@ Quorum project's accumulated knowledge base. Stdlib only.
                                [--base-url URL] [--local-model M]
                                [--max-steps N] [-k N] [--quiet]
     python3 ownagent.py eval   --project <root> [--golden FILE] [--agentic]
+                               [--bank]
+
+`--brain fake` also exists on every brainy command. It is TEST-ONLY and refuses
+to run unless QUORUM_OWNAGENT_FAKE_BRAIN names a file holding the canned reply
+(see brains.ScriptedBrain) — the gates need a deterministic complete().
 
 See README.md for the design (the Brain seam, the text protocol, the ladder).
 """
@@ -117,6 +122,11 @@ def cmd_bank(args):
 
     stats = bank.bank_stats(_project(args))
     print(f"{stats['records']} transcript(s) in {stats['files']} file(s) — {stats['dir']}")
+    if stats["by_origin"]:
+        # Eval-origin records repeat the golden questions; a distillation run
+        # needs to see how much of the bank is that before it trains on it.
+        split = " · ".join(f"{o} {n}" for o, n in sorted(stats["by_origin"].items()))
+        print(f"  by origin: {split}")
 
 
 def cmd_eval(args):
@@ -129,7 +139,7 @@ def cmd_eval(args):
         sys.exit(f"error: no golden set at {golden}")
     ok = goldeval.run_eval(
         project, brain, golden, agentic=args.agentic,
-        max_steps=args.max_steps, k=args.k,
+        max_steps=args.max_steps, k=args.k, bank_transcripts=args.bank,
     )
     sys.exit(0 if ok else 1)
 
@@ -142,7 +152,10 @@ def main():
         p.add_argument("--project", default=".", help="Quorum project root (default: cwd)")
         p.add_argument("-k", type=int, default=6, help="retrieval depth")
         if brainy:
-            p.add_argument("--brain", choices=["claude", "local"], default="claude")
+            # "fake" is the test seam (brains.ScriptedBrain) — armed only by
+            # QUORUM_OWNAGENT_FAKE_BRAIN, so listing it here cannot arm it.
+            p.add_argument("--brain", choices=["claude", "local", "fake"],
+                           default="claude")
             p.add_argument("--claude-model", default=None,
                            help="claude -p --model (default: your CLI's default model)")
             p.add_argument("--base-url", default="http://127.0.0.1:8080",
@@ -186,6 +199,10 @@ def main():
     p.add_argument("--golden", default=None, help="path to golden .jsonl")
     p.add_argument("--agentic", action="store_true",
                    help="evaluate the agentic loop (default: single-shot)")
+    p.add_argument("--bank", action="store_true",
+                   help="harvest each eval transcript into the bank as "
+                        "origin=eval (default OFF: the golden questions repeat "
+                        "every run and would flood the distillation set)")
     common(p, brainy=True)
     p.set_defaults(fn=cmd_eval)
 

@@ -14,6 +14,14 @@ plain text and diffable, so a regression shows up as a FAIL line — a measureme
 not a feeling.
 
     python3 ownagent.py eval --project <root> [--golden FILE] [--agentic]
+                             [--bank]
+
+--bank (default OFF) harvests each graded transcript into the bank, tagged
+`origin: "eval"`. Off by default on purpose: the golden questions are the SAME
+every run, so banking them automatically would fill the distillation set with
+duplicates of a dozen questions. The flag is the harvest switch — used when an
+eval run is deliberately being mined (a new brain, a reworked corpus), not on
+every regression check.
 """
 
 from __future__ import annotations
@@ -21,6 +29,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import bank
 import brains
 import loop
 
@@ -48,10 +57,16 @@ def _missing_label(substr_ok: bool, cite_ok: bool) -> str:
     return "citation"
 
 
-def run_eval(project, brain, golden_path, agentic=False, max_steps=6, k=6) -> bool:
+def run_eval(project, brain, golden_path, agentic=False, max_steps=6, k=6,
+             bank_transcripts=False) -> bool:
     """Run every golden question through the agent and grade it.
 
-    Returns True iff every question passed (no fails, no errors)."""
+    Returns True iff every question passed (no fails, no errors).
+
+    bank_transcripts: harvest each transcript into the bank as `origin: "eval"`
+    (the `--bank` flag). PASS and FAIL alike — a wrong grounded answer is data
+    about the agent's behavior too; the grade is not in the record, so a
+    consumer that wants only passes must re-grade rather than assume."""
     project = Path(project)
     golden_path = Path(golden_path)
     items = _load_golden(golden_path)
@@ -64,6 +79,7 @@ def run_eval(project, brain, golden_path, agentic=False, max_steps=6, k=6) -> bo
 
     passed = failed = errors = 0
     substance_ok = citation_ok = 0
+    banked = bank_failed = 0
 
     for item in items:
         qid = item.get("id", "?")
@@ -82,6 +98,25 @@ def run_eval(project, brain, golden_path, agentic=False, max_steps=6, k=6) -> bo
             continue
 
         answer = result.get("answer", "") or ""
+
+        if bank_transcripts:
+            # Same writer `ask` uses — one bank, one record shape, one reader.
+            try:
+                bank.bank_record(
+                    project,
+                    mode="agentic" if agentic else "single_shot",
+                    brain=brain_name,
+                    question=question,
+                    answer=answer,
+                    steps=result.get("steps", 0),
+                    transcript=result.get("transcript", ""),
+                    origin="eval",
+                )
+                banked += 1
+            except OSError as e:  # banking must never sink a measurement run
+                bank_failed += 1
+                print(f"    (bank write failed: {e})")
+
         low = answer.lower()
         substr_ok = (not expect_any) or any(s.lower() in low for s in expect_any)
         cite_ok = (not expect_cite) or any(c.lower() in low for c in expect_cite)
@@ -106,5 +141,8 @@ def run_eval(project, brain, golden_path, agentic=False, max_steps=6, k=6) -> bo
     print(f"failed    {failed}")
     print(f"errors    {errors}")
     print(f"substance {substance_ok}/{total} · citations {citation_ok}/{total}")
+    if bank_transcripts:
+        note = f" ({bank_failed} write(s) failed)" if bank_failed else ""
+        print(f"banked    {banked} (origin: eval){note}")
 
     return passed == total
