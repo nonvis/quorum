@@ -187,7 +187,9 @@ inline std::string generate_context_md(
     std::remove(temp_path.c_str());
 
     if (result && result->exit_code == 0) {
-        auto text = sui::quorum::json::extract_string(result->output, "result");
+        // DEPTH-0 read of the claude -p envelope (see utils/json.h): a flat
+        // by-key scan can return a nested namesake instead of the real value.
+        auto text = sui::quorum::json::extract_top_level_string(result->output, "result");
         if (text && !text->empty()) {
             auto content = *text;
             if (content.starts_with("```")) {

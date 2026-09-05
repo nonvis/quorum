@@ -31,6 +31,31 @@ class Invoker {
 public:
     explicit Invoker(Database& db) : db_(db) {}
 
+    // Validate a `claude -p --output-format json` envelope BODY (the exit code
+    // is checked by the caller). Returns an error string, nullopt when healthy.
+    //
+    // Every read here is DEPTH-0. Claude Code 2.1.261 nests
+    // usage.iterations[0]."type" == "message" ahead of the top-level
+    // "type":"result", so the old flat json::extract_string(raw, "type")
+    // returned "message" and rejected every healthy reply.
+    [[nodiscard]] static std::optional<std::string> validate_envelope_json(
+        const std::string& raw_output) {
+        auto type_field = json::extract_top_level_string(raw_output, "type");
+        if (!type_field || *type_field != "result") {
+            return "invalid JSON structure: missing or wrong \"type\" field";
+        }
+        // A "type":"result" envelope can still carry a failure. Report the
+        // model's own error text (which lives in "result") to the operator.
+        if (json::extract_top_level_bool(raw_output, "is_error", false)) {
+            auto subtype = json::extract_top_level_string(raw_output, "subtype");
+            auto text = json::extract_top_level_string(raw_output, "result");
+            return "claude reported is_error=true"
+                + (subtype ? " (" + *subtype + ")" : std::string{})
+                + (text && !text->empty() ? ": " + *text : std::string{});
+        }
+        return std::nullopt;  // valid
+    }
+
     // Validate claude -p output. Returns error string if invalid, nullopt if valid.
     [[nodiscard]] static std::optional<std::string> validate_claude_output(
         const CommandResult& result) {
@@ -38,11 +63,40 @@ public:
             return "non-zero exit code: " + std::to_string(result.exit_code)
                 + (result.output.empty() ? "" : " — " + result.output);
         }
-        auto type_field = json::extract_string(result.output, "type");
-        if (!type_field || *type_field != "result") {
-            return "invalid JSON structure: missing or wrong \"type\" field";
+        return validate_envelope_json(result.output);
+    }
+
+    // Pure parse of a claude -p envelope into an InvocationResult. No DB, no
+    // subprocess — this is the exact code invoke() runs after Layer 1, so it is
+    // unit-testable against real envelopes.
+    //
+    // Token fields are read from INSIDE the top-level "usage" object, never
+    // from the whole document: usage.iterations[] repeats input_tokens /
+    // output_tokens / cache_*_input_tokens per API round-trip, and "modelUsage"
+    // repeats them per model. A flat scan would silently report one iteration
+    // instead of the turn total.
+    [[nodiscard]] static InvocationResult parse_envelope(const std::string& raw_output) {
+        InvocationResult r;
+        if (auto err = validate_envelope_json(raw_output)) {
+            r.success = false;
+            r.error = *err;
+            return r;
         }
-        return std::nullopt;  // valid
+        auto usage = json::extract_top_level_object(raw_output, "usage")
+                         .value_or(std::string{});
+        r.tokens_in  = json::extract_top_level_int(usage, "input_tokens");
+        r.tokens_out = json::extract_top_level_int(usage, "output_tokens");
+        r.cache_creation_tokens =
+            json::extract_top_level_int(usage, "cache_creation_input_tokens");
+        r.cache_read_tokens =
+            json::extract_top_level_int(usage, "cache_read_input_tokens");
+        r.cost = json::extract_top_level_number(raw_output, "total_cost_usd");
+        r.output = json::extract_top_level_string(raw_output, "result")
+                       .value_or(raw_output);
+        r.session_id = json::extract_top_level_string(raw_output, "session_id")
+                           .value_or(std::string{});
+        r.success = true;
+        return r;
     }
 
     // Pure helper: build the tool-related claude -p flags based on the agent's
@@ -294,33 +348,35 @@ public:
             }
         }
 
-        // Layer 2: Validate JSON structure — claude -p --output-format json
-        // always returns {"type":"result",...} on success
-        auto type_field = json::extract_string(raw_output, "type");
-        if (!type_field || *type_field != "result") {
+        // Layer 2: Validate + parse the envelope — claude -p --output-format
+        // json always returns {"type":"result",...} on success. Both the first
+        // attempt and the fresh-session retry above land here.
+        //
+        // parse_envelope() reads DEPTH-0 keys only. The flat by-key extractors
+        // cannot be used on this envelope: Claude Code 2.1.261 puts
+        // usage.iterations[0]."type" ("message") ahead of the top-level
+        // "type", and repeats the token keys inside iterations[]/modelUsage.
+        auto parsed = parse_envelope(raw_output);
+        if (!parsed.success) {
             auto err = "claude -p returned invalid JSON for task " + std::to_string(task_id)
-                + ": " + raw_output.substr(0, 200);
+                + ": " + parsed.error + " — raw: " + raw_output.substr(0, 200);
             mark_failed(task_id, err);
             return {.success = false, .error = err};
         }
 
-        // Parse token usage from validated JSON output
-        int64_t tokens_in = json::extract_int(raw_output, "input_tokens");
-        int64_t tokens_out = json::extract_int(raw_output, "output_tokens");
-        // Phase 7 Track 5: Anthropic prompt-cache token accounting. Both
-        // fields appear inside the standard "usage" object; the existing
-        // by-key extractor finds them regardless of nesting depth.
-        int64_t cache_creation = json::extract_int(raw_output, "cache_creation_input_tokens");
-        int64_t cache_read = json::extract_int(raw_output, "cache_read_input_tokens");
-        double cost = json::extract_number(raw_output, "total_cost_usd");
+        // Phase 7 Track 5: Anthropic prompt-cache token accounting. All four
+        // token fields come from inside the top-level "usage" object.
+        int64_t tokens_in = parsed.tokens_in;
+        int64_t tokens_out = parsed.tokens_out;
+        int64_t cache_creation = parsed.cache_creation_tokens;
+        int64_t cache_read = parsed.cache_read_tokens;
+        double cost = parsed.cost;
 
-        // Extract the result text from JSON
-        auto result_text = json::extract_string(raw_output, "result");
-        std::string output_text = result_text.value_or(raw_output);
+        std::string output_text = parsed.output;
 
-        // Extract session_id from claude -p JSON output
-        auto returned_session_id = json::extract_string(raw_output, "session_id");
-        std::string effective_session_id = returned_session_id.value_or(task_session_id);
+        // session_id from the envelope, falling back to the task's own.
+        std::string effective_session_id =
+            parsed.session_id.empty() ? task_session_id : parsed.session_id;
 
         // Update task in DB
         mark_done(task_id, output_text, tokens_in, tokens_out, cost,

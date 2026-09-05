@@ -36,7 +36,7 @@
 
 #include "utils/file_io.h"          // detail::read_file_text
 #include "utils/subprocess.h"       // run_command
-#include "utils/json.h"             // json::extract_string
+#include "utils/json.h"             // json::extract_top_level_string
 
 namespace sui::quorum::cli {
 
@@ -586,7 +586,9 @@ namespace detail {
         std::cerr << "\n";
         return 1;
     }
-    auto text = sui::quorum::json::extract_string(result->output, "result");
+    // DEPTH-0 read of the claude -p envelope (see utils/json.h): a flat by-key
+    // scan can return a nested namesake instead of the real top-level value.
+    auto text = sui::quorum::json::extract_top_level_string(result->output, "result");
     if (!text || text->empty()) {
         std::cerr << "ERROR: manager produced no answer\n";
         return 1;

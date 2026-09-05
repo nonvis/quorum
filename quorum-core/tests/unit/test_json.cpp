@@ -158,6 +158,150 @@ static void test_old_cost_key_not_found() {
           "old key 'cost_usd' does not match 'total_cost_usd'");
 }
 
+// ─── Depth-0 extraction (Claude Code 2.1.261 envelope shape) ─────────────────
+//
+// The flat extractors return the FIRST "<key>": match at any depth. The real
+// 2.1.261 result envelope nests usage.iterations[0]."type" == "message" ahead
+// of the top-level "type":"result", which made the daemon reject every healthy
+// reply. These tests pin the depth-0 path.
+
+// A miniature of the real shape: the same key names appear inside a nested
+// object AND inside an array element BEFORE the top-level ones.
+static const std::string kNestedShadow =
+    R"({"a":{"type":"nested-obj","result":"NESTED-OBJ"},)"
+    R"("items":[{"type":"nested-arr","result":"NESTED-ARR","input_tokens":999,)"
+    R"("nested_only":"HIDDEN"}],)"
+    R"("type":"result","result":"TOPLEVEL","input_tokens":7,)"
+    R"("is_error":false,"total_cost_usd":1.25,"api_error_status":null})";
+
+static void test_flat_extractor_is_shadowed() {
+    // Characterization of the bug being fixed: the flat scanner reads the
+    // NESTED namesake. This is why extract_top_level_* exists.
+    auto flat_type = json::extract_string(kNestedShadow, "type");
+    check(flat_type.has_value() && *flat_type == "nested-obj",
+          "flat extract_string(type) is shadowed by the nested key");
+    int64_t flat_tok = json::extract_int(kNestedShadow, "input_tokens");
+    check(flat_tok == 999, "flat extract_int(input_tokens) is shadowed by the array element");
+}
+
+static void test_top_level_ignores_nested() {
+    auto type = json::extract_top_level_string(kNestedShadow, "type");
+    check(type.has_value() && *type == "result",
+          "top-level type == 'result' (not the nested 'nested-obj'/'nested-arr')");
+
+    auto result = json::extract_top_level_string(kNestedShadow, "result");
+    check(result.has_value() && *result == "TOPLEVEL",
+          "top-level result == 'TOPLEVEL'");
+
+    int64_t tok = json::extract_top_level_int(kNestedShadow, "input_tokens", -1);
+    check(tok == 7, "top-level input_tokens == 7 (not the array element's 999)");
+
+    bool is_err = json::extract_top_level_bool(kNestedShadow, "is_error", true);
+    check(is_err == false, "top-level is_error == false");
+
+    double cost = json::extract_top_level_number(kNestedShadow, "total_cost_usd", -1.0);
+    check(std::abs(cost - 1.25) < 1e-9, "top-level total_cost_usd == 1.25");
+}
+
+static void test_top_level_missing_and_nested_only_keys() {
+    auto missing = json::extract_top_level_string(kNestedShadow, "nonexistent");
+    check(!missing.has_value(), "top-level missing key returns nullopt");
+
+    // Present in the document, but only INSIDE an array element.
+    auto nested_only = json::extract_top_level_string(kNestedShadow, "nested_only");
+    check(!nested_only.has_value(), "key that exists only nested returns nullopt at depth 0");
+    auto flat_nested_only = json::extract_string(kNestedShadow, "nested_only");
+    check(flat_nested_only.has_value(), "…while the flat scanner does find it (contrast)");
+
+    // A null value is not a string.
+    auto null_val = json::extract_top_level_string(kNestedShadow, "api_error_status");
+    check(!null_val.has_value(), "top-level null value returns nullopt for string");
+
+    int64_t int_fb = json::extract_top_level_int(kNestedShadow, "nonexistent", -5);
+    check(int_fb == -5, "top-level int missing key returns fallback");
+    double num_fb = json::extract_top_level_number(kNestedShadow, "nonexistent", -2.5);
+    check(std::abs(num_fb - (-2.5)) < 1e-9, "top-level number missing key returns fallback");
+    bool bool_fb = json::extract_top_level_bool(kNestedShadow, "nonexistent", true);
+    check(bool_fb == true, "top-level bool missing key returns fallback");
+}
+
+static void test_top_level_string_escapes_do_not_derail_scan() {
+    // An earlier value contains an escaped quote, an escaped backslash and a
+    // decoy "type": pair inside the string. A scanner that mishandles \" loses
+    // sync and the whole object stops parsing.
+    std::string json =
+        R"({"note":"see \"type\": \"decoy\" here","tail":"trailing backslash \\",)"
+        R"("type":"result","result":"real \"quoted\" text"})";
+
+    auto type = json::extract_top_level_string(json, "type");
+    check(type.has_value() && *type == "result",
+          "escaped quotes in an earlier value do not derail the depth-0 scan");
+
+    auto note = json::extract_top_level_string(json, "note");
+    check(note.has_value() && *note == "see \"type\": \"decoy\" here",
+          "escaped quotes decode correctly");
+
+    auto tail = json::extract_top_level_string(json, "tail");
+    check(tail.has_value() && *tail == "trailing backslash \\",
+          "escaped backslash decodes correctly");
+
+    auto result = json::extract_top_level_string(json, "result");
+    check(result.has_value() && *result == "real \"quoted\" text",
+          "top-level result with embedded quotes decodes correctly");
+}
+
+static void test_top_level_object_scopes_usage() {
+    // Real 2.1.261 shape: usage.iterations[] repeats the token keys, and here
+    // it precedes the totals, so a flat read reports one round-trip.
+    std::string json =
+        R"({"usage":{"iterations":[{"input_tokens":7,"output_tokens":1,"type":"message"}],)"
+        R"("input_tokens":100,"output_tokens":200,"cache_creation_input_tokens":300,)"
+        R"("cache_read_input_tokens":400},"type":"result"})";
+
+    auto usage = json::extract_top_level_object(json, "usage");
+    check(usage.has_value(), "extract_top_level_object(usage) returns the object");
+    check(usage->front() == '{' && usage->back() == '}',
+          "extracted usage object keeps its braces");
+
+    check(json::extract_top_level_int(*usage, "input_tokens", -1) == 100,
+          "usage.input_tokens == 100 (not iterations[0]'s 7)");
+    check(json::extract_top_level_int(*usage, "output_tokens", -1) == 200,
+          "usage.output_tokens == 200 (not iterations[0]'s 1)");
+    check(json::extract_top_level_int(*usage, "cache_creation_input_tokens", -1) == 300,
+          "usage.cache_creation_input_tokens == 300");
+    check(json::extract_top_level_int(*usage, "cache_read_input_tokens", -1) == 400,
+          "usage.cache_read_input_tokens == 400");
+
+    // Contrast: the flat scan on the whole document takes the iteration.
+    check(json::extract_int(json, "input_tokens") == 7,
+          "flat extract_int on the whole document takes iterations[0] (contrast)");
+
+    auto not_an_object = json::extract_top_level_object(json, "type");
+    check(!not_an_object.has_value(), "extract_top_level_object on a string value returns nullopt");
+}
+
+static void test_top_level_tolerates_stderr_preamble_and_junk() {
+    // claude -p runs with 2>&1, so warning lines can precede the envelope.
+    std::string json =
+        "Warning: something happened {not json}\n"
+        R"({"type":"result","result":"OK"})" "\n";
+    auto type = json::extract_top_level_string(json, "type");
+    check(type.has_value() && *type == "result",
+          "envelope is found after a stderr preamble");
+
+    // No well-formed object at all.
+    std::string plain = "Something went wrong but process exited 0";
+    check(!json::extract_top_level_string(plain, "type").has_value(),
+          "plain text returns nullopt");
+    check(!json::extract_top_level_string("", "type").has_value(),
+          "empty input returns nullopt");
+
+    // Truncated envelope: not well-formed, so no value is invented.
+    std::string truncated = R"({"type":"result","result":"half a rep)";
+    check(!json::extract_top_level_string(truncated, "type").has_value(),
+          "truncated envelope returns nullopt");
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -175,6 +319,13 @@ int main() {
     test_extract_bool_fallback();
     test_full_claude_json();
     test_old_cost_key_not_found();
+
+    test_flat_extractor_is_shadowed();
+    test_top_level_ignores_nested();
+    test_top_level_missing_and_nested_only_keys();
+    test_top_level_string_escapes_do_not_derail_scan();
+    test_top_level_object_scopes_usage();
+    test_top_level_tolerates_stderr_preamble_and_junk();
 
     std::cout << "\nAll tests passed.\n";
     return 0;
