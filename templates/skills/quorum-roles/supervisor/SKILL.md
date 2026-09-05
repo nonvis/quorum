@@ -188,10 +188,13 @@ reads the checkpoint + SUPERVISOR.md + records and continues where you left off.
 
 **On EVERY stop route** — before releasing repo ownership — **capture the spend
 readout:** run `quorum spend --project <root>` and copy its `TOTAL` line + the
-`window_budget_usd` comparison into the morning review's `spend:` field. Run this
+`window_budget_usd` comparison into the morning review's `spend:` field —
+VERBATIM, including `n/a`, `ABSENT` or `FLOOR` when it prints them (exit 3 means
+the transcript source could not be read; that is not a spend of $0). Run this
 **BEFORE** `rm -f LOCK`: spend defaults its `--since` to the LOCK's line-1 flight
-start time, so it must read the LOCK while it still exists. If the readout fails,
-record `spend: unavailable` and continue — never crash the halt on it.
+start time, so it must read the LOCK while it still exists. Only if the command
+itself cannot run (no binary, no python3), record `spend: unavailable` and
+continue — never crash the halt on it.
 
 Then **release repo ownership:** `rm -f .quorum/autopilot/LOCK`. The LOCK must not
 survive a graceful stop; a stranded LOCK blocks the operator's post-run git and
@@ -206,7 +209,10 @@ Before any stop, update the checkpoint's `## Morning review`:
   in-flight task)
 - **blocked-on:** any human question that caused a `needs_human` stop, or `none`
 - **spend:** the `quorum spend` total + `window_budget_usd` comparison, captured
-  at halt before LOCK removal; `unavailable` if the readout failed
+  at halt before LOCK removal; `unavailable` if the readout failed. Carry the
+  readout's own words VERBATIM — if it prints `n/a`, `ABSENT` or `FLOOR` (exit 3
+  = it could not read that source; a floor = an unrated model or a `--since`
+  past the retention horizon), write that, never a `$0.00` or a bare number
 
 This is the "wake to completed work + refreshed knower vaults + paused items"
 experience — produced by you, recorded durably.

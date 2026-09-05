@@ -30,12 +30,32 @@ SAME message record across several lines (identical usage), so we dedupe by
 
 $ estimate CAVEAT: subscription usage is not billed per token — the "EST." $
 column exists ONLY to compare accumulated tokens against window_budget_usd. Rates
-are per-family list prices (opus/sonnet/haiku); unknown families estimate $0.
+are per-family list prices (fable/opus/sonnet/haiku); a model whose family is NOT
+in RATES is priced `n/a`, NEVER $0 — its tokens are still reported and the TOTAL
+is then labelled a FLOOR (absent rate != zero spend).
+
+ABSENT != ZERO. Three distinct outcomes, three exit codes:
+  * transcript dir ABSENT  -> every $ figure prints `n/a`, exit 3, JSON
+    "status":"no_transcript_dir". We cannot see this source; we do not claim it
+    spent nothing. The dir is absent either because no Claude Code session ever
+    ran with this cwd, or because Claude Code's transcript retention pruned it.
+  * transcript dir present but EMPTY (or no record in the window) -> $0.00,
+    `sessions scanned: 0`, exit 0. That IS zero: we looked and there was nothing.
+  * a bad --since/--until -> exit 2.
+
+RETENTION FLOOR: Claude Code prunes transcripts older than `cleanupPeriodDays`
+(<HOME>/.claude/settings.json; absent -> Claude Code's documented default of 30
+days). We print the resulting horizon and WARN when --since predates it — the
+window's older half may simply no longer exist on disk, so the total is a FLOOR.
 
 Read-only: file reads + a read-only (mode=ro) SQLite open. Writes nothing.
 
+HOME is the single injection seam for tests: it selects BOTH the transcript root
+(`$HOME/.claude/projects/...`) and the settings file read for cleanupPeriodDays.
+
 Usage: spend_readout.py --project <abs path> --since <ISO8601 UTC>
                         [--until <ISO8601>] [--json]
+Exit:  0 ok · 2 bad --since/--until · 3 transcript dir absent
 """
 import argparse
 import calendar
@@ -43,7 +63,7 @@ import json
 import os
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Per-MTok list prices, matched by SUBSTRING of the model name (lowercased).
@@ -51,6 +71,11 @@ from pathlib import Path
 # opus 4.8 $5/$25, sonnet 5 $3/$15, haiku 4.5 $1/$5. cache_creation is billed
 # at 1.25x the input rate (5-minute TTL; the 1h TTL bills 2x — we estimate at
 # the default 1.25x), cache_read at 0.1x.
+# Re-checked 2026-09-04: no local pricing reference found on this box (searched
+# ~/.claude for a claude-api skill / any *pricing* file — none exists), and this
+# script does not fetch the web. Values UNCHANGED and still dated 07-21; treat
+# them as stale until a reference is on disk to diff against.
+# A model whose family is absent here is priced n/a, never $0 — see est_usd.
 RATES = {
     "fable":  {"in": 10.0, "out": 50.0},
     "opus":   {"in": 5.0,  "out": 25.0},
@@ -63,12 +88,57 @@ CACHE_READ_MULT = 0.10
 EST_CAVEAT = ("EST. — subscription usage is not billed per-token; this estimate "
               "exists only to compare against window_budget_usd.")
 
+# Claude Code's documented default transcript retention when settings.json sets
+# no `cleanupPeriodDays`. Empirically consistent on 2026-09-04: the oldest jsonl
+# in this box's busiest transcript dir was 08-05, exactly 30 days back.
+DEFAULT_CLEANUP_PERIOD_DAYS = 30
 
-def munged_transcript_dir(abs_project: str) -> Path:
+ABSENT_NOTE = ("ABSENT (never a session with this cwd, or pruned by Claude "
+               "Code's transcript retention)")
+
+
+def claude_home(home: str = None) -> Path:
+    """<HOME>/.claude — the ONE place HOME is resolved. Injectable for tests."""
+    if home is None:
+        home = os.environ.get("HOME", "")
+    return Path(home) / ".claude"
+
+
+def munged_transcript_dir(abs_project: str, home: str = None) -> Path:
     """<HOME>/.claude/projects/<abs project with '/' and '.' -> '-'>."""
-    home = os.environ.get("HOME", "")
     munged = "".join("-" if c in "/." else c for c in abs_project)
-    return Path(home) / ".claude" / "projects" / munged
+    return claude_home(home) / "projects" / munged
+
+
+def retention_days(home: str = None):
+    """(days, source) — settings.json `cleanupPeriodDays`, else the CC default.
+
+    source is literally "settings.json" or "default" so the readout can say
+    WHERE the number came from rather than asserting a bare horizon. Any read
+    or parse failure falls back to the default (a missing setting IS the
+    default; a corrupt file must not make us claim a longer horizon).
+    """
+    path = claude_home(home) / "settings.json"
+    try:
+        d = json.loads(path.read_text())
+        v = d.get("cleanupPeriodDays")
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return DEFAULT_CLEANUP_PERIOD_DAYS, "default"
+        n = int(v)
+        if n <= 0:
+            return DEFAULT_CLEANUP_PERIOD_DAYS, "default"
+        return n, "settings.json"
+    except Exception:
+        return DEFAULT_CLEANUP_PERIOD_DAYS, "default"
+
+
+def retention_info(now_dt: datetime, home: str = None):
+    """{days, source, horizon} — the date before which transcripts may be gone."""
+    days, source = retention_days(home)
+    horizon = (now_dt - timedelta(days=days)).date().isoformat()
+    return {"retention_days": days,
+            "retention_source": source,
+            "retention_horizon": horizon}
 
 
 def parse_ts(s: str):
@@ -109,10 +179,15 @@ def rate_family(model: str) -> str:
     return "unknown"
 
 
-def est_usd(model: str, in_tok: int, out_tok: int, cw_tok: int, cr_tok: int) -> float:
+def est_usd(model: str, in_tok: int, out_tok: int, cw_tok: int, cr_tok: int):
+    """Per-MTok estimate, or None when the model's family has no known rate.
+
+    None, NOT 0.0 — a rate we do not have is not a spend of zero. The caller
+    reports such a model with `n/a` and marks the TOTAL a FLOOR.
+    """
     fam = rate_family(model)
     if fam == "unknown":
-        return 0.0
+        return None
     r = RATES[fam]
     dollars = (
         in_tok * r["in"]
@@ -254,10 +329,12 @@ def scan_transcripts(tdir: Path, since_dt: datetime, until_dt: datetime):
     return per_model, sessions_scanned, lines_skipped, len(by_msg)
 
 
-def build_result(project, tdir, since_dt, until_dt, since_str, until_str):
+def build_result(project, tdir, since_dt, until_dt, since_str, until_str,
+                 retention):
     per_model, sessions, skipped, counted = scan_transcripts(tdir, since_dt, until_dt)
 
     models = []
+    unknown_models = []
     tot = {"input_tokens": 0, "output_tokens": 0,
            "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
            "est_usd": 0.0}
@@ -265,20 +342,27 @@ def build_result(project, tdir, since_dt, until_dt, since_str, until_str):
         m = per_model[model]
         e = est_usd(model, m["input_tokens"], m["output_tokens"],
                     m["cache_creation_input_tokens"], m["cache_read_input_tokens"])
+        fam = rate_family(model)
+        if fam == "unknown":
+            unknown_models.append(model)
         models.append({
             "model": model,
-            "family": rate_family(model),
+            "family": fam,
             "input_tokens": m["input_tokens"],
             "output_tokens": m["output_tokens"],
             "cache_creation_input_tokens": m["cache_creation_input_tokens"],
             "cache_read_input_tokens": m["cache_read_input_tokens"],
-            "est_usd": round(e, 4),
+            # None (JSON null) for an unknown family — never 0.0.
+            "est_usd": (round(e, 4) if e is not None else None),
         })
         for k in ("input_tokens", "output_tokens",
                   "cache_creation_input_tokens", "cache_read_input_tokens"):
             tot[k] += m[k]
-        tot["est_usd"] += e
+        if e is not None:
+            tot["est_usd"] += e
     tot["est_usd"] = round(tot["est_usd"], 4)
+    # The TOTAL under-counts whenever a model we saw has no rate: it is a FLOOR.
+    tot["est_is_floor"] = bool(unknown_models)
 
     budget = read_window_budget(project)
     budget_pct = None
@@ -287,12 +371,19 @@ def build_result(project, tdir, since_dt, until_dt, since_str, until_str):
 
     db_usd, db_note = db_cross_check(project, since_dt, until_dt)
 
-    return {
+    # The window reaches back past what Claude Code still keeps on disk => the
+    # older part of it cannot be measured, only under-reported.
+    since_predates = since_dt.date().isoformat() < retention["retention_horizon"]
+
+    r = {
+        "status": "ok",
         "project": project,
         "transcript_dir": str(tdir),
+        "transcript_dir_present": True,
         "since": since_str,
         "until": until_str,
         "models": models,
+        "unknown_families": unknown_models,
         "total": tot,
         "window_budget_usd": budget,
         "budget_pct_est": budget_pct,
@@ -301,41 +392,70 @@ def build_result(project, tdir, since_dt, until_dt, since_str, until_str):
         "sessions_scanned": sessions,
         "lines_skipped": skipped,
         "records_counted": counted,
+        "since_predates_retention": since_predates,
         "est_caveat": EST_CAVEAT,
     }
+    r.update(retention)
+    return r
 
 
-def zeroed_result(project, tdir, since_str, until_str):
-    return {
+def absent_result(project, tdir, since_dt, since_str, until_str, retention):
+    """The transcript dir does not exist — every $ figure is UNKNOWN, not zero.
+
+    No token counts, no est_usd, no session count: reporting 0 for any of them
+    would be a measurement we did not make. `status` and the exit code carry it.
+    """
+    since_predates = since_dt.date().isoformat() < retention["retention_horizon"]
+    r = {
+        "status": "no_transcript_dir",
         "project": project,
         "transcript_dir": str(tdir),
+        "transcript_dir_present": False,
+        "transcript_dir_note": ABSENT_NOTE,
         "since": since_str,
         "until": until_str,
         "models": [],
-        "total": {"input_tokens": 0, "output_tokens": 0,
-                  "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
-                  "est_usd": 0.0},
+        "unknown_families": [],
+        "total": {"input_tokens": None, "output_tokens": None,
+                  "cache_creation_input_tokens": None,
+                  "cache_read_input_tokens": None,
+                  "est_usd": None, "est_is_floor": None},
         "window_budget_usd": read_window_budget(project),
         "budget_pct_est": None,
         "db_cross_check_usd": None,
-        "db_cross_check_note": "(no transcripts)",
-        "sessions_scanned": 0,
-        "lines_skipped": 0,
-        "records_counted": 0,
+        "db_cross_check_note": "(transcript dir absent — cross-check not run)",
+        "sessions_scanned": None,
+        "lines_skipped": None,
+        "records_counted": None,
+        "since_predates_retention": since_predates,
         "est_caveat": EST_CAVEAT,
     }
+    r.update(retention)
+    return r
 
 
-def print_human(r, no_transcripts=False):
+def print_human(r):
+    absent = (r["status"] == "no_transcript_dir")
+
     def n(x):
-        return "{:,}".format(x)
+        return "n/a" if x is None else "{:,}".format(x)
+
+    def d(x):
+        return "n/a" if x is None else "$%.2f" % x
 
     print("Spend readout — %s" % r["project"])
     print("  window: %s -> %s" % (r["since"], r["until"]))
-    print("  transcripts: %s" % r["transcript_dir"])
-    if no_transcripts:
-        print("  no transcripts found for %s (nothing spent, or a fresh box)"
-              % r["transcript_dir"])
+    if absent:
+        # The required shape: the path, then ABSENT and why. No $ figure here.
+        print("  transcripts: %s — %s" % (r["transcript_dir"], ABSENT_NOTE))
+    else:
+        print("  transcripts: %s" % r["transcript_dir"])
+    print("  retention horizon ≈ %s  (cleanupPeriodDays=%d, source: %s)"
+          % (r["retention_horizon"], r["retention_days"], r["retention_source"]))
+    if r["since_predates_retention"]:
+        print("  WARNING: --since %s predates the retention horizon — sessions "
+              "before %s may have been pruned — totals are a FLOOR"
+              % (r["since"], r["retention_horizon"]))
     print("")
     print("  %-22s %12s %10s %12s %12s %10s"
           % ("model", "in", "out", "cache-w", "cache-r", "EST $"))
@@ -344,27 +464,41 @@ def print_human(r, no_transcripts=False):
               % (m["model"][:22], n(m["input_tokens"]), n(m["output_tokens"]),
                  n(m["cache_creation_input_tokens"]),
                  n(m["cache_read_input_tokens"]),
-                 "$%.2f" % m["est_usd"]))
+                 d(m["est_usd"])))
     t = r["total"]
     print("  " + "-" * 80)
+    total_est = d(t["est_usd"])
+    if t.get("est_is_floor"):
+        total_est += "+"
     print("  %-22s %12s %10s %12s %12s %9s"
           % ("TOTAL", n(t["input_tokens"]), n(t["output_tokens"]),
              n(t["cache_creation_input_tokens"]),
-             n(t["cache_read_input_tokens"]), "$%.2f" % t["est_usd"]))
+             n(t["cache_read_input_tokens"]), total_est))
+    if t.get("est_is_floor"):
+        print("  TOTAL is a FLOOR — no rate for %s; its tokens are counted, its "
+              "$ is not." % ", ".join(r["unknown_families"]))
     print("")
+    if absent:
+        print("  This source could not be read. It is NOT a spend of $0 — carry "
+              "n/a into the checkpoint, not a number.")
     if r["window_budget_usd"] is not None:
-        pct = ("%.1f%%" % r["budget_pct_est"]
-               if r["budget_pct_est"] is not None else "n/a")
-        print("  window_budget_usd: $%.2f  (EST spend $%.2f = %s of budget)"
-              % (r["window_budget_usd"], t["est_usd"], pct))
+        if t["est_usd"] is None:
+            print("  window_budget_usd: $%.2f  (EST spend n/a — transcript dir "
+                  "absent)" % r["window_budget_usd"])
+        else:
+            pct = ("%.1f%%" % r["budget_pct_est"]
+                   if r["budget_pct_est"] is not None else "n/a")
+            floor = " — a FLOOR" if t.get("est_is_floor") else ""
+            print("  window_budget_usd: $%.2f  (EST spend $%.2f = %s of budget%s)"
+                  % (r["window_budget_usd"], t["est_usd"], pct, floor))
     if r["db_cross_check_usd"] is not None:
         print("  db cross-check (conversations.spent_usd, created_at in window): "
               "$%.2f  [separate — NOT added to the transcript EST]"
               % r["db_cross_check_usd"])
     elif r["db_cross_check_note"]:
         print("  db cross-check: %s" % r["db_cross_check_note"])
-    print("  sessions scanned: %d   lines skipped (unparseable): %d"
-          % (r["sessions_scanned"], r["lines_skipped"]))
+    print("  sessions scanned: %s   lines skipped (unparseable): %s"
+          % (n(r["sessions_scanned"]), n(r["lines_skipped"])))
     print("")
     print("  " + r["est_caveat"])
 
@@ -395,16 +529,20 @@ def main():
         until_str = until_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     tdir = munged_transcript_dir(project)
+    retention = retention_info(datetime.now(timezone.utc).replace(tzinfo=None))
 
     if not tdir.is_dir():
-        r = zeroed_result(project, tdir, args.since, until_str)
+        # ABSENT != zero: exit 3, distinct from 0 (measured) and 2 (bad args).
+        r = absent_result(project, tdir, since_dt, args.since, until_str,
+                          retention)
         if args.json:
             print(json.dumps(r, indent=2))
         else:
-            print_human(r, no_transcripts=True)
-        return 0
+            print_human(r)
+        return 3
 
-    r = build_result(project, tdir, since_dt, until_dt, args.since, until_str)
+    r = build_result(project, tdir, since_dt, until_dt, args.since, until_str,
+                     retention)
     if args.json:
         print(json.dumps(r, indent=2))
     else:
