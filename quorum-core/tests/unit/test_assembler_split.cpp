@@ -287,6 +287,153 @@ static void test_s7_verdict_rule_in_output_rules() {
     cleanup(vault);
 }
 
+// --- S8: the Output Rules block is CLASS-AWARE -------------------------------
+//
+// Before Phase 15 one analyst-only block went to every agent, so a doer
+// (executor class, full tool grant, cwd = target_dir) was ordered "NEVER write
+// files directly" and "NEVER run commands that modify files" — contradicting
+// both its tool surface and its own quorum-roles/doer SKILL.
+//
+// Class is derived by ContextAssembler::effective_agent_class(), a mirror of
+// the canonical rule in utils/config.h load_agent_config(): explicit
+// `agent_class:` wins, else role "doer" => executor. Brainstorm rides over
+// class the same way invoker.h build_tool_flags() does.
+
+// Everything from the Output Rules header up to the next block header.
+static std::string extract_output_rules(const std::string& sp) {
+    auto b = sp.find("# CRITICAL — Output Rules");
+    if (b == std::string::npos) return {};
+    auto e = sp.find("# Output Instructions", b);
+    return e == std::string::npos ? sp.substr(b) : sp.substr(b, e - b);
+}
+
+// The analyst block, pinned byte for byte. Any edit to the analyst text — even
+// a single character — must come here deliberately.
+static const char* const kAnalystRulesGolden =
+    "# CRITICAL — Output Rules\n"
+    "\n"
+    "You MUST follow these rules for ALL output:\n"
+    "\n"
+    "1. **NEVER write files directly.** Do not use Write, Edit, or any file-creation tool. "
+    "All output goes in your response text as structured blocks.\n"
+    "2. **NEVER run commands that modify files.** You may READ files and RUN queries "
+    "(sqlite3, cat, ls, grep), but never write, move, or delete.\n"
+    "3. **ALL findings must use structured blocks** in your response: "
+    "VAULT_UPDATE, OBSERVATION, PROPOSAL, SUMMARY.\n"
+    "4. **Only write to YOUR vault.** VAULT_UPDATE paths must start with `knowledge/` or `inbox/`.\n"
+    "5. **End with a one-line verdict.** The last line of your reply before any HANDOFF block is "
+    "`VERDICT: <one sentence — what you did or decided, ≤ 25 words>`. "
+    "The daemon stores it as the task's summary. Never leave it blank.\n"
+    "\n"
+    "The daemon extracts these blocks from your response text and routes them. "
+    "If you write files directly, the daemon cannot track your output.\n"
+    "\n"
+    "---\n"
+    "\n";
+
+static const char* const kAnalystRule1 = "**NEVER write files directly.**";
+static const char* const kExecTargetDir = "**Write ONLY inside your `target_dir`.**";
+
+static void test_s8_output_rules_are_class_aware() {
+    std::cout << "\n=== S8. Output Rules block is class-aware ===\n\n";
+
+    auto vault = make_temp_vault();
+    sui::quorum::ContextAssembler assembler;
+
+    // --- the derivation itself (pure), mirroring utils/config.h ------------
+    using CA = sui::quorum::ContextAssembler;
+    check(CA::effective_agent_class("doer", "", "") == "executor",
+          "S8a: role 'doer' derives executor");
+    check(CA::effective_agent_class("thinker", "", "") == "analyst",
+          "S8a: role 'thinker' derives analyst");
+    check(CA::effective_agent_class("leader", "", "") == "analyst",
+          "S8a: role 'leader' derives analyst");
+    check(CA::effective_agent_class("", "", "") == "analyst",
+          "S8a: unknown/empty role derives analyst (safe default)");
+    check(CA::effective_agent_class("doer", "analyst", "") == "analyst",
+          "S8a: an explicit agent_class overrides the role");
+    check(CA::effective_agent_class("doer", "executor", "brainstorm") == "analyst",
+          "S8a: brainstorm rides over BOTH role and explicit class");
+
+    // --- analyst block, byte-pinned ----------------------------------------
+    auto analyst = assembler.assemble_split(
+        "agent-s8-analyst", vault, "turn", "task S8 analyst",
+        /*team_roster=*/{}, /*skill_file=*/{}, /*project_root=*/{},
+        /*agent_role=*/"thinker");
+    auto analyst_block = extract_output_rules(analyst.system_prompt);
+    if (analyst_block != kAnalystRulesGolden) {
+        std::cerr << "--- GOLDEN (expected) ---\n" << kAnalystRulesGolden
+                  << "--- ACTUAL ---\n" << analyst_block << "--- END ---\n";
+    }
+    check(analyst_block == kAnalystRulesGolden,
+          "S8b: analyst Output Rules block is byte-identical to the golden");
+
+    // --- executor block -----------------------------------------------------
+    auto executor = assembler.assemble_split(
+        "agent-s8-doer", vault, "turn", "task S8 doer",
+        /*team_roster=*/{}, /*skill_file=*/{}, /*project_root=*/{},
+        /*agent_role=*/"doer");
+    check(executor.system_prompt.find(kExecTargetDir) != std::string::npos,
+          "S8c: executor prompt carries the target_dir write-scope rule");
+    check(executor.system_prompt.find(kAnalystRule1) == std::string::npos,
+          "S8c: executor prompt does NOT say 'NEVER write files directly'");
+    check(executor.system_prompt.find("NEVER run commands that modify files")
+              == std::string::npos,
+          "S8c: executor prompt does NOT forbid file-modifying commands");
+    check(executor.system_prompt.find("Never `git add .` or `git add -A`")
+              != std::string::npos,
+          "S8c: executor prompt forbids git add . / -A (stage explicit paths)");
+    check(executor.system_prompt.find("**Build and test what you write.**")
+              != std::string::npos,
+          "S8c: executor prompt orders build + test");
+    check(executor.system_prompt.find("SUMMARY, OBSERVATION, HANDOFF, VAULT_UPDATE")
+              != std::string::npos,
+          "S8c: executor prompt names its structured blocks");
+    // Doers DO emit VAULT_UPDATE (own-vault; see the doer SKILL's brainstorm +
+    // 'Consult Vault Inventory' sections, and main.cpp's apply site, which has
+    // no role gate), so the own-vault scoping rule is kept for executors.
+    check(executor.system_prompt.find(
+              "**Only write to YOUR vault.** VAULT_UPDATE paths must start with")
+              != std::string::npos,
+          "S8c: executor prompt keeps the own-vault VAULT_UPDATE scoping rule");
+
+    // --- the VERDICT sentence is byte-identical in both variants ------------
+    check(analyst.system_prompt.find(kVerdictForm) != std::string::npos
+              && executor.system_prompt.find(kVerdictForm) != std::string::npos,
+          "S8d: the VERDICT rule is present, identical, in BOTH variants");
+    check(analyst.system_prompt.find("5. **End with a one-line verdict.**")
+              != std::string::npos,
+          "S8d: analyst numbers the verdict rule 5");
+    check(executor.system_prompt.find("6. **End with a one-line verdict.**")
+              != std::string::npos,
+          "S8d: executor numbers the verdict rule 6");
+
+    // --- brainstorm: a doer never gets the executor block -------------------
+    // Decision #52 hard-rejects any HANDOFF resolving to a doer in brainstorm,
+    // and the invoker clamps every agent to Read/Grep/Glob there. The assembler
+    // does not itself reject the call (unchanged behaviour) — it emits the
+    // ANALYST block, so the prompt matches the clamped tool surface.
+    auto brainstorm_doer = assembler.assemble_split(
+        "agent-s8-brain-doer", vault, "turn", "task S8 brainstorm doer",
+        /*team_roster=*/{}, /*skill_file=*/{}, /*project_root=*/{},
+        /*agent_role=*/"doer", /*budget=*/{}, /*conversation_mode=*/"brainstorm");
+    check(brainstorm_doer.system_prompt.find(kExecTargetDir) == std::string::npos,
+          "S8e: brainstorm + role doer -> executor block ABSENT");
+    check(extract_output_rules(brainstorm_doer.system_prompt) == kAnalystRulesGolden,
+          "S8e: brainstorm + role doer -> the analyst block, byte-identical");
+
+    // --- explicit agent_class threads through assemble_split ----------------
+    auto forced_analyst = assembler.assemble_split(
+        "agent-s8-forced", vault, "turn", "task S8 forced",
+        /*team_roster=*/{}, /*skill_file=*/{}, /*project_root=*/{},
+        /*agent_role=*/"doer", /*budget=*/{}, /*conversation_mode=*/{},
+        /*agent_class=*/"analyst");
+    check(extract_output_rules(forced_analyst.system_prompt) == kAnalystRulesGolden,
+          "S8f: explicit agent_class=analyst on a doer yields the analyst block");
+
+    cleanup(vault);
+}
+
 // --- main -------------------------------------------------------------------
 
 int main() {
@@ -301,6 +448,7 @@ int main() {
     test_s5_system_prompt_stable_across_tasks();
     test_s6_rules_and_roster_in_user_message();
     test_s7_verdict_rule_in_output_rules();
+    test_s8_output_rules_are_class_aware();
 
     std::cout << "\n---------------------------------------------------\n";
     std::cout << "  passed: " << g_passed << "  failed: " << g_failed << "\n";

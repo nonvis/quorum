@@ -358,6 +358,34 @@ public:
         return roster;
     }
 
+    // Which Output Rules block an agent gets. NOT a second notion of class — a
+    // mirror of the ONE canonical derivation in utils/config.h
+    // (load_agent_config): an explicit `agent_class:` in the agent yaml wins,
+    // otherwise role "doer" ⇒ executor and everything else ⇒ analyst.
+    //
+    // Brainstorm rides OVER class, exactly as invoker.h build_tool_flags()
+    // does: that mode clamps every agent to Read/Grep/Glob regardless of
+    // agent_class, and Decision #52 hard-rejects any HANDOFF resolving to a
+    // doer. An executor-class agent must therefore never be TOLD it may write
+    // while the conversation is in brainstorm — the prompt has to agree with
+    // the tool surface, which is the whole point of this split.
+    //
+    // ⚠ SEAM (open): the only production caller, daemon/conversation.h, hands
+    // this class the agent's ROLE and not its AgentMetadata::agent_class, so
+    // `explicit_class` arrives empty and a hand-written `agent_class:` on a
+    // doer yaml is not honoured HERE (it still is for the tool flags). Closing
+    // it is a one-line change at that caller — pass `a.agent_class` into
+    // assemble_split's new trailing parameter. conversation.h was outside this
+    // change's edit set.
+    [[nodiscard]] static std::string effective_agent_class(
+        const std::string& agent_role,
+        const std::string& explicit_class,
+        const std::string& conversation_mode) {
+        if (conversation_mode == "brainstorm") return "analyst";
+        if (!explicit_class.empty()) return explicit_class;
+        return agent_role == "doer" ? "executor" : "analyst";
+    }
+
     // Legacy single-string entry point. Phase 7 Track 5 made assemble_split()
     // the canonical builder; assemble() is now a thin shim that concatenates
     // system_prompt + user_message with the historical "\n---\n\n" glue so
@@ -372,11 +400,12 @@ public:
                                         const std::string& project_root = {},
                                         const std::string& agent_role = {},
                                         ContextBudget budget = {},
-                                        const std::string& conversation_mode = {}) const {
+                                        const std::string& conversation_mode = {},
+                                        const std::string& agent_class = {}) const {
         auto split = assemble_split(agent_name, vault_dir, task_type,
                                     task_description, team_roster, skill_file,
                                     project_root, agent_role, budget,
-                                    conversation_mode);
+                                    conversation_mode, agent_class);
         if (split.system_prompt.empty()) return split.user_message;
         return split.system_prompt + "\n---\n\n" + split.user_message;
     }
@@ -388,6 +417,10 @@ public:
     // `agent_role` selects the role-scope subdirectory used for role-scoped
     // rules: <project_root>/.quorum/knowledge/roles/<agent_role>/. When empty
     // (or when project_root is empty), role-scope resolution is skipped.
+    //
+    // `agent_class` is the agent yaml's explicit `agent_class:` when the caller
+    // has it (AgentMetadata::agent_class). Empty means "derive from role" —
+    // see effective_agent_class() and the SEAM note there.
     [[nodiscard]] AssembledPrompt assemble_split(
         const std::string& agent_name,
         const std::string& vault_dir,
@@ -398,7 +431,8 @@ public:
         const std::string& project_root = {},
         const std::string& agent_role = {},
         ContextBudget budget = {},
-        const std::string& conversation_mode = {}) const {
+        const std::string& conversation_mode = {},
+        const std::string& agent_class = {}) const {
         AssembledPrompt out;
         std::string& system_prompt = out.system_prompt;
         std::string& prompt = out.user_message;
@@ -810,30 +844,67 @@ public:
         // previously depended on (the rules block was suppressed for team
         // mode in the single-string flow). In split mode the rules become
         // unconditional because they're identity, not per-turn instruction.
-        system_prompt += "---\n\n";
-        system_prompt += "# CRITICAL — Output Rules\n\n";
-        system_prompt += "You MUST follow these rules for ALL output:\n\n";
-        system_prompt += "1. **NEVER write files directly.** Do not use Write, Edit, or any file-creation tool. ";
-        system_prompt += "All output goes in your response text as structured blocks.\n";
-        system_prompt += "2. **NEVER run commands that modify files.** You may READ files and RUN queries ";
-        system_prompt += "(sqlite3, cat, ls, grep), but never write, move, or delete.\n";
-        system_prompt += "3. **ALL findings must use structured blocks** in your response: ";
-        system_prompt += "VAULT_UPDATE, OBSERVATION, PROPOSAL, SUMMARY.\n";
-        system_prompt += "4. **Only write to YOUR vault.** VAULT_UPDATE paths must start with `knowledge/` or `inbox/`.\n";
+        // Rule bodies shared by BOTH variants, byte for byte, so the two can
+        // never drift apart on the parts that are genuinely common. Only the
+        // list number differs (analyst 4/5, executor 5/6).
+        //
         // Tier 1 of the daemon's task summary (output_parser.h
         // extract_summary) prefers an explicit `VERDICT:` line. The four
         // quorum-roles SKILLs carry the same bullet, but a SKILL is not a
         // reliable carrier: every knower loads its DOMAIN skill instead of the
         // role skill (the assembler loads exactly one skill_file), and an agent
-        // may carry none at all. This block is the only one EVERY agent
-        // prompt gets, in every mode — so the rule lives here too, in the
-        // stable system_prompt half (never the per-task user_message, which
-        // would break prefix-cache reuse).
-        system_prompt += "5. **End with a one-line verdict.** The last line of your reply before any HANDOFF block is ";
-        system_prompt += "`VERDICT: <one sentence — what you did or decided, ≤ 25 words>`. ";
-        system_prompt += "The daemon stores it as the task's summary. Never leave it blank.\n\n";
-        system_prompt += "The daemon extracts these blocks from your response text and routes them. ";
-        system_prompt += "If you write files directly, the daemon cannot track your output.\n\n";
+        // may carry none at all. This block is the only one EVERY agent prompt
+        // gets, in every mode — so the rule lives here too, in the stable
+        // system_prompt half (never the per-task user_message, which would
+        // break prefix-cache reuse).
+        static constexpr const char* kOwnVaultRule =
+            "**Only write to YOUR vault.** VAULT_UPDATE paths must start with `knowledge/` or `inbox/`.\n";
+        static constexpr const char* kVerdictRule =
+            "**End with a one-line verdict.** The last line of your reply before any HANDOFF block is "
+            "`VERDICT: <one sentence — what you did or decided, ≤ 25 words>`. "
+            "The daemon stores it as the task's summary. Never leave it blank.\n\n";
+
+        // Phase 15 — the block is CLASS-AWARE. It used to be one analyst-only
+        // text handed to every agent, so a doer (executor class, full tool
+        // grant, cwd = target_dir) was ordered "NEVER write files directly"
+        // and "NEVER run commands that modify files" — the exact opposite of
+        // its tool surface and of its own quorum-roles/doer SKILL. An agent
+        // holding contradictory instructions obeys the nearer one at random;
+        // the prompt must agree with the grant.
+        system_prompt += "---\n\n";
+        system_prompt += "# CRITICAL — Output Rules\n\n";
+        if (effective_agent_class(agent_role, agent_class, conversation_mode)
+                == "executor") {
+            system_prompt += "You have full tool access — write files, run builds, execute tests. These rules bound it:\n\n";
+            system_prompt += "1. **Write ONLY inside your `target_dir`.** That directory is your working directory and your entire ";
+            system_prompt += "write surface. Never hand-write `.quorum/` runtime data or another agent's vault — the daemon owns those.\n";
+            system_prompt += "2. **Build and test what you write.** Run the project's build after writing code, and its tests if they ";
+            system_prompt += "exist; report the results. Never leave a broken build behind.\n";
+            system_prompt += "3. **Stage explicit paths when you commit.** Never `git add .` or `git add -A` — the working tree is ";
+            system_prompt += "shared and another writer's in-flight work must not be swept into your commit. Do not commit a failing build.\n";
+            system_prompt += "4. **ALL findings must use structured blocks** in your response: ";
+            system_prompt += "SUMMARY, OBSERVATION, HANDOFF, VAULT_UPDATE.\n";
+            system_prompt += "5. ";
+            system_prompt += kOwnVaultRule;
+            system_prompt += "6. ";
+            system_prompt += kVerdictRule;
+            system_prompt += "The daemon extracts these blocks from your response text and routes them. ";
+            system_prompt += "Your file writes land in `target_dir`; anything the team must see has to appear as a block as well.\n\n";
+        } else {
+            system_prompt += "You MUST follow these rules for ALL output:\n\n";
+            system_prompt += "1. **NEVER write files directly.** Do not use Write, Edit, or any file-creation tool. ";
+            system_prompt += "All output goes in your response text as structured blocks.\n";
+            system_prompt += "2. **NEVER run commands that modify files.** You may READ files and RUN queries ";
+            system_prompt += "(sqlite3, cat, ls, grep), but never write, move, or delete.\n";
+            system_prompt += "3. **ALL findings must use structured blocks** in your response: ";
+            system_prompt += "VAULT_UPDATE, OBSERVATION, PROPOSAL, SUMMARY.\n";
+            system_prompt += "4. ";
+            system_prompt += kOwnVaultRule;
+            system_prompt += "5. ";
+            system_prompt += kVerdictRule;
+            system_prompt += "The daemon extracts these blocks from your response text and routes them. ";
+            system_prompt += "If you write files directly, the daemon cannot track your output.\n\n";
+        }
 
         system_prompt += "---\n\n";
         system_prompt += "# Output Instructions\n\n";
