@@ -92,8 +92,16 @@ python3 ownagent.py index  --project <root>
 python3 ownagent.py map    --project <root>
 python3 ownagent.py search --project <root> "<keywords>" [-k N]
 python3 ownagent.py ask    --project <root> "<question>" [--single-shot]
-python3 ownagent.py eval   --project <root> [--golden FILE] [--agentic]
+python3 ownagent.py eval   --project <root> [--golden FILE] [--agentic] [--bank]
+python3 ownagent.py bank   --project <root>
+python3 ownagent.py distill --project <root> -n N
 ```
+
+`eval` measures and discards by default; `--bank` keeps its transcripts in the
+bank tagged `origin: eval` (`bank` reports counts by origin: ask / eval /
+distill). `--brain fake` drives the loop with a scripted brain for tests — it is
+refused unless `QUORUM_OWNAGENT_FAKE_BRAIN` names a readable script file, so it
+can never run by accident.
 
 Against a real project:
 

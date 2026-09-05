@@ -210,6 +210,16 @@ add_test(NAME test_spend_readout
          COMMAND python3
                  ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/spend_readout_test.py)
 
+# P3/P4 (2026-09-04) — quorum-own-agent's `eval --bank` opt-in and the Docent's
+# `claude -p` child lifetime (quorum-own-agent/test_ownagent.py). Python, so no
+# add_executable. NO model is ever called: the eval cases use `--brain fake`
+# (brains.ScriptedBrain, armed by QUORUM_OWNAGENT_FAKE_BRAIN) and the signal
+# cases put a fake `claude` first on PATH. Bare `python3` for the same reason as
+# test_spend_readout — it is what the web server shells out to. ~3 s.
+add_test(NAME test_ownagent
+         COMMAND python3
+                 ${CMAKE_CURRENT_SOURCE_DIR}/../quorum-own-agent/test_ownagent.py)
+
 add_executable(test_context_history tests/unit/test_context_history.cpp)
 target_include_directories(test_context_history PRIVATE src)
 add_test(NAME test_context_history COMMAND test_context_history)
