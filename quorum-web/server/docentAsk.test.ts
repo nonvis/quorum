@@ -32,15 +32,24 @@ echo "never"
 `;
 
 // The same hazard with the parent out of the picture entirely: the script
-// exits 0 immediately while a backgrounded grandchild holds the inherited
-// pipes for 5 s. \`await new Response(proc.stderr).text()\` hangs even though
-// the process we spawned is already gone — exactly `python3 ownagent.py`
-// returning while `claude -p` lingers.
+// answers, exits 0 immediately, and a backgrounded grandchild holds the
+// inherited pipes for 5 s. \`await new Response(proc.stderr).text()\` hangs even
+// though the process we spawned is already gone — exactly `python3
+// ownagent.py` returning while `claude -p` lingers. The run SUCCEEDED and the
+// answer is already banked; only the fd is stuck.
 const FAKE_GRANDCHILD = `#!/bin/bash
 ( sleep 5 ) &
 echo "  [step 1] ACTION: search('slow')" >&2
 echo "parent answer"
 exit 0
+`;
+
+// …and the same shape for a run that FAILED: the exit code decides, not who is
+// holding the pipe.
+const FAKE_GRANDCHILD_FAIL = `#!/bin/bash
+( sleep 5 ) &
+echo "brain error: no such vault" >&2
+exit 3
 `;
 
 let dir: string;
@@ -53,6 +62,7 @@ beforeAll(() => {
     fail: FAKE_FAIL,
     slow: FAKE_SLOW,
     grandchild: FAKE_GRANDCHILD,
+    grandchildFail: FAKE_GRANDCHILD_FAIL,
   })) {
     const p = join(dir, `fake-${name}.sh`);
     writeFileSync(p, src);
@@ -132,14 +142,27 @@ test("a hung agent times out fast — the orphan's pipes do not hold the respons
   expect(await goneWithin(marker, 1000)).toBe(true);
 });
 
-test("a grandchild holding stderr after the parent exits still cannot stall the route", async () => {
+test("a completed run is answered even while a grandchild still holds the pipes", async () => {
   const marker = `docent-ask-gc-${process.pid}-${Date.now()}`;
-  const { res, elapsed } = await ask(scripts.grandchild!, { timeoutMs: 300, question: marker });
-  // The parent exits at once with an answer on stdout, but the backgrounded
-  // `sleep 5` keeps both pipes open. Whether that grandchild dies is the
-  // agent's own business (the python SIGTERM handler); the RESPONSE is ours.
+  const { res, body, elapsed } = await ask(scripts.grandchild!, { timeoutMs: 300, question: marker });
+
+  // The parent exits 0 at once with the answer on stdout, but the backgrounded
+  // `sleep 5` keeps both pipes open past the deadline. The RUN finished — and
+  // it banked — so reporting a timeout here would throw away a real answer.
+  expect(res.status).toBe(200);
+  expect(body.answer).toBe("parent answer");
+  expect(body.steps).toEqual(["[step 1] ACTION: search('slow')"]);
+
+  // …and it did not wait for the grandchild to let go of the fd.
   expect(elapsed).toBeLessThan(1000);
-  expect(res.status).toBe(504);
+});
+
+test("a completed run that FAILED still reports the failure, grandchild or not", async () => {
+  const marker = `docent-ask-gcf-${process.pid}-${Date.now()}`;
+  const { res, body, elapsed } = await ask(scripts.grandchildFail!, { timeoutMs: 300, question: marker });
+  expect(res.status).toBe(500);
+  expect(body.error).toBe("brain error: no such vault");
+  expect(elapsed).toBeLessThan(1000);
 });
 
 test("a non-zero exit becomes 500 with the last stderr line", async () => {

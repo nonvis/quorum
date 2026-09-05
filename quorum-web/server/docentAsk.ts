@@ -14,6 +14,12 @@
 // bigger kill; it is refusing to let the RESPONSE depend on a pipe a process we
 // do not control still holds.
 //
+// The same pipe is why the response tracks `proc.exited` separately from the
+// reads. When python exits 0 at 30 s and `claude -p` keeps the fd open, the
+// answer is already written and already banked; draining to EOF would sit on
+// it until the 4-minute deadline and then report a timeout for a run that
+// succeeded. A completed run never becomes a 504.
+//
 // Banking is unaffected: `ownagent.py ask` banks the transcript itself
 // (cmd_ask → bank.bank_record, before it prints the answer). The web never
 // writes the bank — not here, and not on the timeout path, where we simply
@@ -41,11 +47,12 @@ export const DOCENT_ASK_PATH = "/api/docent/ask";
 const DEFAULT_TIMEOUT_MS = 4 * 60 * 1000;
 
 /**
- * After SIGTERM, how long we let the child flush and die before answering
- * anyway. Bounded on purpose: a grandchild holding the pipe must not be able
- * to extend the response by even one second.
+ * How long we keep reading the pipes once the outcome is already decided —
+ * either the agent exited, or we gave up on it. Bounded on purpose: a
+ * grandchild holding the pipe must not be able to extend the response by even
+ * one second. A run whose pipes are already at EOF pays none of it.
  */
-const TIMEOUT_GRACE_MS = 300;
+const PIPE_GRACE_MS = 300;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -54,10 +61,12 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  *
  * `new Response(stream).text()` cannot be abandoned: it locks the stream and
  * only settles at EOF, which is precisely the hang. Here the reader stays in
- * reach so the timeout path can `release()` its end of the pipe and walk away.
+ * reach, so a caller that has stopped waiting can take `partial()` — what has
+ * arrived so far, EOF or not — and `release()` its end of the pipe.
  */
 export function readAll(stream: ReadableStream<Uint8Array>): {
   text: Promise<string>;
+  partial: () => string;
   release: () => void;
 } {
   const reader = stream.getReader();
@@ -77,6 +86,7 @@ export function readAll(stream: ReadableStream<Uint8Array>): {
   })();
   return {
     text,
+    partial: () => out,
     release: () => {
       try {
         void reader.cancel().catch(() => {});
@@ -117,37 +127,62 @@ export function createDocentAskApp(deps: DocentAskDeps): Hono {
     const out = readAll(proc.stdout as ReadableStream<Uint8Array>);
     const err = readAll(proc.stderr as ReadableStream<Uint8Array>);
 
+    // Three ways this ends, and they are genuinely different:
+    //   done    — the agent exited AND both pipes hit EOF. The clean case.
+    //   exited  — the agent exited, but a grandchild still holds the pipes.
+    //             The RUN is over and the answer is already on stdout; only
+    //             the fd is stuck. Waiting here would throw away a finished
+    //             answer, so we do not.
+    //   timeout — nobody finished. Give up on it.
     const completed = (async () => {
       const [stdout, stderr] = await Promise.all([out.text, err.text]);
-      return { stdout, stderr, exitCode: await proc.exited };
+      return { kind: "done" as const, stdout, stderr, exitCode: await proc.exited };
     })();
-    // The race below may abandon this promise; make sure nothing it throws
+    const exited = proc.exited.then((exitCode) => ({ kind: "exited" as const, exitCode }));
+    // The race abandons two of these three; make sure nothing they throw
     // surfaces as an unhandled rejection.
     completed.catch(() => {});
+    exited.catch(() => {});
 
-    const TIMED_OUT = Symbol("timeout");
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<typeof TIMED_OUT>((r) => {
-      timer = setTimeout(() => r(TIMED_OUT), timeoutMs);
+    const deadline = new Promise<{ kind: "timeout" }>((r) => {
+      timer = setTimeout(() => r({ kind: "timeout" }), timeoutMs);
     });
 
-    const raced = await Promise.race([completed, deadline]);
+    // `completed` is listed first so a run that is fully finished takes the
+    // clean path even though `exited` is settled too.
+    const raced = await Promise.race([completed, exited, deadline]);
+    clearTimeout(timer);
 
-    if (raced === TIMED_OUT) {
+    if (raced.kind === "timeout") {
       // SIGTERM, not SIGKILL: the agent's own handler is what reaches the
       // `claude -p` grandchild. Then give it a bounded moment and answer
       // regardless — the pipes are explicitly NOT awaited past the grace.
       try {
         proc.kill("SIGTERM");
       } catch {}
-      await Promise.race([completed, sleep(TIMEOUT_GRACE_MS)]);
+      await Promise.race([completed, sleep(PIPE_GRACE_MS)]);
       out.release();
       err.release();
       return c.json({ error: `docent timed out after ${fmtDuration(timeoutMs)}` }, 504);
     }
 
-    clearTimeout(timer);
-    const { stdout, stderr, exitCode } = raced;
+    let stdout: string;
+    let stderr: string;
+    const exitCode = raced.exitCode;
+    if (raced.kind === "done") {
+      ({ stdout, stderr } = raced);
+    } else {
+      // The agent is gone; something it spawned is not. Let the readers catch
+      // up for a bounded moment (a run whose pipes already closed pays ~0),
+      // then take what arrived and drop our end. A finished run NEVER becomes
+      // a timeout.
+      await Promise.race([completed, sleep(PIPE_GRACE_MS)]);
+      stdout = out.partial();
+      stderr = err.partial();
+      out.release();
+      err.release();
+    }
 
     if (exitCode !== 0) {
       return c.json({ error: stderr.trim().split("\n").pop() || "docent failed" }, 500);
