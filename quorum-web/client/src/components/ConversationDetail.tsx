@@ -7,6 +7,7 @@ import { parseSegments, extractHumanResponse, lastHumanGateMessage } from "../li
 import { deriveVerdict, VERDICT_COLOR } from "../lib/verdict";
 import { DiffBlock } from "./DiffBlock";
 import { GateChips, VaultManifest } from "./GateActions";
+import { ConversationBadges } from "./ConversationBadges";
 import {
   modeOf,
   stateOf,
@@ -310,6 +311,7 @@ export function ConversationDetail({
                 >
                   {m.icon} {m.label}
                 </span>
+                <ConversationBadges conversation={conv} />
                 <span className="flex-1" />
                 <span className="font-mono text-[12px] text-muted" title="spent this conversation">
                   {fmtUsd(conv.spent_usd)}

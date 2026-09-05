@@ -14,6 +14,10 @@ export interface Conversation {
   // conversation was started in (generic | brainstorm).
   mode: string;
   no_vault_write?: number;
+  // Phase 14.1 daemon gate: `gated` = knower vault writes are suppressed until
+  // a human approves; `gate_cleared` flips to 1 once a human has responded.
+  gated?: number;
+  gate_cleared?: number;
   team?: string | null;
   tasks?: Task[];
 }

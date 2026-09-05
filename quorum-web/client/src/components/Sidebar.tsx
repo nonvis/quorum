@@ -7,15 +7,24 @@ import { AgentCreateForm } from "./AgentCreateForm";
 // Web-first: `quorum knower refresh` gets a button (the post-build routine
 // op). It spends tokens — four read-only brainstorm scans — so it asks for
 // one confirming click, then the passes show up in the conversations list.
+// The four lenses, in the daemon's refresh order (knower_refresh.h:74-77).
+const KNOWER_LENSES = ["cartographer", "architect", "historian", "recap"] as const;
+
 function KnowerRefresh() {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
+  const [lens, setLens] = useState<string>("all");
+  const [parallel, setParallel] = useState(false);
+
+  // --parallel is --all-only; the daemon rejects it for a single lens, so the
+  // checkbox only exists for "All".
+  const isAll = lens === "all";
 
   const go = async () => {
     setBusy(true);
     try {
-      const res = await refreshKnowers();
+      const res = await refreshKnowers(lens, isAll && parallel);
       if (res.started) {
         setNote({ text: res.note ?? "refresh started", error: false });
       } else {
@@ -36,15 +45,47 @@ function KnowerRefresh() {
             setConfirming(true);
           }}
           className="w-full rounded-[10px] border border-dashed border-line-dash px-2.5 py-1.5 text-left text-[11.5px] text-muted hover:text-ink"
-          title="re-survey the codebase into the knower vaults (quorum knower refresh --all)"
+          title="re-survey the codebase into the knower vaults (quorum knower refresh)"
         >
           ↻ Refresh knowers
         </button>
       ) : (
         <div className="rounded-[10px] border border-line-soft px-2.5 py-2">
           <p className="mb-1.5 text-[11px] leading-[1.5] text-muted">
-            Runs read-only scans for every knower — spends tokens.
+            {isAll
+              ? "Runs read-only scans for every knower — spends tokens."
+              : `Runs a read-only ${lens} scan — spends tokens.`}
           </p>
+          <label className="mb-1.5 flex items-center gap-1.5 text-[11px] text-muted">
+            <span className="text-faint">lens</span>
+            <select
+              value={lens}
+              onChange={(e) => setLens(e.target.value)}
+              disabled={busy}
+              className="flex-1 rounded-md border border-line-soft bg-field px-1.5 py-1 font-mono text-[11px] text-ink outline-none focus:border-faint"
+            >
+              <option value="all">All (4 passes)</option>
+              {KNOWER_LENSES.map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </select>
+          </label>
+          {isAll && (
+            <label
+              className="mb-1.5 flex items-center gap-1.5 text-[11px] text-muted"
+              title="run the independent lenses concurrently (cartographer→architect stays ordered)"
+            >
+              <input
+                type="checkbox"
+                checked={parallel}
+                onChange={(e) => setParallel(e.target.checked)}
+                disabled={busy}
+              />
+              parallel
+            </label>
+          )}
           <div className="flex gap-1.5">
             <button
               onClick={go}

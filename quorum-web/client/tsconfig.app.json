@@ -24,5 +24,9 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  /* Test files run on bun (`bun test`) and import `bun:test`. They are
+     typechecked by the quorum-web root tsconfig, which sees @types/bun;
+     this app config pins `types` to vite/client and cannot resolve it. */
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

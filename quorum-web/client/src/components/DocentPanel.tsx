@@ -5,7 +5,30 @@
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { askDocent, fetchDocentHistory, type DocentHistoryItem } from "../api";
+import {
+  askDocent,
+  askDocentStreamed,
+  fetchDocentHistory,
+  type DocentHistoryItem,
+} from "../api";
+
+// The agent's per-step log ("  [step 2] ACTION: search('invoker')"). Streamed
+// live while the run is in flight, then kept beside the answer.
+function StepLog({ steps, live }: { steps: string[]; live?: boolean }) {
+  if (steps.length === 0) return null;
+  return (
+    <div className={`flex flex-col gap-0.5 ${live ? "mt-2" : "mb-3"}`}>
+      {steps.map((s, i) => (
+        <span
+          key={i}
+          className={`font-mono text-[11px] text-dim ${live && i === steps.length - 1 ? "q-pulse" : ""}`}
+        >
+          {s}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 export function DocentPanel({ onClose }: { onClose: () => void }) {
   const [question, setQuestion] = useState("");
@@ -39,11 +62,22 @@ export function DocentPanel({ onClose }: { onClose: () => void }) {
     setSteps([]);
     setAsked(q);
     try {
-      const res = await askDocent(q);
+      // Stream first — the steps land as the agent takes them. If the stream
+      // itself fails (old server, buffering proxy), fall back to the buffered
+      // endpoint: same command, same bank write, just silent until it lands.
+      let res: { answer?: string; steps?: string[]; error?: string };
+      try {
+        res = await askDocentStreamed(q, false, (line) =>
+          setSteps((prev) => [...prev, line]),
+        );
+      } catch {
+        setSteps([]);
+        res = await askDocent(q);
+      }
       if (res.error) setError(res.error);
       else {
         setAnswer(res.answer ?? "");
-        setSteps(res.steps ?? []);
+        if (res.steps?.length) setSteps(res.steps);
         fetchDocentHistory().then(setHistory);
       }
     } catch (err) {
@@ -107,6 +141,8 @@ export function DocentPanel({ onClose }: { onClose: () => void }) {
           {loading && (
             <div className="text-sm text-faint">
               <span className="q-pulse">Docent is working the knowledge base…</span> (typically 15–40s)
+              {/* live: each step appears as the agent takes it */}
+              <StepLog steps={steps} live />
             </div>
           )}
           {!loading && error && (
@@ -119,15 +155,7 @@ export function DocentPanel({ onClose }: { onClose: () => void }) {
           )}
           {!loading && !error && answer != null && (
             <>
-              {steps.length > 0 && (
-                <div className="mb-3 flex flex-col gap-0.5">
-                  {steps.map((s, i) => (
-                    <span key={i} className="font-mono text-[11px] text-dim">
-                      {s}
-                    </span>
-                  ))}
-                </div>
-              )}
+              <StepLog steps={steps} />
               <div className="md-content">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
               </div>

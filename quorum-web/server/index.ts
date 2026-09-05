@@ -32,6 +32,8 @@ import {
 import { execDaemon, execDaemonAt, execAsk, spawnDaemon, cleanupStaleDaemon, isDaemonRunning } from "./daemon";
 import { createSSEStream } from "./sse";
 import { buildFlights, writePlan, setReviewed, type PlanPayload } from "./autopilot";
+import { refreshArgs } from "./refreshArgs";
+import { createDocentStreamApp } from "./docentStream";
 
 const app = new Hono();
 
@@ -636,6 +638,20 @@ app.post("/api/config", async (c) => {
 const DOCENT_DIR = resolve(repoRoot, "quorum-own-agent");
 const DOCENT_TIMEOUT_MS = 4 * 60 * 1000;
 
+// POST /api/docent/ask/stream — the same run, but the step log arrives as SSE
+// instead of after ~60 s of silence. Lives in its own module so it can be
+// served standalone in a test (importing this file spawns daemons). The
+// buffered endpoint below stays as the fallback; both bank identically,
+// because ownagent.py banks the transcript itself.
+app.route(
+  "/",
+  createDocentStreamApp({
+    getProject: () => getState().currentProject,
+    docentDir: DOCENT_DIR,
+    timeoutMs: DOCENT_TIMEOUT_MS,
+  }),
+);
+
 app.post("/api/docent/ask", async (c) => {
   const state = getState();
   if (!state.currentProject) return c.json({ error: "No project selected" }, 400);
@@ -830,17 +846,14 @@ app.post("/api/knower/refresh", async (c) => {
       503,
     );
   }
-  const body = await c.req.json<{ knower?: string }>().catch(() => ({ knower: undefined as string | undefined }));
-  const args = ["knower", "refresh", "--project", projectPath];
-  const KNOWER_NAMES = ["cartographer", "architect", "historian", "recap"];
-  if (body.knower && body.knower !== "all") {
-    if (!KNOWER_NAMES.includes(body.knower)) {
-      return c.json({ error: `unknown knower: ${body.knower}` }, 400);
-    }
-    args.push("--knower", body.knower);
-  } else {
-    args.push("--all");
-  }
+  const body = await c.req
+    .json<{ knower?: string; parallel?: boolean }>()
+    .catch(() => ({}) as { knower?: string; parallel?: boolean });
+  // Validate BEFORE spawning — the daemon's own refusals (unknown lens,
+  // --parallel without --all) would otherwise exit 1 into a detached stderr.
+  const tail = refreshArgs(body);
+  if (!tail.ok) return c.json({ error: tail.error }, 400);
+  const args = ["knower", "refresh", "--project", projectPath, ...tail.args];
   console.log(`[knower-refresh] spawning: ${args.join(" ")}`);
   const proc = Bun.spawn([daemonBin, ...args], {
     cwd: projectPath,

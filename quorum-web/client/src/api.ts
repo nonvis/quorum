@@ -205,6 +205,52 @@ export async function askDocent(
   return res.json();
 }
 
+// Streaming ask: the same run as askDocent(), but each `[step N] …` line the
+// agent logs arrives while it is still working. Resolves with the answer; the
+// caller falls back to the buffered endpoint if this throws (older server, a
+// proxy that buffers, whatever).
+export async function askDocentStreamed(
+  question: string,
+  singleShot: boolean,
+  onStep: (line: string) => void,
+  signal?: AbortSignal,
+): Promise<{ answer?: string; steps?: string[]; error?: string }> {
+  const res = await fetch(`${BASE}/docent/ask/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, singleShot }),
+    signal,
+  });
+  // A missing route means an older server: throw so the caller falls back to
+  // the buffered endpoint. Any other status is a real answer-shaped failure.
+  if (res.status === 404 || res.status === 405) throw new Error("stream endpoint absent");
+  if (!res.ok) {
+    const msg = await res.json().catch(() => ({}) as { error?: string });
+    return { error: msg.error ?? `docent stream failed (${res.status})` };
+  }
+  if (!res.body) throw new Error("no stream body");
+
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  let out: { answer?: string; steps?: string[]; error?: string } = {};
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    for (let i = buf.indexOf("\n\n"); i >= 0; i = buf.indexOf("\n\n")) {
+      const frame = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      const event = /^event: (.*)$/m.exec(frame)?.[1];
+      const data = /^data: ([\s\S]*)$/m.exec(frame)?.[1] ?? "";
+      if (event === "step") onStep(data);
+      else if (event === "answer") out = JSON.parse(data);
+      else if (event === "error") out = { error: JSON.parse(data).error };
+    }
+  }
+  return out;
+}
+
 export interface DocentHistoryItem {
   ts: string;
   mode: string;
@@ -273,13 +319,16 @@ export async function setFlightsReviewed(ids: string[], reviewed: boolean) {
 
 // Web-first: `quorum knower refresh` as a button. Spawns detached on the
 // server; the passes appear in the conversations list as they run.
+// `knower` omitted (or "all") refreshes every lens; `parallel` is legal only
+// with the full set — the server mirrors the daemon's refusal with a 400.
 export async function refreshKnowers(
   knower?: string,
+  parallel?: boolean,
 ): Promise<{ started?: boolean; note?: string; error?: string }> {
   const res = await fetch(`${BASE}/knower/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ knower }),
+    body: JSON.stringify({ knower, parallel }),
   });
   return res.json();
 }

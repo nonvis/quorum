@@ -4,6 +4,7 @@ import { fetchConversation, respondToLeader, updateMaxRounds } from "../api";
 import { lastHumanGateMessage } from "../lib/segments";
 import { deriveVerdict, VERDICT_COLOR } from "../lib/verdict";
 import { GateChips } from "./GateActions";
+import { ConversationBadges } from "./ConversationBadges";
 import {
   modeOf,
   stateOf,
@@ -107,6 +108,7 @@ export function ConversationCard({
         >
           {m.icon} {m.label}
         </span>
+        <ConversationBadges conversation={c} />
         <span className="ml-auto font-mono text-[13px] text-[#d8d2ca]">{fmtUsd(c.spent_usd)}</span>
         <span className="font-mono text-[11px] text-faint">
           round {c.round}/{c.max_rounds}
