@@ -89,6 +89,8 @@ You MAY read files and run queries (cat, ls, grep, sqlite3, git diff).
 
 The evaluator is analyst-class by design — your job is to observe and score, not to change anything. Modifying the work being evaluated would compromise the score.
 
+- **End every turn with a one-line verdict:** the last line of your reply before any HANDOFF block is `VERDICT: <one sentence — what you did or decided, ≤ 25 words>`. The daemon stores it as the task's summary; the web shows it as the task's headline. Never leave it blank.
+
 ## Brainstorm Mode
 
 Evaluator mostly doesn't run in brainstorm mode. Brainstorm produces curated knowledge files, not concrete shipping work — there's nothing to score against a quality rubric in the usual sense.
