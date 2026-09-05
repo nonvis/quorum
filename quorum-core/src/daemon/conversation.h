@@ -813,11 +813,17 @@ private:
             std::string vault_dir;
             std::string skill_file;
             std::string agent_role;
+            // The canonical class (config.h: explicit agent_class:, else
+            // doer -> executor). Threaded to the assembler so the Output
+            // Rules block and the invoker's tool flags agree on it, even
+            // for a hand-written agent_class: on a yaml.
+            std::string agent_class;
             for (const auto& a : agents_) {
                 if (a.id == agent) {
                     vault_dir = a.vault_path;
                     skill_file = a.skill_file;
                     agent_role = a.role;
+                    agent_class = a.agent_class;
                     break;
                 }
             }
@@ -839,7 +845,7 @@ private:
                 auto split = assembler_->assemble_split(
                     agent, vault_dir, task_type, prompt,
                     roster, skill_file, project_root_, agent_role,
-                    /*budget=*/{}, conv_mode);
+                    /*budget=*/{}, conv_mode, agent_class);
                 final_system_prompt = std::move(split.system_prompt);
                 final_prompt = std::move(split.user_message);
             } else {
