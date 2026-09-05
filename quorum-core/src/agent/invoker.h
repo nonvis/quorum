@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 
+#include "agent/output_parser.h"
 #include "storage/database.h"
 #include "utils/config.h"
 #include "utils/json.h"
@@ -395,17 +396,25 @@ public:
         };
     }
 
-private:
-    Database& db_;
-
+    // The ONE completion write. `invoke()` above is its only caller in src/ —
+    // of the four `UPDATE tasks SET status` sites, the other three mark a task
+    // failed (here, main.cpp crash recovery) or active (main.cpp claim), so
+    // this is the single place a task can carry a verdict.
+    //
+    // A4: `summary` is derived HERE rather than passed in, so no completion
+    // path can forget it. No verdict ⇒ SQL NULL, never "" (absent ≠ empty).
+    //
+    // Public so a test can drive the real write without spawning `claude -p`.
     void mark_done(int64_t task_id, const std::string& result,
                    int64_t tokens_in, int64_t tokens_out, double cost,
                    int64_t cache_creation, int64_t cache_read) {
+        auto summary = extract_summary(result);
         db_.execute(
             "UPDATE tasks SET status = 'done', result = ?, "
             "token_in = ?, token_out = ?, cost = ?, "
             "cache_creation_input_tokens = ?, "
             "cache_read_input_tokens = ?, "
+            "summary = ?, "
             "completed_at = datetime('now') "
             "WHERE id = ?",
             [&](sqlite3_stmt* stmt) {
@@ -415,10 +424,19 @@ private:
                 sqlite3_bind_double(stmt, 4, cost);
                 sqlite3_bind_int64(stmt, 5, cache_creation);
                 sqlite3_bind_int64(stmt, 6, cache_read);
-                sqlite3_bind_int64(stmt, 7, task_id);
+                if (summary) {
+                    sqlite3_bind_text(stmt, 7, summary->c_str(), -1,
+                                      SQLITE_TRANSIENT);
+                } else {
+                    sqlite3_bind_null(stmt, 7);
+                }
+                sqlite3_bind_int64(stmt, 8, task_id);
             }
         );
     }
+
+private:
+    Database& db_;
 
     void mark_failed(int64_t task_id, const std::string& error) {
         db_.execute(

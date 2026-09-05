@@ -262,6 +262,12 @@ static void init_schema(sui::quorum::Database& db) {
     if (!column_exists(db, "tasks", "cache_read_input_tokens"))
         db.execute("ALTER TABLE tasks ADD COLUMN cache_read_input_tokens INTEGER");
 
+    // A4 — tasks.summary: the daemon's one-line verdict, written by
+    // Invoker::mark_done. create_schema() carries it for fresh DBs; this
+    // guarded ALTER covers every DB created before A4. Idempotent on re-run.
+    if (!column_exists(db, "tasks", "summary"))
+        db.execute("ALTER TABLE tasks ADD COLUMN summary TEXT");
+
     // Phase 8 Track 3 — evaluations table for evaluator archetype scores.
     // create_schema() above already runs CREATE TABLE IF NOT EXISTS, so this
     // block is normally a no-op. Kept as an explicit migration marker for old

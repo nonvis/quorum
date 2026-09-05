@@ -37,8 +37,9 @@ struct ParsedObservation {
 };
 
 struct HandoffBlock {
-    std::string to;      // agent_id, "human", or "done"
-    std::string prompt;  // instructions for next agent (may be empty)
+    std::string to;       // agent_id, "human", or "done"
+    std::string prompt;   // instructions for next agent (may be empty)
+    std::string summary;  // optional one-line verdict field (empty if absent)
 };
 
 // EVALUATION block — Phase 8 Track 3.
@@ -698,6 +699,7 @@ private:
             HandoffBlock h;
             h.to = bag.get_str("to");
             h.prompt = bag.get_str("prompt");
+            h.summary = bag.get_str("summary");  // A4 — verdict candidate
             // Content fallback: if no explicit prompt field, use remaining lines
             if (h.prompt.empty() && !lines.empty()) {
                 std::string content;
@@ -717,5 +719,142 @@ private:
         }
     }
 };
+
+// ─── A4 · the one-line verdict ────────────────────────────────────────────────
+//
+// extract_summary() distils an agent's raw output into the single line the
+// daemon stores in tasks.summary — the hook the web already prefers over its
+// own first-sentence derivation (quorum-web/client/src/lib/verdict.ts).
+//
+// Precedence, FIRST non-empty candidate wins:
+//   1. an explicit `VERDICT:` / `TL;DR:` line (case-insensitive; a leading or
+//      label-trailing `**` bold marker is tolerated) — the rest of that line,
+//      verbatim. Scanning continues past a label whose payload is blank.
+//   2. the HANDOFF block's `summary:` field — its first sentence.
+//   3. the SUMMARY block — its first sentence.
+//
+// The result is always one whitespace-collapsed line of at most
+// kMaxSummaryLen bytes (cut at a word boundary, `…` appended).
+//
+// ABSENT IS NOT EMPTY: no candidate returns nullopt, never "". The caller
+// binds SQL NULL for nullopt so a row can distinguish "the agent said nothing"
+// from "the agent said the empty string".
+
+namespace summary_detail {
+
+inline constexpr size_t kMaxSummaryLen = 200;  // bytes, ellipsis included
+
+// Collapse every run of ASCII whitespace to one space and trim both ends.
+// Hand-rolled rather than std::isspace: the input is UTF-8 and isspace() on a
+// negative char is undefined.
+inline std::string collapse_ws(std::string_view sv) {
+    std::string out;
+    out.reserve(sv.size());
+    bool gap = false;
+    for (char c : sv) {
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r' ||
+            c == '\f' || c == '\v') {
+            if (!out.empty()) gap = true;
+            continue;
+        }
+        if (gap) { out += ' '; gap = false; }
+        out += c;
+    }
+    return out;
+}
+
+// Text up to and including the first '.', '!' or '?' that ends a word (i.e. is
+// followed by a space or the end of input) — so "v1.2 shipped." is one
+// sentence. The whole input when no boundary is found.
+inline std::string first_sentence(const std::string& s) {
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] != '.' && s[i] != '!' && s[i] != '?') continue;
+        if (i + 1 == s.size() || s[i + 1] == ' ') return s.substr(0, i + 1);
+    }
+    return s;
+}
+
+// Cut to kMaxSummaryLen bytes at a word boundary, appending `…`. Never splits
+// a UTF-8 sequence: the fallback hard cut walks back off continuation bytes.
+inline std::string clip(std::string s) {
+    if (s.size() <= kMaxSummaryLen) return s;
+    static constexpr std::string_view kEllipsis = "\xE2\x80\xA6";  // …
+    size_t budget = kMaxSummaryLen - kEllipsis.size();
+    size_t cut = s.rfind(' ', budget);
+    if (cut == std::string::npos || cut == 0) {
+        cut = budget;
+        while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80)
+            --cut;
+    }
+    std::string out = s.substr(0, cut);
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    out += kEllipsis;
+    return out;
+}
+
+// The text after an explicit verdict label at the head of `line`, or nullopt
+// when the line carries no label. The payload may be blank — the caller
+// decides what a blank one means.
+inline std::optional<std::string_view> verdict_payload(std::string_view line) {
+    while (!line.empty() && (line.front() == ' ' || line.front() == '\t'))
+        line.remove_prefix(1);
+    if (line.size() >= 2 && line.substr(0, 2) == "**") line.remove_prefix(2);
+
+    for (std::string_view label : {std::string_view("VERDICT"),
+                                   std::string_view("TL;DR"),
+                                   std::string_view("TLDR")}) {
+        if (line.size() < label.size()) continue;
+        bool match = true;
+        for (size_t i = 0; i < label.size(); ++i) {
+            auto c = static_cast<char>(
+                std::toupper(static_cast<unsigned char>(line[i])));
+            if (c != label[i]) { match = false; break; }
+        }
+        if (!match) continue;
+
+        auto rest = line.substr(label.size());
+        if (rest.size() >= 2 && rest.substr(0, 2) == "**") rest.remove_prefix(2);
+        while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t'))
+            rest.remove_prefix(1);
+        if (rest.empty() || rest.front() != ':') continue;
+        rest.remove_prefix(1);
+        return rest;
+    }
+    return std::nullopt;
+}
+
+} // namespace summary_detail
+
+[[nodiscard]] inline std::optional<std::string> extract_summary(
+    std::string_view agent_output) {
+    // 1 — an explicit verdict line. A blank payload is skipped, not returned.
+    size_t pos = 0;
+    while (true) {
+        size_t nl = agent_output.find('\n', pos);
+        auto line = agent_output.substr(
+            pos, nl == std::string_view::npos ? std::string_view::npos : nl - pos);
+        if (auto payload = summary_detail::verdict_payload(line)) {
+            auto cand = summary_detail::clip(summary_detail::collapse_ws(*payload));
+            if (!cand.empty()) return cand;
+        }
+        if (nl == std::string_view::npos) break;
+        pos = nl + 1;
+    }
+
+    // 2/3 — structured blocks.
+    OutputParser parser;
+    auto parsed = parser.parse(std::string(agent_output));
+
+    if (parsed.handoff) {
+        auto cand = summary_detail::clip(summary_detail::first_sentence(
+            summary_detail::collapse_ws(parsed.handoff->summary)));
+        if (!cand.empty()) return cand;
+    }
+    auto cand = summary_detail::clip(summary_detail::first_sentence(
+        summary_detail::collapse_ws(parsed.summary)));
+    if (!cand.empty()) return cand;
+
+    return std::nullopt;
+}
 
 } // namespace sui::quorum

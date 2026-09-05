@@ -865,6 +865,110 @@ content: |
           "nested-fence: trailing observation title correct");
 }
 
+// ─── A4 · extract_summary — the one-line verdict ─────────────────────────────
+//
+// Precedence: explicit VERDICT:/TL;DR: line → HANDOFF `summary:` field's first
+// sentence → SUMMARY block's first sentence → nullopt. Never "".
+
+static void test_summary_verdict_beats_handoff_field() {
+    const std::string out = R"(Did the work and re-ran the suite.
+
+VERDICT: migration landed, 3 tests green
+
+```HANDOFF
+to: done
+summary: The handoff field must lose to the explicit VERDICT line.
+prompt: nothing further
+```
+)";
+    auto s = sui::quorum::extract_summary(out);
+    check(s.has_value(), "summary: VERDICT line yields a value");
+    check(s && *s == "migration landed, 3 tests green",
+          "summary: explicit VERDICT: line beats a HANDOFF summary: field");
+}
+
+static void test_summary_tldr_label() {
+    auto s = sui::quorum::extract_summary("preamble\nTL;DR: envelope reader rewired\ntail\n");
+    check(s && *s == "envelope reader rewired",
+          "summary: TL;DR: is accepted as an explicit label");
+}
+
+static void test_summary_handoff_field_first_sentence() {
+    const std::string out = R"(Work log follows.
+
+```HANDOFF
+to: done
+summary: Column added and backfilled. This second sentence must not appear.
+prompt: nothing further
+```
+)";
+    auto s = sui::quorum::extract_summary(out);
+    check(s && *s == "Column added and backfilled.",
+          "summary: multi-sentence HANDOFF summary: → first sentence only");
+}
+
+static void test_summary_block_fallback() {
+    const std::string out = R"(Some prose with no explicit label.
+
+```SUMMARY
+Rewired the envelope reader. Then re-ran the whole suite.
+```
+)";
+    auto s = sui::quorum::extract_summary(out);
+    check(s && *s == "Rewired the envelope reader.",
+          "summary: SUMMARY block is the last-resort fallback (first sentence)");
+}
+
+static void test_summary_none_is_nullopt() {
+    auto s = sui::quorum::extract_summary(
+        "I read the code and it looks fine to me\nno blocks, no labels\n");
+    check(!s.has_value(),
+          "summary: no candidate anywhere → nullopt (absent, not empty)");
+}
+
+static void test_summary_empty_label_not_empty_string() {
+    auto s = sui::quorum::extract_summary("VERDICT:   \nplain trailing prose\n");
+    check(!s.has_value(),
+          "summary: a blank VERDICT: payload is never returned as \"\"");
+}
+
+static void test_summary_empty_label_keeps_looking() {
+    auto s = sui::quorum::extract_summary(
+        "VERDICT:\nsome noise in between\nVERDICT: the real one\n");
+    check(s && *s == "the real one",
+          "summary: a blank VERDICT: line is skipped and scanning continues");
+}
+
+static void test_summary_two_hundred_char_cut() {
+    std::string words;
+    for (int i = 0; i < 60; ++i) words += "alpha ";
+    auto s = sui::quorum::extract_summary("VERDICT: " + words + "\n");
+
+    std::string expected;               // 33 words = 197 bytes, + "…" = 200
+    for (int i = 0; i < 33; ++i) {
+        if (i) expected += ' ';
+        expected += "alpha";
+    }
+    expected += "\xE2\x80\xA6";
+
+    check(s && s->size() == 200,
+          "summary: an over-long verdict is cut to 200 bytes");
+    check(s && *s == expected,
+          "summary: the cut lands on a word boundary and appends an ellipsis");
+}
+
+static void test_summary_bold_label() {
+    auto s = sui::quorum::extract_summary("**VERDICT**: shipped the thing\n");
+    check(s && *s == "shipped the thing",
+          "summary: a bold **VERDICT**: label is accepted");
+}
+
+static void test_summary_label_case_insensitive() {
+    auto s = sui::quorum::extract_summary("Verdict: it works\n");
+    check(s && *s == "it works",
+          "summary: the label match is case-insensitive");
+}
+
 int main() {
     std::cout << "=== test_output_parser ===\n\n";
 
@@ -916,6 +1020,19 @@ int main() {
 
     // Regression: nested code fence inside VAULT_UPDATE content (truncation bug)
     test_nested_code_fence_in_content();
+
+    // A4 — extract_summary (order is load-bearing for the RED matrix: each
+    // mutation must red its own case FIRST)
+    test_summary_verdict_beats_handoff_field();
+    test_summary_tldr_label();
+    test_summary_handoff_field_first_sentence();
+    test_summary_block_fallback();
+    test_summary_none_is_nullopt();
+    test_summary_empty_label_not_empty_string();
+    test_summary_empty_label_keeps_looking();
+    test_summary_two_hundred_char_cut();
+    test_summary_bold_label();
+    test_summary_label_case_insensitive();
 
     std::cout << "\nAll tests passed.\n";
     return 0;

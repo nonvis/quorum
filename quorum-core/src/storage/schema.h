@@ -57,7 +57,11 @@ inline void create_schema(Database& db) {
         "  completed_at TEXT,"
         "  conversation_id INTEGER REFERENCES conversations(id),"
         "  session_id TEXT,"
-        "  system_prompt TEXT"  // Phase 7 Track 5 — stable per-agent prefix
+        "  system_prompt TEXT,"  // Phase 7 Track 5 — stable per-agent prefix
+        // A4 — the daemon's one-line verdict for the task (output_parser.h
+        // extract_summary). NULL when the agent emitted none; never "".
+        // Also ALTERed in on pre-A4 DBs by main.cpp init_schema().
+        "  summary TEXT"
         ")"
     );
     db.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)");

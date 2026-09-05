@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include <sqlite3.h>
 
@@ -361,6 +362,105 @@ static void test_mode_column_migration() {
           "9: explicit brainstorm value persists");
 }
 
+// ─── Test 10: tasks.summary column migration (A4) ───────────────────────────
+//
+// Synthesizes the pre-A4 tasks table (no `summary`), runs the guarded
+// ALTER twice, and verifies: the column appears, neither run errors, and the
+// second run is a no-op (the column list is byte-identical and `summary`
+// appears exactly once). PRAGMA table_info is printed for both runs.
+
+static std::vector<std::string> table_columns(sui::quorum::Database& db,
+                                              const std::string& table) {
+    std::vector<std::string> cols;
+    db.query("SELECT name FROM pragma_table_info('" + table + "')",
+             [&](sqlite3_stmt* stmt) {
+                 auto n = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                 if (n) cols.emplace_back(n);
+             });
+    return cols;
+}
+
+static void init_pre_a4_tasks_table(sui::quorum::Database& db) {
+    // tasks as it shipped before A4 (storage/schema.h + the Phase 7 ALTERs)
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS tasks ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  agent TEXT NOT NULL,"
+        "  task_type TEXT NOT NULL,"
+        "  status TEXT NOT NULL DEFAULT 'pending',"
+        "  prompt TEXT NOT NULL,"
+        "  result TEXT,"
+        "  token_in INTEGER,"
+        "  token_out INTEGER,"
+        "  cost REAL,"
+        "  error TEXT,"
+        "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
+        "  started_at TEXT,"
+        "  completed_at TEXT,"
+        "  conversation_id INTEGER,"
+        "  session_id TEXT,"
+        "  system_prompt TEXT,"
+        "  cache_creation_input_tokens INTEGER,"
+        "  cache_read_input_tokens INTEGER"
+        ")"
+    );
+}
+
+// Mirrors src/main.cpp init_schema()'s summary migration. execute_ok() is used
+// (not execute()) so a SQL error is observable rather than only logged.
+static bool migrate_tasks_summary(sui::quorum::Database& db) {
+    if (column_exists(db, "tasks", "summary")) return true;  // idempotent guard
+    return db.execute_ok("ALTER TABLE tasks ADD COLUMN summary TEXT");
+}
+
+static void test_tasks_summary_migration() {
+    std::cout << "\n=== 10. tasks.summary Column Migration (A4) ===\n\n";
+
+    sui::quorum::Database db(":memory:");
+    init_pre_a4_tasks_table(db);
+
+    check(!column_exists(db, "tasks", "summary"),
+          "10: pre-migration: tasks.summary absent");
+
+    // A row written under the pre-A4 schema.
+    db.execute(
+        "INSERT INTO tasks (agent, task_type, status, prompt, result) "
+        "VALUES ('leader', 'scan', 'done', 'p', 'legacy result')"
+    );
+    auto legacy_id = db.last_insert_id();
+    check(legacy_id > 0, "10: pre-migration: legacy row inserted");
+
+    // ── Run 1 ────────────────────────────────────────────────────────────────
+    check(migrate_tasks_summary(db), "10: first migration run reports success");
+    auto after_first = table_columns(db, "tasks");
+    std::cout << "    PRAGMA table_info(tasks) after run 1: ";
+    for (const auto& c : after_first) std::cout << c << " ";
+    std::cout << "\n";
+
+    check(column_exists(db, "tasks", "summary"),
+          "10: post-migration: tasks.summary present");
+
+    // ── Run 2 — must be a no-op, not a duplicate-column error ───────────────
+    check(migrate_tasks_summary(db), "10: second migration run reports success");
+    auto after_second = table_columns(db, "tasks");
+    std::cout << "    PRAGMA table_info(tasks) after run 2: ";
+    for (const auto& c : after_second) std::cout << c << " ";
+    std::cout << "\n";
+
+    check(after_second == after_first,
+          "10: second run is a no-op (column list unchanged)");
+
+    int summary_cols = 0;
+    for (const auto& c : after_second) if (c == "summary") ++summary_cols;
+    check(summary_cols == 1, "10: exactly one summary column after two runs");
+
+    // The legacy row reads NULL — absent, not "".
+    auto nulls = db.query_int(
+        "SELECT COUNT(*) FROM tasks WHERE id = " + std::to_string(legacy_id) +
+        " AND summary IS NULL");
+    check(nulls == 1, "10: the pre-A4 row reads summary IS NULL after the ALTER");
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -375,6 +475,7 @@ int main() {
     test_task_without_conversation();
     test_get_nonexistent_conversation();
     test_mode_column_migration();
+    test_tasks_summary_migration();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)
               << " tests passed ---\n";

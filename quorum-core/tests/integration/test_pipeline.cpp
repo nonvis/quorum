@@ -17,6 +17,7 @@
 
 #include "storage/database.h"
 #include "daemon/consensus.h"
+#include "agent/invoker.h"
 #include "agent/output_parser.h"
 #include "agent/context_assembler.h"
 #include "vault/vault_manager.h"
@@ -62,7 +63,11 @@ static void init_tasks_table(sui::quorum::Database& db) {
         "  error TEXT,"
         "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
         "  started_at TEXT,"
-        "  completed_at TEXT"
+        "  completed_at TEXT,"
+        // Columns Invoker::mark_done writes (Phase 7 Track 5 + A4)
+        "  cache_creation_input_tokens INTEGER,"
+        "  cache_read_input_tokens INTEGER,"
+        "  summary TEXT"
         ")"
     );
 }
@@ -373,6 +378,84 @@ static void test_sequential_dispatch() {
     check(active2 > 0, "G: sequential gate still blocks with 2 active");
 }
 
+// ─── Test H: tasks.summary completion round trip (A4) ───────────────────────
+//
+// Drives the REAL completion write — Invoker::mark_done, the only
+// `UPDATE tasks SET status = 'done'` site in src/ and the one call `invoke()`
+// makes after a healthy envelope — with a fake agent output, then reads the
+// row back. No claude -p is spawned: mark_done is pure DB.
+
+// Read tasks.summary for a row. Returns {found_non_null, value}.
+static std::pair<bool, std::string> read_summary(sui::quorum::Database& db,
+                                                 int64_t task_id) {
+    std::pair<bool, std::string> out{false, {}};
+    db.query(
+        "SELECT summary FROM tasks WHERE id = ?",
+        [&](sqlite3_stmt* stmt) { sqlite3_bind_int64(stmt, 1, task_id); },
+        [&](sqlite3_stmt* stmt) {
+            if (sqlite3_column_type(stmt, 0) == SQLITE_NULL) return;
+            out.first = true;
+            auto t = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            if (t) out.second = t;
+        }
+    );
+    return out;
+}
+
+static int64_t insert_active_task(sui::quorum::Database& db) {
+    db.execute(
+        "INSERT INTO tasks (agent, task_type, status, prompt) "
+        "VALUES ('doer', 'work', 'active', 'do the thing')"
+    );
+    return db.last_insert_id();
+}
+
+static void test_summary_completion_round_trip() {
+    std::cout << "\n=== H. tasks.summary Completion Round Trip ===\n\n";
+
+    sui::quorum::Database db(":memory:");
+    init_tasks_table(db);
+    sui::quorum::Invoker invoker(db);
+
+    // ── 1. Output carrying an explicit verdict ──────────────────────────────
+    auto with_verdict = insert_active_task(db);
+    const std::string verdict_output =
+        "Ran the migration and the suite.\n\nVERDICT: shipped X\n";
+    invoker.mark_done(with_verdict, verdict_output, 10, 20, 0.5, 0, 0);
+
+    auto done = db.query_int(
+        "SELECT COUNT(*) FROM tasks WHERE id = " + std::to_string(with_verdict) +
+        " AND status = 'done'");
+    check(done == 1, "H: mark_done marked the task done");
+
+    auto got = read_summary(db, with_verdict);
+    check(got.first, "H: summary column is non-NULL for a VERDICT output");
+    check(got.second == "shipped X",
+          "H: SELECT summary returns the daemon-extracted verdict");
+
+    // ── 2. Output with no verdict anywhere ──────────────────────────────────
+    auto no_verdict = insert_active_task(db);
+    invoker.mark_done(no_verdict,
+                      "I looked at the code and everything seems fine\n",
+                      10, 20, 0.5, 0, 0);
+
+    auto is_null = db.query_int(
+        "SELECT COUNT(*) FROM tasks WHERE id = " + std::to_string(no_verdict) +
+        " AND summary IS NULL");
+    check(is_null == 1, "H: no verdict → summary IS NULL (absent, not empty)");
+
+    auto is_empty_string = db.query_int(
+        "SELECT COUNT(*) FROM tasks WHERE id = " + std::to_string(no_verdict) +
+        " AND summary = ''");
+    check(is_empty_string == 0, "H: no verdict → summary is never \"\"");
+
+    // The result itself still lands — the summary is additive, not a swap.
+    auto result_kept = db.query_int(
+        "SELECT COUNT(*) FROM tasks WHERE id = " + std::to_string(no_verdict) +
+        " AND result LIKE 'I looked at the code%'");
+    check(result_kept == 1, "H: the raw result is still persisted alongside");
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -385,6 +468,7 @@ int main() {
     test_consensus_duplicate_review();
     test_full_pipeline();
     test_sequential_dispatch();
+    test_summary_completion_round_trip();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)
               << " tests passed ---\n";
