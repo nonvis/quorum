@@ -1,15 +1,21 @@
 // tests/unit/test_invoker_cache_fields.cpp
-// Phase 7 Track 5 — verify json::extract_int reads all four token-accounting
-// fields from a fixture JSON shaped like the real claude -p output.
+// Phase 7 Track 5 — the two prompt-cache token fields, read the way the daemon
+// reads them.
 //
-// claude -p --output-format json returns a result envelope whose "usage"
-// object is the standard Anthropic Messages API shape:
-//   "usage": { "input_tokens": ..., "output_tokens": ...,
-//              "cache_creation_input_tokens": ...,
-//              "cache_read_input_tokens": ... }
-// The Track 5 invoker pulls all four. This test feeds a fixture that
-// matches the real shape and confirms each field round-trips correctly,
-// which is the contract the live invoker depends on.
+// The invoker does NOT scan the envelope flat. Invoker::parse_envelope() (the
+// exact function invoke() calls at Layer 2) pulls the top-level "usage" object
+// out first and then reads DEPTH-0 keys inside it:
+//   "usage": { "input_tokens", "output_tokens",
+//              "cache_creation_input_tokens", "cache_read_input_tokens",
+//              "iterations": [ { ...the same four keys, PER ROUND-TRIP... } ] }
+// A flat by-key extractor hits usage.iterations[0] first and reports ONE
+// round-trip instead of the turn total. The fixture below is built so the two
+// answers cannot coincide: usage totals are 100/200/300/400, the iteration
+// carries 7/1/11/13, and "modelUsage" repeats a third set again.
+//
+// (Until 2026-09-04 this file called json::extract_int on a nesting-free
+// fixture and its header claimed that was how the invoker read tokens. It was
+// not — that is the drift this rewrite closes.)
 //
 // Run:  cd build && ctest -R test_invoker_cache_fields --output-on-failure
 
@@ -18,7 +24,9 @@
 #include <iostream>
 #include <string>
 
-#include "utils/json.h"
+#include "agent/invoker.h"
+
+using sui::quorum::Invoker;
 
 static int g_failed = 0;
 
@@ -31,53 +39,71 @@ static void check(bool cond, const std::string& msg) {
     }
 }
 
+// Claude Code 2.1.261 envelope shape, trimmed to the accounting keys. Note the
+// iterations[] array sits BEFORE the usage totals — that ordering is what a
+// flat scan trips over, so it is preserved here deliberately.
+static const std::string kFixture = R"({
+    "type": "result",
+    "subtype": "success",
+    "is_error": false,
+    "result": "pong",
+    "session_id": "sid-123",
+    "total_cost_usd": 0.0042,
+    "usage": {
+        "iterations": [
+            {
+                "input_tokens": 7,
+                "output_tokens": 1,
+                "cache_creation_input_tokens": 11,
+                "cache_read_input_tokens": 13,
+                "type": "message"
+            }
+        ],
+        "input_tokens": 100,
+        "output_tokens": 200,
+        "cache_creation_input_tokens": 300,
+        "cache_read_input_tokens": 400
+    },
+    "modelUsage": {
+        "claude-x": {
+            "inputTokens": 55,
+            "outputTokens": 66,
+            "cacheCreationInputTokens": 77,
+            "cacheReadInputTokens": 88
+        }
+    }
+})";
+
 int main() {
     std::cout << "=====================================================\n";
     std::cout << "  Phase 7 Track 5 — cache-field extraction\n";
     std::cout << "=====================================================\n";
 
-    // Fixture mirroring the real claude -p JSON envelope. All four token
-    // fields populated with distinguishable values so a single-field bug
-    // shows up in the assertions.
-    const std::string fixture = R"({
-        "type": "result",
-        "subtype": "success",
-        "is_error": false,
-        "result": "pong",
-        "session_id": "sid-123",
-        "total_cost_usd": 0.0042,
-        "usage": {
-            "input_tokens": 11,
-            "output_tokens": 22,
-            "cache_creation_input_tokens": 3300,
-            "cache_read_input_tokens": 4400
-        }
-    })";
+    auto r = Invoker::parse_envelope(kFixture);
 
-    int64_t input_tokens =
-        sui::quorum::json::extract_int(fixture, "input_tokens");
-    int64_t output_tokens =
-        sui::quorum::json::extract_int(fixture, "output_tokens");
-    int64_t cache_creation =
-        sui::quorum::json::extract_int(fixture, "cache_creation_input_tokens");
-    int64_t cache_read =
-        sui::quorum::json::extract_int(fixture, "cache_read_input_tokens");
+    check(r.success, "envelope parses (parse_envelope, the Layer 2 function)");
 
-    check(input_tokens == 11,
-          "input_tokens extracted = 11 (got " + std::to_string(input_tokens) + ")");
-    check(output_tokens == 22,
-          "output_tokens extracted = 22 (got " + std::to_string(output_tokens) + ")");
-    check(cache_creation == 3300,
-          "cache_creation_input_tokens extracted = 3300 (got " +
-          std::to_string(cache_creation) + ")");
-    check(cache_read == 4400,
-          "cache_read_input_tokens extracted = 4400 (got " +
-          std::to_string(cache_read) + ")");
+    // The two cache fields are the subject of this test.
+    check(r.cache_creation_tokens == 300,
+          "cache_creation_tokens = usage TOTAL 300, not iterations[0] 11 (got " +
+          std::to_string(r.cache_creation_tokens) + ")");
+    check(r.cache_read_tokens == 400,
+          "cache_read_tokens = usage TOTAL 400, not iterations[0] 13 (got " +
+          std::to_string(r.cache_read_tokens) + ")");
 
-    // Also confirm the by-key extractor doesn't confuse cache_creation with
-    // cache_read when both keys live in the same object.
-    check(cache_creation != cache_read,
-          "cache_creation and cache_read are read independently");
+    // The plain token pair travels the same path; a scoping bug would move all
+    // four together, so assert them too.
+    check(r.tokens_in == 100,
+          "tokens_in = usage TOTAL 100, not iterations[0] 7 (got " +
+          std::to_string(r.tokens_in) + ")");
+    check(r.tokens_out == 200,
+          "tokens_out = usage TOTAL 200, not iterations[0] 1 (got " +
+          std::to_string(r.tokens_out) + ")");
+
+    // (The old file also asserted cache_creation != cache_read. Dropped: with
+    // the two totals fixed at 300 and 400 it is strictly implied by the two
+    // checks above and can never fail while they pass — a gate that cannot go
+    // red is not a gate.)
 
     return g_failed == 0 ? 0 : 1;
 }

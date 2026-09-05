@@ -1,7 +1,12 @@
 // tests/unit/test_invoker.cpp
-// Unit tests for Invoker's envelope validation + parsing.
-// Tests the static validate_claude_output() / parse_envelope() helpers, which
-// are the exact code invoke() runs, without needing a DB or a subprocess.
+// Unit tests for Invoker's two invocation gates, without a DB or a subprocess.
+//
+// Every function driven here is one invoke() actually calls:
+//   Layer 1  validate_exit_code(CommandResult)  — invoker.h, called by invoke()
+//   Layer 2  parse_envelope(raw) -> validate_envelope_json(raw)
+// The old validate_claude_output() wrapper ran both at once and had ZERO
+// callers in src/ — tested but never called — so it was deleted (2026-09-04)
+// and these tests were repointed at the live pair.
 // Run:  cd build && cmake .. && make -j$(nproc) && ctest --output-on-failure
 
 #include <cassert>
@@ -23,14 +28,14 @@ static void check(bool cond, const char* msg) {
     std::cout << "[PASS] " << msg << "\n";
 }
 
-// --- Test 1: Non-zero exit code ------------------------------------------------
+// --- Test 1: Layer 1 — non-zero exit code --------------------------------------
 
 static void test_nonzero_exit_code_fails() {
     CommandResult cr{
         .output = "Error: API key not set",
         .exit_code = 1,
     };
-    auto err = Invoker::validate_claude_output(cr);
+    auto err = Invoker::validate_exit_code(cr);
     check(err.has_value(), "non-zero exit code returns error");
     check(err->find("non-zero exit code") != std::string::npos,
           "error mentions non-zero exit code");
@@ -40,18 +45,27 @@ static void test_nonzero_exit_code_fails() {
 
 static void test_nonzero_exit_code_empty_output() {
     CommandResult cr{.output = "", .exit_code = 2};
-    auto err = Invoker::validate_claude_output(cr);
+    auto err = Invoker::validate_exit_code(cr);
     check(err.has_value(), "non-zero exit with empty output returns error");
 }
 
-// --- Test 2: Exit code 0 but non-JSON output -----------------------------------
+// Layer 1 must pass a clean exit THROUGH — it never looks at the body. This is
+// what lets invoke() run the retry-on-resume-failure branch before any JSON is
+// parsed; folding the two gates together (the deleted wrapper) hid it.
+static void test_exit_zero_passes_layer1_even_for_garbage_body() {
+    CommandResult cr{.output = "not json at all", .exit_code = 0};
+    check(!Invoker::validate_exit_code(cr).has_value(),
+          "exit 0 passes Layer 1 regardless of body");
+}
+
+// --- Test 2: Layer 2 — exit code 0 but non-JSON output -------------------------
 
 static void test_exit_zero_plain_text_fails() {
     CommandResult cr{
         .output = "Something went wrong but process exited 0",
         .exit_code = 0,
     };
-    auto err = Invoker::validate_claude_output(cr);
+    auto err = Invoker::validate_envelope_json(cr.output);
     check(err.has_value(), "plain text with exit 0 returns error");
     check(err->find("invalid JSON") != std::string::npos,
           "error mentions invalid JSON");
@@ -59,7 +73,7 @@ static void test_exit_zero_plain_text_fails() {
 
 static void test_exit_zero_empty_output_fails() {
     CommandResult cr{.output = "", .exit_code = 0};
-    auto err = Invoker::validate_claude_output(cr);
+    auto err = Invoker::validate_envelope_json(cr.output);
     check(err.has_value(), "empty output with exit 0 returns error");
 }
 
@@ -69,7 +83,7 @@ static void test_exit_zero_wrong_type_fails() {
         .output = R"({"type":"error","error":"rate_limited"})",
         .exit_code = 0,
     };
-    auto err = Invoker::validate_claude_output(cr);
+    auto err = Invoker::validate_envelope_json(cr.output);
     check(err.has_value(), "JSON with type!=result returns error");
 }
 
@@ -79,7 +93,7 @@ static void test_exit_zero_no_type_field_fails() {
         .output = R"({"message":"hello","status":"ok"})",
         .exit_code = 0,
     };
-    auto err = Invoker::validate_claude_output(cr);
+    auto err = Invoker::validate_envelope_json(cr.output);
     check(err.has_value(), "JSON without type field returns error");
 }
 
@@ -90,7 +104,7 @@ static void test_valid_claude_output_passes() {
         .output = R"({"type":"result","subtype":"success","result":"Hello world","total_cost_usd":0.03,"usage":{"input_tokens":100,"output_tokens":50}})",
         .exit_code = 0,
     };
-    auto err = Invoker::validate_claude_output(cr);
+    auto err = Invoker::validate_envelope_json(cr.output);
     check(!err.has_value(), "valid claude -p JSON passes validation");
 }
 
@@ -100,7 +114,7 @@ static void test_valid_claude_output_with_is_error_passes() {
         .output = R"({"type":"result","subtype":"success","is_error":false,"session_id":"abc123","result":"The answer is 42.","total_cost_usd":0.029,"duration_ms":1500,"usage":{"input_tokens":2,"output_tokens":18}})",
         .exit_code = 0,
     };
-    auto err = Invoker::validate_claude_output(cr);
+    auto err = Invoker::validate_envelope_json(cr.output);
     check(!err.has_value(), "full realistic claude -p output passes validation");
 
     // The old shape is a subset of the new one — parse_envelope reads it too.
@@ -126,7 +140,9 @@ static const std::string kEnvelope_2_1_261 =
 
 static void test_real_2_1_261_envelope_validates() {
     CommandResult cr{.output = kEnvelope_2_1_261, .exit_code = 0};
-    auto err = Invoker::validate_claude_output(cr);
+    check(!Invoker::validate_exit_code(cr).has_value(),
+          "REAL 2.1.261 envelope: Layer 1 (exit code) passes");
+    auto err = Invoker::validate_envelope_json(cr.output);
     check(!err.has_value(),
           "REAL 2.1.261 envelope passes validation (was: 'invalid JSON')");
 }
@@ -193,9 +209,13 @@ static void test_is_error_true_envelope_fails_with_result_text() {
     check(p.error.find("error_during_execution") != std::string::npos,
           "is_error:true error carries the subtype");
 
+    // A clean exit with an is_error envelope: Layer 1 lets it through, Layer 2
+    // is the gate that catches it. Exactly the order invoke() runs them in.
     CommandResult cr{.output = env, .exit_code = 0};
-    auto err = Invoker::validate_claude_output(cr);
-    check(err.has_value(), "is_error:true also fails validate_claude_output");
+    check(!Invoker::validate_exit_code(cr).has_value(),
+          "is_error:true still passes Layer 1 (exit code 0)");
+    auto err = Invoker::validate_envelope_json(cr.output);
+    check(err.has_value(), "is_error:true fails Layer 2 (validate_envelope_json)");
 }
 
 // --- main ----------------------------------------------------------------------
@@ -205,6 +225,7 @@ int main() {
 
     test_nonzero_exit_code_fails();
     test_nonzero_exit_code_empty_output();
+    test_exit_zero_passes_layer1_even_for_garbage_body();
     test_exit_zero_plain_text_fails();
     test_exit_zero_empty_output_fails();
     test_exit_zero_wrong_type_fails();

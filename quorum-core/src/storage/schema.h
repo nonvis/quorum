@@ -30,6 +30,10 @@ inline void create_schema(Database& db) {
         "  paused_reason TEXT,"
         "  current_agent TEXT,"
         "  path_index INTEGER NOT NULL DEFAULT 0,"
+        // `team` was ALTER-only until 2026-09-04, so a DB created by
+        // create_schema() alone lacked it — while main.cpp print_conversations()
+        // SELECTs it by name. Type matches the ALTER in init_schema() exactly.
+        "  team TEXT,"
         "  mode TEXT NOT NULL DEFAULT 'generic',"
         "  no_vault_write INTEGER NOT NULL DEFAULT 0,"
         // Phase 14.1 — daemon-enforced brainstorm gate. `gated` marks a
@@ -58,6 +62,13 @@ inline void create_schema(Database& db) {
         "  conversation_id INTEGER REFERENCES conversations(id),"
         "  session_id TEXT,"
         "  system_prompt TEXT,"  // Phase 7 Track 5 — stable per-agent prefix
+        // Phase 7 Track 5 — Anthropic prompt-cache accounting, written by
+        // Invoker::mark_done. ALTER-only until 2026-09-04, so a DB from
+        // `quorum init` alone lacked both. Declared here with the ALTER's exact
+        // type and default: plain INTEGER, NO default clause ⇒ absent reads as
+        // SQL NULL on a fresh DB exactly as it does on a migrated one.
+        "  cache_creation_input_tokens INTEGER,"
+        "  cache_read_input_tokens INTEGER,"
         // A4 — the daemon's one-line verdict for the task (output_parser.h
         // extract_summary). NULL when the agent emitted none; never "".
         // Also ALTERed in on pre-A4 DBs by main.cpp init_schema().

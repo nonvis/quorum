@@ -13,6 +13,7 @@
 #include <sqlite3.h>
 
 #include "storage/database.h"
+#include "storage/schema.h"
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -461,6 +462,114 @@ static void test_tasks_summary_migration() {
     check(nulls == 1, "10: the pre-A4 row reads summary IS NULL after the ALTER");
 }
 
+// ─── Test 11: create_schema() carries every ALTERed column ──────────────────
+//
+// `quorum init` calls create_schema() and nothing else; only the daemon path
+// runs main.cpp init_schema()'s guarded ALTERs. So any column that exists ONLY
+// as an ALTER is absent from a DB the CLI created — the A4 doer hit exactly
+// that with the two cache-token columns, and the census turned up
+// conversations.team as a third (main.cpp print_conversations SELECTs it).
+//
+// This test pins both halves of the contract:
+//   (a) a fresh create_schema() DB already HAS the columns, and
+//   (b) running the guarded migration on top is a NO-OP — the column list is
+//       byte-identical and no name appears twice.
+// migrate_all() below mirrors src/main.cpp init_schema() verbatim (same guard,
+// same SQL). execute_ok() surfaces a SQL error as a return value.
+
+static bool add_column_if_missing(sui::quorum::Database& db,
+                                  const std::string& table,
+                                  const std::string& column,
+                                  const std::string& decl) {
+    if (column_exists(db, table, column)) return true;  // idempotent guard
+    return db.execute_ok("ALTER TABLE " + table + " ADD COLUMN " + decl);
+}
+
+// Verbatim mirror of the guarded ALTERs in src/main.cpp init_schema()
+// (main.cpp:236-269 — the column_exists() guard is what makes each one
+// idempotent when the column is already present).
+static bool migrate_all(sui::quorum::Database& db) {
+    bool ok = true;
+    ok &= add_column_if_missing(db, "tasks", "conversation_id",
+        "conversation_id INTEGER REFERENCES conversations(id)");
+    ok &= add_column_if_missing(db, "tasks", "session_id", "session_id TEXT");
+    ok &= add_column_if_missing(db, "conversations", "current_agent", "current_agent TEXT");
+    ok &= add_column_if_missing(db, "conversations", "path_index",
+        "path_index INTEGER NOT NULL DEFAULT 0");
+    ok &= add_column_if_missing(db, "conversations", "team", "team TEXT");
+    ok &= add_column_if_missing(db, "conversations", "mode",
+        "mode TEXT NOT NULL DEFAULT 'generic'");
+    ok &= add_column_if_missing(db, "conversations", "no_vault_write",
+        "no_vault_write INTEGER NOT NULL DEFAULT 0");
+    ok &= add_column_if_missing(db, "conversations", "gated",
+        "gated INTEGER NOT NULL DEFAULT 0");
+    ok &= add_column_if_missing(db, "conversations", "gate_cleared",
+        "gate_cleared INTEGER NOT NULL DEFAULT 0");
+    ok &= add_column_if_missing(db, "tasks", "system_prompt", "system_prompt TEXT");
+    ok &= add_column_if_missing(db, "tasks", "cache_creation_input_tokens",
+        "cache_creation_input_tokens INTEGER");
+    ok &= add_column_if_missing(db, "tasks", "cache_read_input_tokens",
+        "cache_read_input_tokens INTEGER");
+    ok &= add_column_if_missing(db, "tasks", "summary", "summary TEXT");
+    return ok;
+}
+
+static void print_cols(const char* label, const std::vector<std::string>& cols) {
+    std::cout << "    " << label << ": ";
+    for (const auto& c : cols) std::cout << c << " ";
+    std::cout << "\n";
+}
+
+static void test_create_schema_covers_every_alter() {
+    std::cout << "\n=== 11. create_schema() covers every ALTERed column ===\n\n";
+
+    sui::quorum::Database db(":memory:");
+    sui::quorum::create_schema(db);  // exactly what `quorum init` runs
+
+    auto tasks_fresh = table_columns(db, "tasks");
+    auto convs_fresh = table_columns(db, "conversations");
+    print_cols("PRAGMA table_info(tasks) after create_schema", tasks_fresh);
+    print_cols("PRAGMA table_info(conversations) after create_schema", convs_fresh);
+
+    // (a) the three columns that used to be ALTER-only
+    check(column_exists(db, "tasks", "cache_creation_input_tokens"),
+          "11: create_schema: tasks.cache_creation_input_tokens present");
+    check(column_exists(db, "tasks", "cache_read_input_tokens"),
+          "11: create_schema: tasks.cache_read_input_tokens present");
+    check(column_exists(db, "conversations", "team"),
+          "11: create_schema: conversations.team present");
+
+    // (b) the migration on top of a fresh schema changes nothing
+    check(migrate_all(db), "11: migration on a fresh schema reports success");
+
+    auto tasks_after = table_columns(db, "tasks");
+    auto convs_after = table_columns(db, "conversations");
+    print_cols("PRAGMA table_info(tasks) after migration", tasks_after);
+    print_cols("PRAGMA table_info(conversations) after migration", convs_after);
+
+    check(tasks_after == tasks_fresh,
+          "11: migration is a no-op on tasks (column list unchanged)");
+    check(convs_after == convs_fresh,
+          "11: migration is a no-op on conversations (column list unchanged)");
+
+    // (No "exactly one <col>" count assertion here. SQLite rejects a duplicate
+    // ADD COLUMN outright, so the count can only be 0 or 1, and 0 is already
+    // caught above — no mutation can red such a check while its neighbours
+    // pass. Test 10 above carries the same idiom; flagged, not touched.)
+
+    // The declared type must match the ALTER's, or a fresh DB and a migrated
+    // DB disagree about what the daemon wrote. Both are plain INTEGER with no
+    // DEFAULT ⇒ an untouched row reads NULL, not 0, on either.
+    db.execute("INSERT INTO tasks (agent, task_type, prompt) "
+               "VALUES ('leader', 'scan', 'p')");
+    auto nulls = db.query_int(
+        "SELECT COUNT(*) FROM tasks WHERE cache_creation_input_tokens IS NULL "
+        "AND cache_read_input_tokens IS NULL");
+    check(nulls == 1,
+          "11: fresh-schema row reads both cache columns as NULL (no DEFAULT, "
+          "matching the ALTER)");
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -476,6 +585,7 @@ int main() {
     test_get_nonexistent_conversation();
     test_mode_column_migration();
     test_tasks_summary_migration();
+    test_create_schema_covers_every_alter();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)
               << " tests passed ---\n";

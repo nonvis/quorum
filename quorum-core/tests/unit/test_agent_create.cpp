@@ -346,14 +346,20 @@ static void test_evaluator_universal_rules() {
 static void test_evaluator_skill_source_exists() {
     std::cout << "\n=== I. evaluator/SKILL.md exists in templates ===\n\n";
 
-    // We resolve relative to the repo root via the test binary's known
-    // location. CTest runs from build/, so templates/ is at ../templates.
-    // We probe a few candidate locations to be tolerant of test invocation.
-    std::vector<std::string> candidates = {
-        "templates/skills/quorum-roles/evaluator/SKILL.md",
-        "../templates/skills/quorum-roles/evaluator/SKILL.md",
-        "../../templates/skills/quorum-roles/evaluator/SKILL.md",
-    };
+    static constexpr const char* kRel =
+        "/templates/skills/quorum-roles/evaluator/SKILL.md";
+
+    std::vector<std::string> candidates;
+#ifdef QUORUM_SOURCE_ROOT
+    // First choice: the repo root baked in at compile time by CMakeLists.txt.
+    // Independent of cwd, so the test is green from ANY build directory —
+    // the cwd ladder below is only correct when ctest runs inside the repo.
+    candidates.emplace_back(std::string(QUORUM_SOURCE_ROOT) + kRel);
+#endif
+    // Fallback ladder, kept for a hand-compiled binary run without the define.
+    candidates.emplace_back(std::string(".") + kRel);
+    candidates.emplace_back(std::string("..") + kRel);
+    candidates.emplace_back(std::string("../..") + kRel);
 
     bool found = false;
     std::string found_at;

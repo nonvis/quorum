@@ -229,6 +229,16 @@ add_test(NAME test_config_validation COMMAND test_config_validation)
 
 add_executable(test_agent_create tests/unit/test_agent_create.cpp)
 target_include_directories(test_agent_create PRIVATE src)
+# Test I reads templates/skills/quorum-roles/evaluator/SKILL.md. Its cwd ladder
+# ("templates", "../templates", "../../templates") only resolves when ctest runs
+# from inside the repo, so the test went RED from any out-of-tree build dir.
+# QUORUM_SOURCE_ROOT pins the repo root at COMPILE time.
+# Chosen over a WORKING_DIRECTORY on add_test(): tests A-G chdir into their own
+# make_temp_dir() and restore to whatever cwd they started in, so moving the
+# start cwd would change the surface those tests exercise. A compile definition
+# leaves their cwd behaviour byte-for-byte unchanged.
+target_compile_definitions(test_agent_create PRIVATE
+    QUORUM_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_test(NAME test_agent_create COMMAND test_agent_create)
 
 add_executable(test_quorum_init tests/unit/test_quorum_init.cpp)

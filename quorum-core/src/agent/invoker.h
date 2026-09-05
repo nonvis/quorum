@@ -57,14 +57,21 @@ public:
         return std::nullopt;  // valid
     }
 
-    // Validate claude -p output. Returns error string if invalid, nullopt if valid.
-    [[nodiscard]] static std::optional<std::string> validate_claude_output(
+    // Layer 1 of invoke(): the exit-code gate. Returns an error string on a
+    // non-zero exit, nullopt when the process exited clean. The envelope BODY
+    // is NOT inspected here — invoke() may retry a failed session resume before
+    // any JSON is looked at, so the two gates must stay separable.
+    //
+    // 2026-09-04: this replaces validate_claude_output(), a wrapper that ran
+    // both gates at once. That wrapper had zero callers in src/ (only tests) —
+    // it was tested but never called. invoke() below calls THIS function.
+    [[nodiscard]] static std::optional<std::string> validate_exit_code(
         const CommandResult& result) {
         if (result.exit_code != 0) {
             return "non-zero exit code: " + std::to_string(result.exit_code)
                 + (result.output.empty() ? "" : " — " + result.output);
         }
-        return validate_envelope_json(result.output);
+        return std::nullopt;
     }
 
     // Pure parse of a claude -p envelope into an InvocationResult. No DB, no
@@ -288,11 +295,14 @@ public:
             return {.success = false, .error = err};
         }
 
-        auto raw_output = std::move(cmd_result->output);
-        auto exit_code = cmd_result->exit_code;
+        // Layer 1: exit-code gate. CALLED here, not re-implemented — the unit
+        // tests drive validate_exit_code() directly, so the tested code is the
+        // code this line runs. (Read it before the output is moved out.)
+        auto exit_err = validate_exit_code(*cmd_result);
 
-        // Layer 1: Check exit code
-        if (exit_code != 0) {
+        auto raw_output = std::move(cmd_result->output);
+
+        if (exit_err) {
             // If resuming a session failed, retry as fresh session
             if (!task_session_id.empty() && session_flag.find("-r ") != std::string::npos) {
                 std::cerr << "WARNING: session resume failed for task " << task_id
@@ -329,10 +339,10 @@ public:
                 std::remove(temp_path.c_str());
                 if (!sysprompt_path.empty()) std::remove(sysprompt_path.c_str());
 
-                if (cmd_result && cmd_result->exit_code == 0) {
+                if (cmd_result && !validate_exit_code(*cmd_result)) {
                     // Retry succeeded — continue with the retry result
                     raw_output = std::move(cmd_result->output);
-                    exit_code = cmd_result->exit_code;
+                    exit_err.reset();
                     // Fall through to JSON validation below
                 } else {
                     auto err = "claude -p failed after retry for task " + std::to_string(task_id)
@@ -341,9 +351,8 @@ public:
                     return {.success = false, .error = err};
                 }
             } else {
-                auto err = "claude -p exited with code " + std::to_string(exit_code)
-                    + " for task " + std::to_string(task_id)
-                    + (raw_output.empty() ? "" : ": " + raw_output);
+                auto err = "claude -p failed for task " + std::to_string(task_id)
+                    + ": " + *exit_err;
                 mark_failed(task_id, err);
                 return {.success = false, .error = err};
             }
