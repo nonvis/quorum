@@ -74,6 +74,9 @@ make run-verbose
 # Run tests
 make test
 
+# Lint skill/agent templates (driver vs worker contract; no build required)
+make lint-templates
+
 # Start web API server + React frontend
 make web-dev         # API on :3100
 make web-client      # React on :3101 (proxy -> :3100)

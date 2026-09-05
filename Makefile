@@ -142,6 +142,9 @@ lint: ## Lint C++ code (requires clang-tidy)
 	find quorum-core/src -name '*.h' -o -name '*.cpp' | \
 		xargs clang-tidy -p $(BUILD_DIR)
 
+lint-templates: ## Lint skill/agent templates (no build required)
+	./scripts/lint-templates.sh
+
 loc: ## Count lines of code
 	@echo "=== Lines of Code ==="
 	@echo "C++:"

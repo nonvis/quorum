@@ -7,9 +7,10 @@ description: >
   specialties), refreshes the knower vaults through the daemon's own write (quorum
   knower refresh), checkpoints to .quorum/autopilot/, and stops gracefully for
   operator resume. Never run headless (`claude -p`) — autopilot must be an
-  interactive session.
+  interactive session. No model is pinned: the supervisor follows the session
+  default, and a run can override it with `--model <alias>` (for example
+  `claude --agent supervisor --model opus`).
 tools: Read, Bash, Glob, Grep, Agent, Write
-model: opus
 permissionMode: default
 ---
 
