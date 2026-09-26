@@ -56,7 +56,9 @@ db.execute("CREATE TABLE IF NOT EXISTS metrics (...)");
 
 Project-local `.quorum/` (created by `quorum init`): `config.yaml`, `quorum.db` (schema from `storage/schema.h`), `agents/*.yaml` (auto-discovered), `vaults/<agent>/` (CONTEXT.md + knowledge/). CLI auto-discovers `.quorum/` by walking up from cwd — no `--config` needed except to run the long-lived daemon.
 
-**Paths in tracked `.quorum/` files are portable refs** (`utils/path_ref.h`): `~/…` (under $HOME), `$QUORUM/…` (the Quorum checkout the running binary was built from), or project-relative (`target_dir: .`). Writers never store this machine's absolute path; readers go through `expand_path_ref`. `quorum agent relink` repairs yaml written before this existed.
+**`.quorum/` is never tracked** (Decision #86): `init` writes a `.quorum/.gitignore` of `*`, and the daemon commits nothing in the project. Each machine sets a project up itself (SETUP.md P1–P5); copying `.quorum/` is how state moves between machines.
+
+**Paths in `.quorum/` agent files are portable refs** (`utils/path_ref.h`): `~/…` (under $HOME), `$QUORUM/…` (the Quorum checkout the running binary was built from), or project-relative (`target_dir: .`). Writers never store this machine's absolute path; readers go through `expand_path_ref`. `quorum agent relink` repairs yaml written before this existed.
 
 **Setup has one source of truth: `SETUP.md`**, checked step by step by `scripts/doctor.sh` (`make doctor`). A change to dependencies, the build, `make install`, the installed skills, path conventions, or per-project requirements updates both in the same commit; ctest `test_setup_runbook` fails when their step IDs differ or when README/DEVELOPMENT/OPERATOR grow their own install lines.
 

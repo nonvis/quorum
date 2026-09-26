@@ -164,13 +164,16 @@ if [ -n "$PROJECT" ]; then
     echo "Project $PROJECT"
     Q="$PROJECT/.quorum"
 
-    step P1 # scaffolded
+    step P1 # scaffolded, and untracked
+    tracked="$(git -C "$PROJECT" ls-files .quorum 2>/dev/null | wc -l | tr -d ' ')"
     if [ ! -f "$Q/config.yaml" ]; then
         fail "no .quorum/ — quorum init (from the project root)"
+    elif [ "${tracked:-0}" -gt 0 ]; then
+        fail "git tracks $tracked file(s) under .quorum/ — untrack them (SETUP P1)"
     elif ! git -C "$PROJECT" rev-parse --git-dir >/dev/null 2>&1; then
-        warn ".quorum/ present but the project is not a git repo (the daemon auto-commits .quorum/**)"
+        warn ".quorum/ present but the project is not a git repo (the recap and historian scans read git history)"
     else
-        ok ".quorum/ present, $(ls "$Q/agents"/*.yaml 2>/dev/null | wc -l | tr -d ' ') agents"
+        ok ".quorum/ present and untracked, $(ls "$Q/agents"/*.yaml 2>/dev/null | wc -l | tr -d ' ') agents"
     fi
 
     step P2 # portable paths

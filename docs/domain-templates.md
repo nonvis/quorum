@@ -4,7 +4,7 @@ Concrete agent rosters for different domains. The same core archetypes, differen
 
 There is no team layer — you provision a set of agents and the leader routes each goal to the best-fit agents across the full roster. Each example below is the **roster you'd provision** for that kind of work, plus an example goal you'd hand to `quorum converse`.
 
-Record-keeping is not an agent: the daemon auto-commits + checks off the phase plan on completion, and the four **knowers** (cartographer / architect / historian / recap) are the only accumulators — refresh them with `quorum knower refresh` after a build, or let them self-write on the human-approval gate in a brainstorm.
+Record-keeping is not an agent: the daemon checks off the phase plan on completion (it commits nothing — `.quorum/` is never tracked), and the four **knowers** (cartographer / architect / historian / recap) are the only accumulators — refresh them with `quorum knower refresh` after a build, or let them self-write on the human-approval gate in a brainstorm.
 
 For the "why" (what each archetype does, why specialization works, etc.) — see the project's design vault. This file is **examples only**.
 

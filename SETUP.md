@@ -133,12 +133,13 @@ from the last one that passed.
 
 ## Project (once per project per machine)
 
-Git carries a project's `.quorum/config.yaml`, `agents/`, vault `CONTEXT.md`
-files, and Tier-1 inputs. It does **not** carry `quorum.db` (conversations,
-pending gates), the knowers' knowledge (`vaults/*/knowledge/`), or Claude Code's
-transcripts, which `quorum spend` reads. A new machine starts without them.
-Copy them from the old machine if you need the history; otherwise P5 rebuilds
-the knowledge.
+Nothing under a project's `.quorum/` is in git: config, agents, identity files,
+scan inputs, knowledge, and the database all stay on the machine that made them
+(Decision #86), and the daemon commits nothing. Each machine sets a project up
+itself (P1–P5). To carry a project's Quorum state to another machine — custom
+agents, `CONTEXT.md` edits, knowledge, conversation history — copy the whole
+`.quorum/` directory, then run P2. Claude Code's transcripts, which
+`quorum spend` reads, stay behind either way.
 
 ### P1 — Clone and scaffold
 
@@ -150,12 +151,23 @@ cd ~/work/myproj && quorum init
 ~/nonvis/quorum/scripts/setup-knowers.sh ~/work/myproj
 ```
 
+If git still tracks files under `.quorum/` (projects set up before 2026-09-26),
+untrack them; they stay on disk:
+
+```bash
+printf '*\n' > .quorum/.gitignore
+git rm -r --cached -q .quorum && git commit -m 'Untrack .quorum/'
+```
+
+When another clone pulls that commit, git deletes the tracked `.quorum/` files
+from it — copy them first if that clone still needs them.
+
 ### P2 — Portable paths
 
-Tracked agent files store paths as `~/…`, `$QUORUM/…`, or project-relative.
-Projects set up before that convention carry another machine's absolute paths,
-and their agents run without their skills. Repair them from the project root,
-then commit the yaml change in the project:
+Agent files store paths as `~/…`, `$QUORUM/…`, or project-relative. A
+`.quorum/` copied from another machine, or scaffolded before that convention,
+can carry that machine's absolute paths, and its agents then run without their
+skills. Repair them from the project root:
 
 ```bash
 quorum agent relink --dry-run    # shows each rewrite
@@ -183,11 +195,12 @@ The deterministic scans the knowers read (`layout.json`, `decisions-raw.json`,
 ### P5 — Knower knowledge (spends tokens)
 
 ```bash
-quorum knower refresh --all --parallel --project ~/work/myproj
+quorum knower refresh --all --project ~/work/myproj
 ```
 
-Four Tier-2 passes, 10–25 minutes. When it finishes, the daemon auto-commits
-`.quorum/**` in the project, so have nothing else staged there.
+Four Tier-2 passes, one after another, roughly 10–30 minutes. Leave off
+`--parallel`: a project runs one daemon at a time, so the extra tracks only
+queue behind the first and are reported as failed while they wait.
 
 ### P6 — Register the project
 

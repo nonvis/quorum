@@ -8,7 +8,7 @@
 // completion: it pulls every task prompt for the conversation out of the DB,
 // regex-extracts task numbers, and rewrites the matching plan-file lines
 // in-place via an atomic tmp+rename. (Phase 14: this bookkeeping lives in the
-// daemon, alongside the auto-commit backstop — the scribe role was retired.)
+// daemon — the scribe role was retired. The daemon commits nothing; #86.)
 //
 // Failure mode is silent — any IO/parse/regex error returns 0 and the
 // conversation completion path is unaffected.

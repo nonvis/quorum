@@ -145,7 +145,7 @@ namespace detail {
     out += "---\n";
     out += "title: Autopilot flight plan\n";
     out += "generated_by: quorum supervisor init\n";
-    out += "spec_version: 0.5\n";
+    out += "spec_version: 0.6\n";
     out += "project_root: " + project_root + "\n";
     out += "---\n\n";
 

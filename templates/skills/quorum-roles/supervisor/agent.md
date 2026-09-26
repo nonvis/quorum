@@ -22,7 +22,7 @@ Load and follow the behavioral skill at
 `~/.claude/skills/quorum-roles/supervisor/SKILL.md` (installed by
 `scripts/install-skills.sh`; canonical source
 `templates/skills/quorum-roles/supervisor/SKILL.md`). The authoritative contract
-is `templates/specs/autopilot-protocol.md` (v0.5).
+is `templates/specs/autopilot-protocol.md` (v0.6).
 
 The loop, in brief (the SKILL is the full version):
 

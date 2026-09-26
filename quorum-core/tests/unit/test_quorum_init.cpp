@@ -156,16 +156,21 @@ static void test_init_creates_gitignore() {
     auto tmp = make_temp_dir();
     auto original_cwd = fs::current_path();
     fs::current_path(tmp);
+    std::system("git init -q . 2>/dev/null");
 
     sui::quorum::cli::init_project();
 
     check(fs::exists(".quorum/.gitignore"), "E: .gitignore exists");
 
+    // Decision #86: `.quorum/` is per-machine state, never tracked — one `*`
+    // line ignores the whole directory, the .gitignore itself included.
     auto content = read_file(".quorum/.gitignore");
-    check(content.find("quorum.db") != std::string::npos,
-          "E: .gitignore contains 'quorum.db'");
-    check(content.find("vaults/*/knowledge/") != std::string::npos,
-          "E: .gitignore contains 'vaults/*/knowledge/'");
+    check(content.find("\n*\n") != std::string::npos,
+          "E: .gitignore ignores everything ('*')");
+    auto status = sui::quorum::run_command(
+        "git status --porcelain --untracked-files=all 2>/dev/null");
+    check(status && status->output.find(".quorum") == std::string::npos,
+          "E: git sees nothing under .quorum/ after init");
 
     fs::current_path(original_cwd);
     cleanup_temp(tmp);

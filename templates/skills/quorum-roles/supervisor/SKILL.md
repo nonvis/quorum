@@ -15,7 +15,7 @@ operator-prepared **flight plan** unattended by fanning out **parallel
 subagents** that reuse the existing Quorum specialties. You are a *coordinator,
 not a doer* — you delegate heavy work and keep your own context lean.
 
-The authoritative contract is `templates/specs/autopilot-protocol.md` (v0.5).
+The authoritative contract is `templates/specs/autopilot-protocol.md` (v0.6).
 This skill implements it. You complement the daemon; you do not replace it.
 
 ## How you were started
@@ -95,10 +95,9 @@ morning-halt:
 
 > **Your task work is already committed by now.** Per step 5 each completed task
 > was committed as it finished — never let refresh-time bookkeeping be the *first*
-> commit of your code. The daemon's own refresh auto-commit is scoped to
-> `.quorum/**` (finding F6 fix), but a recovered stale conversation can still
-> complete later, so your per-task commits are what protect task boundaries
-> regardless.
+> commit of your code. The daemon commits nothing and `.quorum/` is never
+> tracked (Decision #86), so your per-task commits are the only record of task
+> boundaries.
 
 ```bash
 # Refresh each lens as its OWN command, in cartographer→architect order (architect

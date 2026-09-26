@@ -459,7 +459,7 @@ export function generateSupervisorMd(projectPath: string, plan: PlanPayload): st
   out += "---\n";
   out += "title: Autopilot flight plan\n";
   out += "generated_by: quorum-web autopilot composer\n";
-  out += "spec_version: 0.5\n";
+  out += "spec_version: 0.6\n";
   out += `project_root: ${projectPath}\n`;
   out += `mode: ${plan.mode}\n`;
   out += `goal: ${oneLineGoal}\n`;

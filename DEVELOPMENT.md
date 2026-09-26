@@ -8,7 +8,7 @@
 Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
     |
     |-- Conversation Engine (conversation mode — HANDOFF ball-passing)
-    |     auto-commit + phase-plan checkoff backstops on completion
+    |     phase-plan checkoff backstop on completion (commits nothing; #86)
     |     brainstorm staging gate (pending_vault_updates)
     |-- Budget Enforcer (window cap, sequential dispatch)
     +-- Scheduler (periodic tasks)
@@ -170,7 +170,7 @@ quorum version                             # build identity: version, git sha (-
 | File | Purpose |
 |------|---------|
 | main.cpp | Entry point, CLI subcommand parse + dispatch, daemon task-dispatch loop |
-| daemon/conversation.h | Conversation engine — HANDOFF ball-passing. Deterministic completion backstops: auto-commit + phase-plan checkoff (absorbed the retired scribe's one real job). Brainstorm staging gate (stage/commit/discard `pending_vault_updates`). |
+| daemon/conversation.h | Conversation engine — HANDOFF ball-passing. Deterministic completion backstop: phase-plan checkoff (absorbed the retired scribe's one real job); the daemon commits nothing (#86). Brainstorm staging gate (stage/commit/discard `pending_vault_updates`). |
 | daemon/phase_plan_checkoff.h | Deterministic phase-plan checkbox flip on completion |
 | daemon/scheduler.h | Periodic task scheduling |
 | agent/invoker.h | claude -p subprocess, session resume, agent-class tool policy. Mode-aware: brainstorm forces analyst tools regardless of role. |

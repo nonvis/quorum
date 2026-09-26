@@ -5,8 +5,8 @@
 > output-parity discipline. Skill authors and the `quorum supervisor init`
 > generator both implement this spec. Read it before changing either.
 
-Spec version: 0.5
-Last updated: 2026-07-21
+Spec version: 0.6
+Last updated: 2026-09-26
 Lineage: Research/04 - Autopilot Engine (Phase 13 design source-of-truth);
 companion to `handoff-protocol.md`. (Phase 14 retired the scribe and librarian;
 the knowers are the sole accumulators — see Decision #46.)
@@ -121,7 +121,7 @@ Canonical structure:
 ---
 title: Autopilot flight plan
 generated_by: quorum supervisor init
-spec_version: 0.5
+spec_version: 0.6
 project_root: <abs path>
 ---
 
@@ -254,7 +254,9 @@ the **knower-refresh path only**.
 
 ## Git discipline
 
-Autopilot commits under three rules and holds the working tree while it runs:
+Autopilot commits under two rules and holds the working tree while it runs.
+The daemon commits nothing, and `.quorum/` — checkpoint, LOCK, vaults,
+config — is never tracked (Decision #86):
 
 1. **Per-task commit (the supervisor).** After each completed major task the
    supervisor commits *that task's* work, staging **only the paths the task
@@ -262,14 +264,7 @@ Autopilot commits under three rules and holds the working tree while it runs:
    `git add .` — a shared working tree may hold another writer's in-flight work,
    and a whole-tree add sweeps it into the wrong commit. Each per-task commit is a
    resumable / rollback-able boundary (finding F1).
-2. **Daemon completion auto-commit — `.quorum/**` only.** The daemon's
-   conversation-completion backstop commits its OWN bookkeeping (vault / config /
-   checkpoint changes under `.quorum/`) via a **pathspec commit**
-   (`git add -- .quorum && git commit -- .quorum`). It never sweeps the project
-   working tree and never swallows a foreign pre-staged index (findings F1/F6,
-   Crucible dogfood 2026-07-21: a whole-tree `git add -A` had swept unrelated
-   in-flight work into one mislabeled "Conv N:" commit).
-3. **The LOCK protocol (repo ownership).** `.quorum/autopilot/LOCK` is written at
+2. **The LOCK protocol (repo ownership).** `.quorum/autopilot/LOCK` is written at
    startup after the gate passes and removed on **every** graceful stop. While it
    exists, **no external git runs in the repo** — operators review + commit only
    after the supervisor stops (finding F4). A LOCK found at startup is stale from a
@@ -316,6 +311,10 @@ and the `quorum supervisor init` generator; add a changelog entry.
 
 ## Changelog
 
+- **0.6** (2026-09-26): The daemon's completion auto-commit is gone and
+  `.quorum/` is never tracked — `quorum init` writes a `.quorum/.gitignore` of
+  `*` (Decision #86, replacing 0.4's `.quorum/**` pathspec commit). Git
+  discipline is now two rules: the supervisor's per-task commits and the LOCK.
 - **0.5** (2026-07-21): Per-run spend readout added. The checkpoint Morning
   review gains a `spend:` field — the `quorum spend` total + window-budget
   comparison, captured at halt BEFORE LOCK removal (spend reads the LOCK's line-1
