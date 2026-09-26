@@ -2,12 +2,11 @@
 //
 // Mirrors the daemon's own contract in quorum-core/src/cli/knower_refresh.h:
 //   :74-77  the four lenses, in order
-//   :258    --all and --knower are mutually exclusive
-//   :265    an unknown lens name is rejected BEFORE any project work
-//   :274    --parallel requires --all  ("parallelism only makes sense across
-//           the multi-lens --all set")
+//   - --all and --knower are mutually exclusive
+//   - an unknown lens name is rejected BEFORE any project work
 // Mirroring it here means the web returns 400 instead of spawning a daemon
-// that will exit 1 into a detached stderr nobody reads.
+// that will exit 1 into a detached stderr nobody reads. There is no parallel
+// option: a project runs one daemon, so lenses refresh in turn (Decision #87).
 //
 // Returns only the argv TAIL — the endpoint prepends
 // ["knower", "refresh", "--project", <root>].
@@ -23,8 +22,6 @@ export function validKnowersList(): string {
 export interface RefreshRequest {
   /** a single lens; empty / undefined / "all" means every lens */
   knower?: string | null;
-  /** --parallel: only legal with the full --all set */
-  parallel?: boolean;
 }
 
 export type RefreshArgsResult =
@@ -34,18 +31,13 @@ export type RefreshArgsResult =
 export function refreshArgs(req: RefreshRequest = {}): RefreshArgsResult {
   const name = (req.knower ?? "").trim();
   const wantsAll = name === "" || name === "all";
-  const parallel = req.parallel === true;
 
   if (!wantsAll && !(KNOWER_NAMES as readonly string[]).includes(name)) {
     return { ok: false, error: `unknown knower: ${name} (valid: ${validKnowersList()} | all)` };
   }
 
-  if (parallel && !wantsAll) {
-    return { ok: false, error: "--parallel requires --all (the daemon rejects it for a single lens)" };
-  }
-
   if (wantsAll) {
-    return { ok: true, args: parallel ? ["--all", "--parallel"] : ["--all"] };
+    return { ok: true, args: ["--all"] };
   }
   return { ok: true, args: ["--knower", name] };
 }

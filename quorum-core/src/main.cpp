@@ -156,10 +156,9 @@ static void print_usage(const char* prog) {
               << "                                          Ask a project's manager (or a specific --agent) a question, read-only\n"
               << "  " << prog << " search \"<query>\" [--project <path|name>] [--agent <name>] [--limit N] [--json]\n"
               << "                                          Deterministic (no-LLM) ranked keyword search over the project's ref-*.md knower notes\n"
-              << "  " << prog << " knower refresh [--all [--parallel] | --knower <name>] [--project <path|name>]\n"
-              << "                                          Re-run the read-only knower scan(s) so the knower vaults re-survey the codebase\n"
-              << "                                          --parallel (with --all): refresh independent lenses concurrently (cartographer->architect stays ordered);\n"
-              << "                                            output is buffered per lens. Opt-in — see docs/proposals/knower-refresh-scaling.md\n"
+              << "  " << prog << " knower refresh [--all | --knower <name>] [--project <path|name>]\n"
+              << "                                          Re-run the read-only knower scan(s) so the knower vaults re-survey the codebase;\n"
+              << "                                            lenses run one after another (a project runs one daemon)\n"
               << "  " << prog << " spend [--project <path|name>] [--since <ISO8601>] [--until <ISO8601>] [--json]\n"
               << "                                          Per-run token/$ spend readout from the Claude Code transcripts (deterministic, $0);\n"
               << "                                            --since defaults to the flight start in .quorum/autopilot/LOCK\n"
@@ -730,7 +729,7 @@ int main(int argc, char* argv[]) {
         }
         if (knower_subcmd_arg.empty()) {
             std::cerr << "ERROR: knower requires a sub-subcommand (refresh)\n";
-            std::cerr << "Usage: quorum knower refresh [--all [--parallel] | --knower <"
+            std::cerr << "Usage: quorum knower refresh [--all | --knower <"
                       << sui::quorum::cli::knower_refresh_detail::valid_knowers_list()
                       << ">] [--project <path|name>]\n";
             return 1;

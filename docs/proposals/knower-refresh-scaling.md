@@ -1,9 +1,18 @@
 # Proposal: parallelize `knower refresh --all`
 
-**Status:** implemented behind `--parallel` — **validation gate PASSED
-2026-07-21** (option 1: WAL sufficient, 5/5 clean live runs; see Validation
-result below). Default stays serial as a UX choice (live streaming), not a
-safety gate. · **Origin:** Crucible autopilot dogfood, 2026-07-21
+**Status: WITHDRAWN 2026-09-26 (Decision #87).** The tracks never ran
+concurrently: a project runs one daemon (the pid lock in `main.cpp`, since
+2026-03-08), so the second and third `converse` seeded their conversation into
+the running daemon's queue and exited, and `run-knower.sh` checked only that an
+artifact *existed* — notes left by earlier runs read as fresh refreshes, which
+is how the gate below passed. The parallel path is removed, `--parallel` is
+accepted and ignored, `run-knower.sh` now requires the artifact to be rewritten
+by its own run, and a refresh refuses to start while another daemon runs in the
+project. The text below is kept as the record of the July reasoning.
+
+**Original status:** implemented behind `--parallel` — validation gate passed
+2026-07-21 (option 1: WAL sufficient, 5/5 clean live runs). · **Origin:**
+Crucible autopilot dogfood, 2026-07-21
 
 ## Problem
 

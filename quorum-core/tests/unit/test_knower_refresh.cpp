@@ -21,15 +21,9 @@
 //   (F) generic_refresh_recommendation (conversation.h, pure string):
 //       contains the conv id, "quorum knower refresh", "--all", the project,
 //       and the named-knower variant
-//   (G) parallel_tracks — the --parallel concurrency grouping:
-//       full --all -> {{cartographer,architect},{historian},{recap}};
-//       lone architect -> own track; {historian,recap} -> two singletons;
-//       {cartographer,architect} -> one track, cartographer first
-//   (H) summarize_results — the parallel per-lens tally:
-//       all-pass -> 0 failed/0 skipped; historian-failed + recap-refreshed
-//       (no cross-track skip); cartographer-failed + architect-skipped -> 1/1
-//   (I) --parallel requires --all: run_knower_refresh({parallel, !all, recap})
-//       returns 1 BEFORE project resolution (needs no fixture project)
+//   (G) running_daemon_pid: a live pid in the project's pid file is found (a
+//       refresh refuses to start then — its converse would only queue); a
+//       missing or stale pid file means no daemon (Decision #87)
 //
 // Run:  cd build && ctest -R test_knower_refresh --output-on-failure
 
@@ -40,6 +34,7 @@
 #include <iostream>
 #include <string>
 
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "cli/knower_refresh.h"
@@ -204,100 +199,28 @@ static void test_F_recommendation() {
           "F: '.' project degrades to <project> placeholder");
 }
 
-// ---- Case G: parallel_tracks ----------------------------------------------
-static void test_G_parallel_tracks() {
-    std::cout << "\n=== Case G: parallel_tracks ===\n\n";
+// ---- Case G: running_daemon_pid -------------------------------------------
+static void test_G_running_daemon(const fs::path& tdir) {
+    std::cout << "\n=== Case G: running_daemon_pid ===\n\n";
+    auto proj = tdir / "daemon-proj";
+    fs::create_directories(proj / ".quorum");
+    std::ofstream(proj / ".quorum" / "config.yaml")
+        << "daemon:\n  data_dir: .quorum\n  pid_file: .quorum/quorum.pid\n";
+    auto pid_file = proj / ".quorum" / "quorum.pid";
 
-    // Full --all list -> {{cartographer, architect}, {historian}, {recap}}.
-    // Three tracks (NOT a 4-way flatten): the carto->arch Tier-2 chain forbids it.
-    {
-        auto tracks = kd::parallel_tracks(kd::ordered_knowers());
-        bool shape =
-            tracks.size() == 3 &&
-            tracks[0].size() == 2 && tracks[0][0] == "cartographer" &&
-                tracks[0][1] == "architect" &&
-            tracks[1].size() == 1 && tracks[1][0] == "historian" &&
-            tracks[2].size() == 1 && tracks[2][0] == "recap";
-        check(shape,
-              "G: --all -> {{cartographer,architect},{historian},{recap}}");
-    }
+    check(!kd::running_daemon_pid(proj.string()).has_value(),
+          "G: no pid file -> no daemon");
 
-    // Lone architect (cartographer NOT in targets) -> its own single-lens track.
-    {
-        auto tracks = kd::parallel_tracks({"architect"});
-        check(tracks.size() == 1 && tracks[0].size() == 1 &&
-                  tracks[0][0] == "architect",
-              "G: {architect} alone -> {{architect}} (own track)");
-    }
+    std::ofstream(pid_file) << ::getpid();
+    auto live = kd::running_daemon_pid(proj.string());
+    check(live && *live == ::getpid(), "G: a live pid is found");
 
-    // Two independent lenses -> two singleton tracks (canonical order preserved).
-    {
-        auto tracks = kd::parallel_tracks({"historian", "recap"});
-        check(tracks.size() == 2 &&
-                  tracks[0].size() == 1 && tracks[0][0] == "historian" &&
-                  tracks[1].size() == 1 && tracks[1][0] == "recap",
-              "G: {historian,recap} -> two singleton tracks");
-    }
-
-    // cartographer + architect -> one track, cartographer first.
-    {
-        auto tracks = kd::parallel_tracks({"cartographer", "architect"});
-        check(tracks.size() == 1 && tracks[0].size() == 2 &&
-                  tracks[0][0] == "cartographer" && tracks[0][1] == "architect",
-              "G: {cartographer,architect} -> one track, cartographer first");
-    }
-}
-
-// ---- Case H: summarize_results --------------------------------------------
-static void test_H_summarize_results() {
-    std::cout << "\n=== Case H: summarize_results ===\n\n";
-
-    // All pass -> 0 failed, 0 skipped, all refreshed.
-    {
-        std::vector<kd::LensResult> r = {
-            {"cartographer", 0, false}, {"architect", 0, false},
-            {"historian", 0, false},    {"recap", 0, false}};
-        auto t = kd::summarize_results(r);
-        check(t.failed_count == 0 && t.skipped_count == 0 &&
-                  t.refreshed_count == 4,
-              "H: all-pass -> 0 failed / 0 skipped / 4 refreshed");
-    }
-
-    // historian FAILED but recap refreshed -> the no-cross-track-skip contract is
-    // representable: a failure in one track leaves the other track's lens intact.
-    {
-        std::vector<kd::LensResult> r = {
-            {"historian", 1, false}, {"recap", 0, false}};
-        auto t = kd::summarize_results(r);
-        check(t.failed_count == 1 && t.skipped_count == 0 &&
-                  t.refreshed_count == 1,
-              "H: historian FAILED + recap refreshed (no cross-track skip)");
-    }
-
-    // cartographer FAILED -> architect skipped (same track): 1 failed, 1 skipped.
-    {
-        std::vector<kd::LensResult> r = {
-            {"cartographer", 1, false}, {"architect", 0, true}};
-        auto t = kd::summarize_results(r);
-        check(t.failed_count == 1 && t.skipped_count == 1 &&
-                  t.refreshed_count == 0,
-              "H: cartographer FAILED -> architect skipped (1 failed/1 skipped)");
-    }
-}
-
-// ---- Case I: --parallel requires --all (early exit, no fixture) -----------
-static void test_I_flag_validation() {
-    std::cout << "\n=== Case I: --parallel flag validation ===\n\n";
-
-    // parallel=true, all=false, knower="recap": must return 1 BEFORE any project
-    // resolution (so no fixture project is needed). Verifies the step-1b guard
-    // fires ahead of resolve_project_path. Does NOT execute run-knower.sh.
-    sui::quorum::cli::KnowerRefreshOptions opts;
-    opts.parallel = true;
-    opts.all = false;
-    opts.knower = "recap";
-    int rc = sui::quorum::cli::run_knower_refresh(opts);
-    check(rc == 1, "I: --parallel without --all returns 1 (pre-resolution)");
+    pid_t child = ::fork();
+    if (child == 0) ::_exit(0);
+    ::waitpid(child, nullptr, 0);
+    std::ofstream(pid_file, std::ios::trunc) << child;
+    check(!kd::running_daemon_pid(proj.string()).has_value(),
+          "G: a stale pid (process gone) -> no daemon");
 }
 
 // ---- main ------------------------------------------------------------------
@@ -312,9 +235,7 @@ int main() {
     test_D_project_resolution(tdir);
     test_E_script_path();
     test_F_recommendation();
-    test_G_parallel_tracks();
-    test_H_summarize_results();
-    test_I_flag_validation();
+    test_G_running_daemon(tdir);
 
     std::error_code ec;
     fs::remove_all(tdir, ec);

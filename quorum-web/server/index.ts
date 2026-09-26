@@ -829,10 +829,10 @@ app.post("/api/knower/refresh", async (c) => {
     );
   }
   const body = await c.req
-    .json<{ knower?: string; parallel?: boolean }>()
-    .catch(() => ({}) as { knower?: string; parallel?: boolean });
-  // Validate BEFORE spawning — the daemon's own refusals (unknown lens,
-  // --parallel without --all) would otherwise exit 1 into a detached stderr.
+    .json<{ knower?: string }>()
+    .catch(() => ({}) as { knower?: string });
+  // Validate BEFORE spawning — the daemon's own refusal (unknown lens) would
+  // otherwise exit 1 into a detached stderr.
   const tail = refreshArgs(body);
   if (!tail.ok) return c.json({ error: tail.error }, 400);
   const args = ["knower", "refresh", "--project", projectPath, ...tail.args];

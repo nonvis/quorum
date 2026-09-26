@@ -113,13 +113,9 @@ quorum knower refresh --project <root> --knower recap
   consume the run's time budget, a wrapping timeout kills the command mid-`recap`
   and that lens is left stale (observed 2026-07-21, Crucible dogfood). Per-lens
   commands give each lens its own budget, so one slow lens can't starve the rest,
-  and a lens that fails can be retried in isolation on resume. (Alternatively:
-  `--all --parallel` runs the three independent tracks concurrently —
-  {cartographer→architect} ∥ {historian} ∥ {recap} — cutting wall time to
-  roughly the slowest track, with per-lens buffered output and per-track failure
-  isolation. **WAL-validated 2026-07-21**: 5/5 clean live runs, zero SQLite lock
-  errors — see `docs/proposals/knower-refresh-scaling.md`. Either form is fine
-  at end-of-flight; the CLI default stays serial for live streaming.) If the
+  and a lens that fails can be retried in isolation on resume. (There is no
+  concurrent form: a project runs one daemon, so `--parallel` is ignored and
+  lenses always run in turn — Decision #87.) If the
   flight touched only one lens, refresh just
   the **affected** knower(s):
   - layout / new-files / moved-modules change → `--knower cartographer`

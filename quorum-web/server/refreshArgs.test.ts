@@ -14,18 +14,8 @@ test("one lens → --knower <name>, for each of the four", () => {
   }
 });
 
-test("parallel with --all → --all --parallel", () => {
-  expect(refreshArgs({ parallel: true })).toEqual({ ok: true, args: ["--all", "--parallel"] });
-  expect(refreshArgs({ knower: "all", parallel: true })).toEqual({
-    ok: true,
-    args: ["--all", "--parallel"],
-  });
-});
-
-test("parallel with a single lens → rejected (the daemon rejects it too)", () => {
-  const r = refreshArgs({ knower: "historian", parallel: true });
-  expect(r.ok).toBe(false);
-  expect(r.ok === false && r.error).toContain("--parallel requires --all");
+test("a stray parallel flag is ignored — lenses always run in turn", () => {
+  expect(refreshArgs({ parallel: true } as never)).toEqual({ ok: true, args: ["--all"] });
 });
 
 test("unknown lens name → rejected, and the error lists the valid ones", () => {
@@ -35,21 +25,20 @@ test("unknown lens name → rejected, and the error lists the valid ones", () =>
   expect(r.ok === false && r.error).toContain("cartographer | architect | historian | recap");
 });
 
-// Liveness for the two refusals: one step the other side of each must PASS.
+// Liveness for the refusal: one step the other side of it must PASS.
 test("the refusals do not overfire", () => {
-  // parallel:false with a lens is fine …
-  expect(refreshArgs({ knower: "historian", parallel: false })).toEqual({
+  // a real lens passes …
+  expect(refreshArgs({ knower: "historian" })).toEqual({
     ok: true,
     args: ["--knower", "historian"],
   });
-  // … and a bad name with parallel is still rejected for the NAME first,
-  // the daemon's own order (knower_refresh.h :265 before :274).
-  const r = refreshArgs({ knower: "nope", parallel: true });
+  // … and only a bad name is rejected.
+  const r = refreshArgs({ knower: "nope" });
   expect(r.ok === false && r.error).toContain("unknown knower");
 });
 
 test("--all and --knower are never both emitted", () => {
-  for (const req of [{}, { parallel: true }, { knower: "recap" }, { knower: "all" }]) {
+  for (const req of [{}, { knower: "recap" }, { knower: "all" }]) {
     const r = refreshArgs(req);
     if (!r.ok) continue;
     expect(r.args.includes("--all") && r.args.includes("--knower")).toBe(false);

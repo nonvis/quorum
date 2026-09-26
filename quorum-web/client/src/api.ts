@@ -319,16 +319,14 @@ export async function setFlightsReviewed(ids: string[], reviewed: boolean) {
 
 // Web-first: `quorum knower refresh` as a button. Spawns detached on the
 // server; the passes appear in the conversations list as they run.
-// `knower` omitted (or "all") refreshes every lens; `parallel` is legal only
-// with the full set — the server mirrors the daemon's refusal with a 400.
+// `knower` omitted (or "all") refreshes every lens, one after another.
 export async function refreshKnowers(
   knower?: string,
-  parallel?: boolean,
 ): Promise<{ started?: boolean; note?: string; error?: string }> {
   const res = await fetch(`${BASE}/knower/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ knower, parallel }),
+    body: JSON.stringify({ knower }),
   });
   return res.json();
 }

@@ -198,9 +198,9 @@ The deterministic scans the knowers read (`layout.json`, `decisions-raw.json`,
 quorum knower refresh --all --project ~/work/myproj
 ```
 
-Four Tier-2 passes, one after another, roughly 10–30 minutes. Leave off
-`--parallel`: a project runs one daemon at a time, so the extra tracks only
-queue behind the first and are reported as failed while they wait.
+Four Tier-2 passes, one after another, roughly 10–30 minutes (a project runs one
+daemon, so lenses cannot run concurrently; `--parallel` is ignored). The refresh
+refuses to start while another daemon is running in the project.
 
 ### P6 — Register the project
 

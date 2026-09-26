@@ -15,16 +15,12 @@ function KnowerRefresh() {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
   const [lens, setLens] = useState<string>("all");
-  const [parallel, setParallel] = useState(false);
-
-  // --parallel is --all-only; the daemon rejects it for a single lens, so the
-  // checkbox only exists for "All".
   const isAll = lens === "all";
 
   const go = async () => {
     setBusy(true);
     try {
-      const res = await refreshKnowers(lens, isAll && parallel);
+      const res = await refreshKnowers(lens);
       if (res.started) {
         setNote({ text: res.note ?? "refresh started", error: false });
       } else {
@@ -72,20 +68,6 @@ function KnowerRefresh() {
               ))}
             </select>
           </label>
-          {isAll && (
-            <label
-              className="mb-1.5 flex items-center gap-1.5 text-[11px] text-muted"
-              title="run the independent lenses concurrently (cartographer→architect stays ordered)"
-            >
-              <input
-                type="checkbox"
-                checked={parallel}
-                onChange={(e) => setParallel(e.target.checked)}
-                disabled={busy}
-              />
-              parallel
-            </label>
-          )}
           <div className="flex gap-1.5">
             <button
               onClick={go}

@@ -83,6 +83,11 @@ echo ""
 #    subshell is replaced in place). That lets cleanup target ONLY the daemon we
 #    started — never other projects' quorum daemons running concurrently on the
 #    same machine (a blanket `pkill -f quorum_daemon` would kill those too).
+# The artifact must be REWRITTEN by this run: a note left by an earlier run is
+# not a success (an existence check once reported queued or failed lenses as
+# refreshed — Decision #87). Compare against a marker made just before launch.
+START_MARK="$(mktemp "${TMPDIR:-/tmp}/quorum-refresh-start.XXXXXX")"
+
 (
     cd "$PROJECT_DIR" && exec "$DAEMON" converse \
         --mode brainstorm \
@@ -100,6 +105,7 @@ cleanup() {
     # concurrent knower runs (and any other live quorum conversation).
     pkill -P "$CONVERSE_PID" >/dev/null 2>&1 || true
     kill "$CONVERSE_PID" >/dev/null 2>&1 || true
+    rm -f "$START_MARK"
 }
 trap cleanup EXIT
 
@@ -128,10 +134,17 @@ trap - EXIT
 
 # ── Report ──────────────────────────────────────────────────────────────────
 echo ""
-if [ -f "$ARTIFACT" ]; then
+if [ -f "$ARTIFACT" ] && [ "$ARTIFACT" -nt "$START_MARK" ]; then
+    rm -f "$START_MARK"
     echo "RESULT: PRESENT — $ARTIFACT"
     exit 0
+elif [ -f "$ARTIFACT" ]; then
+    rm -f "$START_MARK"
+    echo "RESULT: STALE — this run did not rewrite $ARTIFACT (the note is from an earlier run)" >&2
+    echo "        (budget exhausted, agent error, or timeout — inspect manually)" >&2
+    exit 1
 else
+    rm -f "$START_MARK"
     echo "RESULT: MISSING — artifact not produced: $ARTIFACT" >&2
     echo "        (budget exhausted, agent error, or timeout — inspect manually)" >&2
     exit 1
