@@ -112,14 +112,16 @@ public:
     // class AND the conversation mode.
     //
     // Mode override semantics (Phase 6 Track 2):
-    //   - mode == "brainstorm" forces a read-only tool surface
-    //     (--allowedTools "Read,Grep,Glob" + --disallowedTools "Edit,Write,Bash,NotebookEdit")
-    //     for EVERY agent in the conversation, regardless of agent_class.
-    //     This is intentional: a doer with agent_class: executor should NOT be
-    //     able to mutate the project while the conversation is in brainstorm.
-    //   - mode == "generic" (or anything unrecognized) preserves the original
-    //     behavior: executor agents get full tools, all other classes get
-    //     --disallowedTools "Write,Edit,NotebookEdit".
+    //   - mode == "brainstorm" forces a read-only tool surface for EVERY agent,
+    //     regardless of agent_class: an ALLOWLIST (`--tools "Read,Grep,Glob"`,
+    //     no MCP servers via --strict-mcp-config), with the old deny list kept
+    //     as a second guard. A deny list alone leaked (2026-09-26, live probe):
+    //     the agent spawned a general-purpose subagent (Agent tool) that wrote
+    //     a file through the Monitor tool. Knower refresh runs here too.
+    //   - mode == "generic" (or anything unrecognized): executor agents get full
+    //     tools; every other class gets --disallowedTools "Write,Edit,NotebookEdit".
+    //     That clamp is SOFT by design — generic analysts keep Bash for the
+    //     read-only queries their Output Rules allow (sqlite3, cat, ls, grep).
     //
     // Returns the leading-space-prefixed flag segment that gets concatenated
     // into the shell command. Extracted as a static pure function so it can
@@ -128,7 +130,7 @@ public:
         const std::string& agent_class, const std::string& mode) {
         if (mode == "brainstorm") {
             // Hard read-only surface; overrides agent_class.
-            return std::string(" --allowedTools \"Read,Grep,Glob\"")
+            return std::string(" --tools \"Read,Grep,Glob\" --strict-mcp-config")
                 + " --disallowedTools \"Edit,Write,Bash,NotebookEdit\"";
         }
         // Generic / unrecognized mode → original behavior.

@@ -178,7 +178,7 @@ inline std::string generate_context_md(
     std::cout << "  Generating CONTEXT.md via claude -p...\n";
     auto cmd = "env -u CLAUDECODE cat " + prompt_file.path()
         + " | claude -p --dangerously-skip-permissions"
-        + " --disallowedTools \"Write,Edit,NotebookEdit\""
+        + " --tools \"\" --strict-mcp-config"  // a pure text pass: no tools at all
         + " --output-format json 2>&1";
 
     auto result = prompt_file.path().empty() ? std::nullopt : sui::quorum::run_command(cmd);

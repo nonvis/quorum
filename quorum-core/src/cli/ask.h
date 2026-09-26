@@ -565,6 +565,7 @@ namespace detail {
     auto cmd = "cd \"" + project_root + "\" && env -u CLAUDECODE cat " +
                temp_path +
                " | claude -p --dangerously-skip-permissions"
+               " --tools \"Read,Grep,Glob\" --strict-mcp-config"
                " --disallowedTools \"Write,Edit,NotebookEdit\""
                " --output-format json 2>&1";
     auto result = sui::quorum::run_command(cmd);

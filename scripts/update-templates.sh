@@ -41,7 +41,7 @@ review_template() {
     echo "Reviewing $role skill..."
     echo "$STYLE_GUIDE" | cat - "$skill_path" | \
         claude -p --dangerously-skip-permissions \
-        --disallowedTools "Write,Edit,NotebookEdit" \
+        --tools "" --strict-mcp-config \
         --output-format text 2>/dev/null
     echo ""
     echo "---"

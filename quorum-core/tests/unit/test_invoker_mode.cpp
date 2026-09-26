@@ -57,8 +57,12 @@ static void test_executor_generic_unchanged() {
 // brainstorm. The flag set must clamp to (Read, Grep, Glob).
 static void test_executor_brainstorm_sandboxed() {
     auto flags = Invoker::build_tool_flags("executor", "brainstorm");
-    check(contains(flags, "--allowedTools"),
-          "[B] executor+brainstorm: contains --allowedTools");
+    // An ALLOWLIST, not a deny list: `--tools` leaves no Agent tool (a
+    // subagent could write) and --strict-mcp-config loads no MCP servers.
+    check(contains(flags, "--tools \"Read,Grep,Glob\""),
+          "[B] executor+brainstorm: --tools allowlist is exactly Read,Grep,Glob");
+    check(contains(flags, "--strict-mcp-config"),
+          "[B] executor+brainstorm: no MCP servers");
     check(contains(flags, "Read") && contains(flags, "Grep") && contains(flags, "Glob"),
           "[B] executor+brainstorm: allowed = Read,Grep,Glob");
     check(contains(flags, "--disallowedTools"),
@@ -91,8 +95,9 @@ static void test_analyst_generic_unchanged() {
 // path observable from logs.
 static void test_analyst_brainstorm_sandboxed() {
     auto flags = Invoker::build_tool_flags("analyst", "brainstorm");
-    check(contains(flags, "--allowedTools"),
-          "[D] analyst+brainstorm: contains --allowedTools (allow-list form)");
+    check(contains(flags, "--tools \"Read,Grep,Glob\"") &&
+              contains(flags, "--strict-mcp-config"),
+          "[D] analyst+brainstorm: --tools allowlist + no MCP servers");
     check(contains(flags, "Read") && contains(flags, "Grep") && contains(flags, "Glob"),
           "[D] analyst+brainstorm: allowed = Read,Grep,Glob");
     check(contains(flags, "--disallowedTools"),

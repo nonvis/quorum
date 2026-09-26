@@ -231,11 +231,11 @@ PROMPT_FILE="$(mktemp)"
 echo ""
 echo "==> [llm] running ONE token-spending scoping pass (this is the ONLY token cost)"
 echo "    invoking: env -u CLAUDECODE cat <prompt> | claude -p --dangerously-skip-permissions \\"
-echo "                --disallowedTools \"Write,Edit,NotebookEdit\" --output-format json"
+echo "                --tools \"\" --strict-mcp-config --output-format json"
 echo ""
 
 RAW="$(env -u CLAUDECODE cat "$PROMPT_FILE" | claude -p --dangerously-skip-permissions \
-    --disallowedTools "Write,Edit,NotebookEdit" --output-format json 2>&1)" || {
+    --tools "" --strict-mcp-config --output-format json 2>&1)" || {
         echo "ERROR: claude -p scoping pass failed:" >&2
         echo "$RAW" >&2
         rm -f "$DIGEST_FILE" "$PROMPT_FILE"
