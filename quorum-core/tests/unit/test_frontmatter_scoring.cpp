@@ -157,6 +157,41 @@ static void test_t6_tag_outranks_filename() {
 }
 
 // ---------------------------------------------------------------------------
+// T14: a compound tag matches when every one of its words is in the query
+// ---------------------------------------------------------------------------
+// Query tokens are alphanumeric runs, so `shared-object` could never equal one
+// and compound tags never scored (2026-09-26). It now counts once (×5) when
+// all its words appear, and not at all on a partial match.
+
+static void test_t14_compound_tag() {
+    std::cout << "\n=== T14. compound tag: all words → match, some words → none ===\n\n";
+
+    auto vault = make_temp_vault();
+    write_knowledge(vault, "ref-compound.md",
+        "---\ntags: [shared-object]\n---\n# Note\n\nirrelevant body content here.\n");
+
+    sui::quorum::ContextAssembler assembler;
+    // The Vault Inventory lists every file, so look only at the search hits.
+    auto searched = [](const std::string& msg) {
+        auto b = msg.find("## Searched References");
+        return b == std::string::npos ? std::string{} : msg.substr(b);
+    };
+    auto full = searched(assembler.assemble_split(
+        "agent-t14", vault, "turn", "shared object ownership").user_message);
+    auto pos = full.find("ref-compound.md");
+    check(pos != std::string::npos, "T14: every word of the tag in the query → surfaced");
+    check(full.find("score: 5", pos) != std::string::npos,
+          "T14: the compound tag counts once (×5)");
+
+    auto partial = searched(assembler.assemble_split(
+        "agent-t14", vault, "turn", "shared ownership").user_message);
+    check(partial.find("ref-compound.md") == std::string::npos,
+          "T14: only some of its words → no tag match, not surfaced");
+
+    cleanup(vault);
+}
+
+// ---------------------------------------------------------------------------
 // T8: #27d regression — frontmatter words don't double-count in content score
 // ---------------------------------------------------------------------------
 
@@ -531,6 +566,7 @@ int main() {
     test_t11_malformed_summary_fail_closed();
     test_t12_block_scalars();
     test_t13_strip_frontmatter_with_block();
+    test_t14_compound_tag();
 
     std::cout << "\n---------------------------------------------------\n";
     std::cout << "  passed: " << g_passed << "  failed: " << g_failed << "\n";

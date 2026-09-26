@@ -59,8 +59,8 @@ enum class KnowledgeKind {
 // matches in a "## Searched References" section of the assembled prompt.
 //
 // Scoring is deliberately simple: tokenize the query, count matches in the
-// filename and content, weight filename matches 3x higher (filenames are
-// deliberate signal). No embeddings, no cosine, no MCP server. Agents can
+// filename, frontmatter tags and content, weighted filename×3 + tag×5 +
+// content×1 (filenames and tags are deliberate signal). No embeddings, no cosine, no MCP server. Agents can
 // read full content via the existing Read tool if an excerpt looks relevant.
 // If real usage ever demands explicit invocation, Phase 8 can add MCP.
 
@@ -265,11 +265,21 @@ namespace detail {
         // Phase 9 Track 2 — exact (case-insensitive) whole-tag matches
         // between query tokens and the ref's cached frontmatter tags.
         // Each (query_token, tag) equality contributes 1; weight ×5.
-        // Tags were already lowercased at parse time.
+        // Tags were already lowercased at parse time. A compound tag
+        // (`shared-object`) can never equal a query token — tokens are
+        // alphanumeric runs — so it counts once when EVERY one of its words
+        // is in the query (2026-09-26; before, compound tags never matched).
         int tag_hits = 0;
-        for (const auto& tok : tokens) {
-            for (const auto& tag : r.tags) {
-                if (tok == tag) ++tag_hits;
+        for (const auto& tag : r.tags) {
+            auto parts = detail::tokenize_lower(tag);
+            if (parts.size() <= 1) {
+                for (const auto& tok : tokens) {
+                    if (tok == tag) ++tag_hits;
+                }
+            } else if (std::all_of(parts.begin(), parts.end(), [&](const std::string& p) {
+                           return std::find(tokens.begin(), tokens.end(), p) != tokens.end();
+                       })) {
+                ++tag_hits;
             }
         }
 
