@@ -262,6 +262,18 @@ public:
         std::string prompt = "# Goal\n\n" + goal + "\n\n"
             "You are the first agent in this conversation. "
             "Analyze the goal and decide the next steps.\n";
+        // An ungated brainstorm is an unattended knower scan (run-knower.sh,
+        // `knower refresh`): nobody is waiting to answer a gate. The leader's
+        // role SKILL mandates the gate for gated brainstorms; without this note
+        // it handed off to a human and the refresh sat in waiting_for_human
+        // until run-knower.sh's 15-minute safety kill (2026-09-26 smoke).
+        if (resolved_mode == "brainstorm" && !resolved_gated) {
+            prompt += "\nThis brainstorm is UNGATED (an unattended knower scan): knower "
+                      "writes land in their vaults directly and no human is waiting. "
+                      "There is no approval gate — do NOT `HANDOFF to: human`. Route "
+                      "the knower the goal names; when it returns, close with "
+                      "`HANDOFF to: done`.\n";
+        }
 
         create_task(conv_id, first_agent, "turn", prompt, session_id);
         update_current_agent(conv_id, first_agent);
@@ -451,16 +463,18 @@ public:
         // leader's own HANDOFF prompt (captured below even on the to:"done"
         // branch) becomes the gate text; a clear default is used if it's empty.
         //
-        // No infinite loop: respond() sets gate_cleared = 1, so a SUBSEQUENT
-        // is_done completes normally (the guard's `!conv->gate_cleared` is then
-        // false). At most ONE forced gate per conversation.
+        // No infinite loop: once a human has answered (approved, or rejected →
+        // re-armed), a later is_done forces the gate again ONLY if new notes
+        // are staged — i.e. only when there is something new to approve.
         //
         // Untouched: generic mode, ungated brainstorms (single-knower scans,
         // gated == 0), and an explicit `HANDOFF to: human` (which sets is_human,
         // not is_done). Only a would-be COMPLETION of a gated-and-uncleared
         // brainstorm is intercepted here.
         if (is_done && conv->mode == "brainstorm" && conv->gated
-                && !conv->gate_cleared) {
+                && !conv->gate_cleared
+                && (!conv->gate_answered ||
+                    db_.count_pending_vault_updates(conv_id) > 0)) {
             // Source the gate text from the leader's own synthesis: capture the
             // HANDOFF prompt even though it targeted `to: done` (the normal gate
             // path only captures it on the to:"human" branch).
@@ -612,10 +626,15 @@ public:
         }
         if (leader.empty()) return false;
 
-        // Phase 14.1 — a human responded to the waiting_for_human gate. Clear
-        // the gate so the daemon stops suppressing knower VAULT_UPDATE writes
-        // for this (gated brainstorm) conversation. No-op for ungated/generic.
-        db_.set_gate_cleared(conversation_id, true);
+        // Phase 14.1 — a human responded to the waiting_for_human gate. In a
+        // gated brainstorm an explicit no RE-ARMS the gate instead of clearing
+        // it: anything the knowers capture next stages again and comes back
+        // for approval (2026-09-26 — a rejection used to leave the gate open
+        // for good). Any other reply approves: the daemon stops suppressing
+        // knower writes and flushes the staged ones. No-op for ungated/generic.
+        const bool rejected = conv->mode == "brainstorm" && conv->gated &&
+                              brainstorm_response_rejects(text);
+        db_.set_gate_state(conversation_id, rejected ? kGateRearmed : kGateApproved);
 
         std::string prompt = "# Human Response\n\n" + text + "\n";
 
@@ -631,7 +650,7 @@ public:
         if (conv->mode == "brainstorm" && conv->gated) {
             int staged = db_.count_pending_vault_updates(conversation_id);
             if (staged > 0) {
-                if (brainstorm_response_rejects(text)) {
+                if (rejected) {
                     db_.clear_pending_vault_updates(conversation_id);  // nothing lands
                     prompt +=
                         "\n---\nGate result: REJECTED. The " +
@@ -640,7 +659,9 @@ public:
                         "written to the vaults. Do NOT re-dispatch the knowers to "
                         "rewrite the same notes. Briefly acknowledge and close with "
                         "`HANDOFF to: done`, unless the human's message above asks "
-                        "for a different action.\n";
+                        "for a different action. The gate is still armed: any note "
+                        "the knowers capture now is held for the human's approval "
+                        "again.\n";
                 } else {
                     prompt +=
                         "\n---\nGate result: APPROVED. The " +

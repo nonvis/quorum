@@ -38,8 +38,8 @@ inline void create_schema(Database& db) {
         "  no_vault_write INTEGER NOT NULL DEFAULT 0,"
         // Phase 14.1 — daemon-enforced brainstorm gate. `gated` marks a
         // brainstorm whose knower VAULT_UPDATE writes are suppressed until a
-        // human approves; `gate_cleared` flips to 1 once a human responds to
-        // the waiting_for_human gate (see respond()).
+        // human approves. `gate_cleared` is the gate's state: 0 armed, 1
+        // approved, 2 re-armed after a human answered (kGate* in database.h).
         "  gated INTEGER NOT NULL DEFAULT 0,"
         "  gate_cleared INTEGER NOT NULL DEFAULT 0"
         ")"

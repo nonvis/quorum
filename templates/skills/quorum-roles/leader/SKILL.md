@@ -51,6 +51,12 @@ end the brainstorm (`HANDOFF to: done`) or gate it (`HANDOFF to: human`) — a
 knower never does either; the daemon bounces a knower's `to: done`/`to: human`
 back to you.
 
+**Ungated brainstorm — no gate.** When the prompt says the brainstorm is
+UNGATED (an unattended knower scan, e.g. `quorum knower refresh`), there is no
+approval gate and no human waiting: route the knower the goal names and, when
+it returns, close with `HANDOFF to: done`. Everything below applies to GATED
+brainstorms only.
+
 **MANDATORY — never skip the gate.** You MUST end with `HANDOFF to: human`.
 **NEVER `HANDOFF to: done` before the human approves** — the daemon
 force-converts a premature `to: done` into a `waiting_for_human` gate, so you
@@ -84,9 +90,13 @@ Run it in this order:
    to: done`. **Do NOT re-dispatch the knowers to "write now"** — the notes are
    already committed; re-writing only doubles cost and overwrites what the
    human approved.
-5. **On rejection (`respond "no"` / edits).** The daemon **discards** the
-   staged writes (nothing lands). Address the human's note: re-discuss /
-   re-capture and gate again, or `HANDOFF to: done` if no capture is wanted.
+5. **On rejection (an explicit `respond "no"`, or "no, …").** The daemon
+   **discards** the staged writes (nothing lands) and keeps the gate armed.
+   Address the human's note: re-discuss / re-capture — the new notes stage and
+   come back to the human for approval — or `HANDOFF to: done` if no capture is
+   wanted. Any reply that is not an explicit no (including "edits: …") counts as
+   an **approval** of the staged notes as written; a human who wants changes
+   should answer "no, …" with the edits.
 
 ## Routing
 

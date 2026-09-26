@@ -719,6 +719,148 @@ static void test_respond_reject_discards() {
           "I3: leader prompt says DISCARDED");
 }
 
+// ─── J. the gate re-arms after an answer (2026-09-26) ────────────────────────
+//
+// respond() used to clear the gate on ANY reply, rejections included, and
+// nothing set it back: after "no, rewrite X" a leader that re-dispatched the
+// knowers got their new notes written straight to the vaults with no second
+// approval. Now a rejection re-arms the gate, the daemon re-arms it after
+// flushing approved notes, and the forced gate fires again only when new notes
+// are staged (so a close with nothing to approve still completes — no loop).
+
+// Park a fresh gated brainstorm at the human gate with one staged note.
+static int64_t park_at_gate_with_note(TestHarness& h,
+                                      sui::quorum::ConversationEngine& engine) {
+    auto conv_id = engine.start("Capture", 20, "brainstorm");
+    h.db.stage_vault_update(conv_id, "architect", "thinker", "brainstorm",
+                            "knowledge/ref-z.md", "z content");
+    auto t1 = h.latest_pending_task(conv_id);
+    h.complete_task(t1);
+    sui::quorum::ParsedOutput gate;
+    gate.handoff = sui::quorum::HandoffBlock{.to = "human", .prompt = "approve?"};
+    engine.on_task_complete(t1, gate, 0.05);
+    return conv_id;
+}
+
+// The leader closes with HANDOFF to: done; returns the conversation state.
+static std::string leader_closes(TestHarness& h,
+                                 sui::quorum::ConversationEngine& engine,
+                                 int64_t conv_id) {
+    auto t = h.latest_pending_task(conv_id);
+    h.complete_task(t);
+    sui::quorum::ParsedOutput done;
+    done.handoff = sui::quorum::HandoffBlock{.to = "done", .prompt = "closing"};
+    engine.on_task_complete(t, done, 0.05);
+    auto c = h.db.get_conversation(conv_id);
+    return c ? c->state : "";
+}
+
+static void test_reject_rearms_gate() {
+    std::cout << "\n=== J1. respond reject: gate re-armed, later writes stage ===\n\n";
+    using sui::quorum::brainstorm_gate_suppresses_write;
+    TestHarness h;
+    auto engine = h.make_engine();
+    auto conv_id = park_at_gate_with_note(h, engine);
+
+    check(engine.respond(conv_id, "no, rewrite the coupling note"), "J1: respond accepted");
+    auto c = h.db.get_conversation(conv_id);
+    check(c && !c->gate_cleared, "J1: rejection does NOT clear the gate");
+    check(c && c->gate_answered, "J1: the gate records that a human answered");
+    check(c && brainstorm_gate_suppresses_write(c->mode, c->gated, c->gate_cleared),
+          "J1: a knower write after the rejection is suppressed (staged), not applied");
+    auto prompt = h.latest_task_prompt(conv_id);
+    check(prompt.find("still armed") != std::string::npos,
+          "J1: leader told the gate is still armed");
+}
+
+static void test_reject_then_close_completes() {
+    std::cout << "\n=== J2. after a rejection, a close with nothing staged completes ===\n\n";
+    TestHarness h;
+    auto engine = h.make_engine();
+    auto conv_id = park_at_gate_with_note(h, engine);
+    engine.respond(conv_id, "no");
+    check(h.db.count_pending_vault_updates(conv_id) == 0, "J2: nothing staged after rejection");
+    check(leader_closes(h, engine, conv_id) == "done",
+          "J2: leader to:done completes — no second forced gate, no loop");
+}
+
+static void test_reject_then_recapture_gates_again() {
+    std::cout << "\n=== J3. after a rejection, re-captured notes come back for approval ===\n\n";
+    TestHarness h;
+    auto engine = h.make_engine();
+    auto conv_id = park_at_gate_with_note(h, engine);
+    engine.respond(conv_id, "no, rewrite it");
+    // The leader re-dispatched a knower, whose new note was staged (J1).
+    h.db.stage_vault_update(conv_id, "architect", "thinker", "brainstorm",
+                            "knowledge/ref-z.md", "rewritten content");
+    check(leader_closes(h, engine, conv_id) == "waiting_for_human",
+          "J3: leader to:done with a re-captured note → gated again");
+    check(h.db.count_pending_vault_updates(conv_id) == 1,
+          "J3: the re-captured note is held for approval");
+}
+
+static void test_rearm_after_flush() {
+    std::cout << "\n=== J4. approved notes flushed → gate re-armed ===\n\n";
+    using sui::quorum::brainstorm_gate_suppresses_write;
+    TestHarness h;
+    auto engine = h.make_engine();
+    auto conv_id = park_at_gate_with_note(h, engine);
+    engine.respond(conv_id, "yes");
+    {
+        auto c = h.db.get_conversation(conv_id);
+        check(c && c->gate_cleared, "J4: approval clears the gate");
+    }
+    // What main.cpp does after writing the approved notes to the vaults.
+    h.db.clear_pending_vault_updates(conv_id);
+    h.db.set_gate_state(conv_id, sui::quorum::kGateRearmed);
+    auto c = h.db.get_conversation(conv_id);
+    check(c && !c->gate_cleared && c->gate_answered, "J4: re-armed after the flush");
+    check(c && brainstorm_gate_suppresses_write(c->mode, c->gated, c->gate_cleared),
+          "J4: a write after the flush stages again (no unapproved overwrite)");
+    check(leader_closes(h, engine, conv_id) == "done",
+          "J4: close with nothing new staged completes");
+}
+
+static void test_gate_state_roundtrip() {
+    std::cout << "\n=== J5. gate state 0/1/2 → gate_cleared / gate_answered ===\n\n";
+    TestHarness h;
+    auto conv_id = h.db.create_conversation("Gate states", 20);
+    struct Want { int state; bool cleared; bool answered; };
+    for (auto w : {Want{sui::quorum::kGateArmed, false, false},
+                   Want{sui::quorum::kGateApproved, true, true},
+                   Want{sui::quorum::kGateRearmed, false, true}}) {
+        h.db.set_gate_state(conv_id, w.state);
+        auto c = h.db.get_conversation(conv_id);
+        check(c && c->gate_cleared == w.cleared && c->gate_answered == w.answered,
+              ("J5: state " + std::to_string(w.state) + " reads back").c_str());
+    }
+}
+
+// ─── K. an ungated brainstorm tells the leader there is no gate ─────────────
+//
+// The leader's role SKILL mandates `HANDOFF to: human` in a gated brainstorm.
+// An ungated brainstorm is an unattended knower scan; without being told, the
+// leader gated it and `knower refresh` sat in waiting_for_human (2026-09-26).
+
+static void test_ungated_leader_prompt() {
+    std::cout << "\n=== K. ungated brainstorm: the leader's first prompt says no gate ===\n\n";
+    TestHarness h;
+    auto engine = h.make_engine();
+    auto ungated = engine.start("Refresh the layout index", 20, "brainstorm",
+                                /*no_vault_write=*/false, /*gated=*/0);
+    auto prompt = h.latest_task_prompt(ungated);
+    check(prompt.find("UNGATED") != std::string::npos &&
+              prompt.find("HANDOFF to: done") != std::string::npos,
+          "K: ungated → leader told there is no gate and to close with to:done");
+
+    auto gated = engine.start("Discuss design", 20, "brainstorm");
+    check(h.latest_task_prompt(gated).find("UNGATED") == std::string::npos,
+          "K: gated brainstorm → no ungated note");
+    auto generic = engine.start("Build it", 20, "generic");
+    check(h.latest_task_prompt(generic).find("UNGATED") == std::string::npos,
+          "K: generic → no ungated note");
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -740,6 +882,12 @@ int main() {
     test_response_rejects_helper();
     test_respond_approve_keeps_and_closes();
     test_respond_reject_discards();
+    test_reject_rearms_gate();
+    test_reject_then_close_completes();
+    test_reject_then_recapture_gates_again();
+    test_rearm_after_flush();
+    test_gate_state_roundtrip();
+    test_ungated_leader_prompt();
 
     std::cout << "\n--- Results: " << g_passed << "/" << (g_passed + g_failed)
               << " tests passed ---\n";

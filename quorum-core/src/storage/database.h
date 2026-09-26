@@ -27,6 +27,16 @@ struct PendingVaultUpdate {
     std::string content;
 };
 
+// Values of conversations.gate_cleared (Phase 14.1; 2 added 2026-09-26). The
+// column keeps its name; it is the gate's state:
+//   0 armed     knower writes stage behind the gate; no human answer yet
+//   1 approved  writes apply, and staged notes flush to the vaults
+//   2 re-armed  writes stage again after a human answered (a rejection, or the
+//               approved notes were flushed) — anything new needs a new approval
+inline constexpr int kGateArmed = 0;
+inline constexpr int kGateApproved = 1;
+inline constexpr int kGateRearmed = 2;
+
 struct ConversationRecord {
     int64_t id{0};
     std::string goal;
@@ -41,7 +51,8 @@ struct ConversationRecord {
     std::string mode{"generic"};  // execution mode: "generic" (default) or "brainstorm"
     bool no_vault_write{false};   // Phase 10 Track 5: suppress VAULT_UPDATE filesystem writes
     bool gated{false};            // Phase 14.1: gated brainstorm — knower writes wait for approval
-    bool gate_cleared{false};     // Phase 14.1: human has approved (respond() flipped it)
+    bool gate_cleared{false};     // Phase 14.1: gate state == kGateApproved
+    bool gate_answered{false};    // a human has answered the gate (state != kGateArmed)
 };
 
 class Database {
@@ -134,10 +145,15 @@ public:
     // Called from respond(); once set, the daemon stops suppressing knower
     // VAULT_UPDATE writes for this gated brainstorm.
     void set_gate_cleared(int64_t conv_id, bool cleared) {
+        set_gate_state(conv_id, cleared ? kGateApproved : kGateArmed);
+    }
+
+    // Set the gate to kGateArmed / kGateApproved / kGateRearmed.
+    void set_gate_state(int64_t conv_id, int state) {
         execute(
             "UPDATE conversations SET gate_cleared = ? WHERE id = ?",
             [&](sqlite3_stmt* stmt) {
-                sqlite3_bind_int(stmt, 1, cleared ? 1 : 0);
+                sqlite3_bind_int(stmt, 1, state);
                 sqlite3_bind_int64(stmt, 2, conv_id);
             }
         );
@@ -184,7 +200,9 @@ public:
                 rec.mode = md ? md : "generic";
                 rec.no_vault_write = sqlite3_column_int(stmt, 11) != 0;
                 rec.gated = sqlite3_column_int(stmt, 12) != 0;
-                rec.gate_cleared = sqlite3_column_int(stmt, 13) != 0;
+                const int gate = sqlite3_column_int(stmt, 13);
+                rec.gate_cleared = gate == kGateApproved;
+                rec.gate_answered = gate != kGateArmed;
             }
         );
         return found ? std::optional{rec} : std::nullopt;

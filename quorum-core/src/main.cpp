@@ -1530,6 +1530,11 @@ int main(int argc, char* argv[]) {
                             (void)applied;
                         }
                         db.clear_pending_vault_updates(*conv_id_opt);
+                        // The approval covered exactly these notes: re-arm the
+                        // gate so anything captured later in this conversation
+                        // (a leader that re-dispatches the knowers anyway)
+                        // stages and comes back for approval.
+                        db.set_gate_state(*conv_id_opt, sui::quorum::kGateRearmed);
                         std::cout << "[conversation " << *conv_id_opt
                                   << "] flushed " << pending.size()
                                   << " approved knower write(s) to their vaults\n";
