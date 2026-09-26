@@ -234,7 +234,8 @@ static void test_skill_file_in_yaml() {
 // --- Test F2: --skill <name> resolves to $HOME path when not project-local --
 // Phase 9 finding #3 — main.cpp parses `--skill <name>` into
 // `.claude/skills/<name>/SKILL.md`. When that doesn't exist project-locally,
-// create_agent should fall back to $HOME/.claude/skills/<name>/SKILL.md.
+// create_agent should fall back to ~/.claude/skills/<name>/SKILL.md (stored
+// as the portable `~/` ref, not the expanded $HOME — utils/path_ref.h).
 
 static void test_skill_home_fallback() {
     std::cout << "\n=== F2. --skill <name> falls back to $HOME (#3) ===\n\n";
@@ -273,14 +274,59 @@ static void test_skill_home_fallback() {
     check(rc == 0, "F2: create_agent returns 0");
 
     auto yaml = read_file("configs/agents/test-proj/home-skill-agent.yaml");
-    auto expected = std::string("skill_file: ") + fake_home + "/.claude/skills/fake-role/SKILL.md";
-    check(yaml.find(expected) != std::string::npos,
-          "F2: YAML stores $HOME-expanded skill path when project-local missing");
+    check(yaml.find("skill_file: ~/.claude/skills/fake-role/SKILL.md\n") != std::string::npos,
+          "F2: YAML stores the ~/ skill ref when project-local missing");
+    check(yaml.find(fake_home) == std::string::npos,
+          "F2: YAML does not carry this machine's $HOME");
 
     // Restore HOME.
     if (prev_home) setenv("HOME", saved_home.c_str(), 1);
     else unsetenv("HOME");
 
+    fs::current_path(original_cwd);
+    cleanup_temp(tmp);
+}
+
+// --- Test F3: absolute inputs are stored portably --------------------------
+// setup-knowers.sh passes absolute --skill-file / --target-dir; the tracked
+// yaml must hold ~/ and project-relative refs instead (utils/path_ref.h).
+
+static void test_absolute_inputs_stored_portably() {
+    std::cout << "\n=== F3. absolute --skill-file / --target-dir stored portably ===\n\n";
+
+    auto tmp = make_temp_dir();
+    auto fake_home = tmp + "/fakehome";
+    auto project = fake_home + "/work/proj";
+    fs::create_directories(project + "/.quorum/agents");
+    fs::create_directories(project + "/.quorum/vaults");
+    fs::create_directories(fake_home + "/.claude/skills/lens");
+    std::ofstream(fake_home + "/.claude/skills/lens/SKILL.md") << "# lens\n";
+
+    const char* prev_home = std::getenv("HOME");
+    std::string saved_home = prev_home ? prev_home : "";
+    setenv("HOME", fake_home.c_str(), 1);
+    auto original_cwd = fs::current_path();
+    fs::current_path(project);
+
+    sui::quorum::cli::AgentCreateParams p;
+    p.role = "doer";
+    p.name = "abs-doer";
+    p.skill_file = fake_home + "/.claude/skills/lens/SKILL.md";
+    p.target_dir = fs::current_path().string();
+    p.no_ai = true;
+    int rc = sui::quorum::cli::create_agent(p);
+    check(rc == 0, "F3: create_agent returns 0");
+
+    auto yaml = read_file(".quorum/agents/abs-doer.yaml");
+    check(yaml.find("skill_file: ~/.claude/skills/lens/SKILL.md\n") != std::string::npos,
+          "F3: absolute skill under $HOME stored as ~/");
+    check(yaml.find("  target_dir: .\n") != std::string::npos,
+          "F3: absolute target_dir == project root stored as .");
+    check(yaml.find(fake_home) == std::string::npos,
+          "F3: no absolute path of this machine in the yaml");
+
+    if (prev_home) setenv("HOME", saved_home.c_str(), 1);
+    else unsetenv("HOME");
     fs::current_path(original_cwd);
     cleanup_temp(tmp);
 }
@@ -402,6 +448,7 @@ int main() {
     test_non_doer_no_executor();
     test_skill_file_in_yaml();
     test_skill_home_fallback();
+    test_absolute_inputs_stored_portably();
     test_evaluator_role_create();
     test_evaluator_universal_rules();
     test_evaluator_skill_source_exists();

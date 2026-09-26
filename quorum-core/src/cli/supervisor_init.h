@@ -41,6 +41,7 @@
 #include <unistd.h>
 
 #include "utils/file_io.h"   // detail::atomic_write_text, detail::read_file_text
+#include "utils/path_ref.h"  // expand_path_ref — $QUORUM/ skill refs in the roster
 
 namespace sui::quorum::cli {
 
@@ -169,6 +170,13 @@ namespace detail {
                 auto yaml_text = sui::quorum::detail::read_file_text(yaml_path);
                 auto role = detail::sup_parse_agent_field(yaml_text, "role");
                 auto skill = detail::sup_parse_agent_field(yaml_text, "skill_file");
+                // The supervisor model reads this path; a $QUORUM/ ref means
+                // nothing to it, so spell that one out. ~/ and project-relative
+                // refs read fine as stored. Twin: listRosterRows in
+                // quorum-web/server/autopilot.ts — keep the two in step.
+                if (skill.starts_with(sui::quorum::kQuorumRootToken)) {
+                    skill = sui::quorum::expand_path_ref(skill, project_root);
+                }
                 const std::string em_dash = "\xe2\x80\x94";  // "—"
                 out += "| " + name + " | " +
                        (role.empty() ? em_dash : role) + " | " +

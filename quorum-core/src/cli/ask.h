@@ -37,6 +37,7 @@
 #include "utils/file_io.h"          // detail::read_file_text
 #include "utils/subprocess.h"       // run_command
 #include "utils/json.h"             // json::extract_top_level_string
+#include "utils/path_ref.h"         // expand_path_ref
 
 namespace sui::quorum::cli {
 
@@ -423,24 +424,12 @@ namespace detail {
 
 }  // namespace detail
 
-// Resolve a skill_file reference relative to the project root, mirroring
-// context_assembler.h:417-435: expand a leading "~/", then treat a relative
-// path as project-rooted; absolute paths are used as-is. PURE.
+// Resolve a skill_file reference the way the assembler does (utils/path_ref.h):
+// expand "~/" and "$QUORUM/", treat a relative path as project-rooted; absolute
+// paths are used as-is. No claude, no writes.
 [[nodiscard]] inline std::string resolve_skill_path(
     const std::string& project_root, const std::string& skill_file) {
-    namespace fs = std::filesystem;
-    if (skill_file.empty()) return {};
-    std::string spath = skill_file;
-    if (spath.starts_with("~/")) {
-        const char* home = std::getenv("HOME");
-        if (home) spath = std::string(home) + spath.substr(1);
-    }
-    fs::path skill_path(spath);
-    if (skill_path.is_relative() && !project_root.empty()) {
-        auto rooted = fs::path(project_root) / skill_path;
-        return rooted.string();
-    }
-    return skill_path.string();
+    return sui::quorum::expand_path_ref(skill_file, project_root);
 }
 
 // Compose the agent-persona prompt fed to a configured agent. Mirrors

@@ -88,6 +88,8 @@ read_vault_path() {
     ' "$CONFIG"
 }
 VAULT_PATH="$(read_vault_path || true)"
+# A leading ~ keeps the tracked config.yaml portable across machines.
+VAULT_PATH="${VAULT_PATH/#\~/$HOME}"
 
 # ── 4. Create the advisor agent (token-free; idempotent) ────────────────────
 DESC="Advisor: read-only planning context from the operator's external second-brain vault. Scope in its CONTEXT.md; soft/expandable. Read-only."
@@ -100,7 +102,7 @@ else
         --name advisor \
         --skill-file "$ADVISOR_SKILL" \
         --description "$DESC" \
-        --target-dir "$PROJECT_DIR" \
+        --target-dir . \
         --no-ai )
 fi
 
@@ -162,7 +164,7 @@ if [ -z "${VAULT_PATH:-}" ]; then
     echo "           $CONFIG"
     echo "         e.g.:"
     echo "           advisor:"
-    echo "             vault_path: /absolute/path/to/your/second-brain"
+    echo "             vault_path: ~/path/to/your/second-brain"
     echo "         Then re-run: $0 \"$PROJECT_DIR\""
     echo ""
     INERT="No vault configured — advisor inert until \`advisor.vault_path\` is set in .quorum/config.yaml"

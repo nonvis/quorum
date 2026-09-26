@@ -9,6 +9,8 @@
 #include <fstream>
 #include <iostream>
 
+#include "utils/path_ref.h"
+
 namespace sui::quorum {
 
 struct DaemonConfig {
@@ -423,7 +425,8 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
     return cfg;
 }
 
-inline bool validate_config(const QuorumConfig& cfg) {
+// project_root resolves project-relative skill refs; "" = relative to the CWD.
+inline bool validate_config(const QuorumConfig& cfg, const std::string& project_root = {}) {
     bool valid = true;
 
     if (cfg.agents.empty()) {
@@ -458,19 +461,21 @@ inline bool validate_config(const QuorumConfig& cfg) {
         }
     }
 
-    // Check skill_file paths exist (expand ~ to HOME)
+    // Check skill_file paths exist (portable refs: ~/, $QUORUM/, project-relative)
+    bool any_missing = false;
     for (const auto& a : cfg.agents) {
         if (!a.skill_file.empty()) {
-            std::string path = a.skill_file;
-            if (path.starts_with("~/")) {
-                auto home = std::getenv("HOME");
-                if (home) path = std::string(home) + path.substr(1);
-            }
+            auto path = expand_path_ref(a.skill_file, project_root);
             if (!std::filesystem::exists(path)) {
                 std::cerr << "WARNING: agent '" << a.id
-                          << "' skill_file not found: " << path << "\n";
+                          << "' skill_file not found: " << path
+                          << " -- the agent runs WITHOUT its skill\n";
+                any_missing = true;
             }
         }
+    }
+    if (any_missing) {
+        std::cerr << "         (paths written on another machine? `quorum agent relink` repairs them)\n";
     }
 
     return valid;

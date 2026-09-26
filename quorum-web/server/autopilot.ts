@@ -30,6 +30,7 @@ import {
   mkdirSync,
   renameSync,
 } from "fs";
+import { repoRoot } from "../config";
 
 // ── read model ────────────────────────────────────────────────────────
 
@@ -426,6 +427,16 @@ export function buildFlights(projectPath: string): Flight[] {
 // composer differs only in: generated_by, a goal/mode frontmatter + Project
 // lines, and a REAL flight plan instead of the placeholder task.
 
+// The supervisor model reads the roster's skill paths; a `$QUORUM/` ref (the
+// Quorum checkout, see quorum-core/src/utils/path_ref.h) means nothing to it,
+// so spell that one out. `~/` and project-relative refs read fine as stored.
+// Twin of the roster loop in quorum-core/src/cli/supervisor_init.h.
+function expandQuorumRef(ref: string): string {
+  if (ref === "$QUORUM") return repoRoot;
+  if (ref.startsWith("$QUORUM/")) return join(repoRoot, ref.slice("$QUORUM/".length));
+  return ref;
+}
+
 function listRosterRows(projectPath: string): { name: string; role: string; skill: string }[] {
   const agentsDir = join(projectPath, ".quorum", "agents");
   if (!existsSync(agentsDir)) return [];
@@ -435,7 +446,7 @@ function listRosterRows(projectPath: string): { name: string; role: string; skil
     const text = readFileSync(join(agentsDir, f), "utf-8");
     const role = text.match(/^role:\s*(.+)$/m)?.[1]?.trim() ?? "";
     const skill = text.match(/^skill_file:\s*(.+)$/m)?.[1]?.trim() ?? "";
-    rows.push({ name: f.replace(/\.yaml$/, ""), role, skill });
+    rows.push({ name: f.replace(/\.yaml$/, ""), role, skill: expandQuorumRef(skill) });
   }
   return rows;
 }

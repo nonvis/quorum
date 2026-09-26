@@ -26,6 +26,7 @@
 #include "vault/vault_manager.h"
 #include "cli/agent_create.h"
 #include "cli/agent_history.h"
+#include "cli/agent_relink.h"
 #include "cli/benchmark.h"
 #include "cli/init.h"
 #include "cli/skills.h"
@@ -175,6 +176,7 @@ static void print_usage(const char* prog) {
               << "  " << prog << " agent modify --name <id> --description \"new desc\"   Modify agent\n"
               << "  " << prog << " agent list                                            List all agents\n"
               << "  " << prog << " agent history --name <id>                             Show CONTEXT.md audit trail\n"
+              << "  " << prog << " agent relink [--dry-run]                              Repair agent paths written on another machine\n"
               << "\nOptions:\n"
               << "  --config <path>      Path to config YAML (optional if .quorum/ exists in project)\n"
               << "  --verbose            Enable verbose logging\n"
@@ -516,6 +518,7 @@ int main(int argc, char* argv[]) {
     std::string response_text;
     std::string agent_subcmd;
     sui::quorum::cli::AgentCreateParams agent_params;
+    bool agent_relink_dry_run = false;
     std::string mode_name;
     std::string bench_role;
     std::string bench_task;
@@ -573,7 +576,7 @@ int main(int argc, char* argv[]) {
         }
     } else if (subcommand == "agent") {
         for (size_t i = 0; i < sub_args.size(); ++i) {
-            if (agent_subcmd.empty() && (sub_args[i] == "create" || sub_args[i] == "modify" || sub_args[i] == "list" || sub_args[i] == "history")) {
+            if (agent_subcmd.empty() && (sub_args[i] == "create" || sub_args[i] == "modify" || sub_args[i] == "list" || sub_args[i] == "history" || sub_args[i] == "relink")) {
                 agent_subcmd = sub_args[i];
             } else if (sub_args[i] == "--role" && i + 1 < sub_args.size()) {
                 agent_params.role = sub_args[++i];
@@ -594,6 +597,8 @@ int main(int argc, char* argv[]) {
                 agent_params.no_ai = true;
             } else if (sub_args[i] == "--regenerate") {
                 agent_params.regenerate = true;
+            } else if (sub_args[i] == "--dry-run") {
+                agent_relink_dry_run = true;
             }
         }
     } else if (subcommand == "init") {
@@ -925,6 +930,9 @@ int main(int argc, char* argv[]) {
     if (subcommand == "agent" && agent_subcmd == "history") {
         return sui::quorum::cli::show_history(agent_params.name);
     }
+    if (subcommand == "agent" && agent_subcmd == "relink") {
+        return sui::quorum::cli::run_agent_relink(agent_relink_dry_run);
+    }
 
     if (config_path.empty()) {
         auto discovered = sui::quorum::discover_config();
@@ -959,7 +967,8 @@ int main(int argc, char* argv[]) {
     }
     auto& cfg = *cfg_opt;
 
-    sui::quorum::validate_config(cfg);
+    sui::quorum::validate_config(cfg,
+        sui::quorum::discover_project_root().value_or(""));
 
     // Vault dedup --global: now that config is loaded, resolve target path.
     if (subcommand == "vault" && vault_subcmd_arg == "dedup" && vault_dedup_opts.use_global) {
@@ -984,7 +993,7 @@ int main(int argc, char* argv[]) {
     // ── Agent subcommand early exit (no DB, no daemon) ──────────────────
     if (subcommand == "agent") {
         if (agent_subcmd != "create") {
-            std::cerr << "ERROR: unknown agent subcommand. Usage: agent create|modify|list|history\n";
+            std::cerr << "ERROR: unknown agent subcommand. Usage: agent create|modify|list|history|relink\n";
             return 1;
         }
         if (agent_params.role.empty() || agent_params.name.empty()) {
@@ -1301,6 +1310,12 @@ int main(int argc, char* argv[]) {
                 task_agent_meta = a;
                 break;
             }
+        }
+        // target_dir is stored as a portable ref (`.` = the project root) —
+        // resolve it against the project, not whatever the daemon's CWD is.
+        if (!task_agent_meta.target_dir.empty()) {
+            task_agent_meta.target_dir = sui::quorum::expand_path_ref(
+                task_agent_meta.target_dir, project_root_str.value_or(""));
         }
 
         // Resolve conversation mode for this task (Phase 6 Track 2). If the

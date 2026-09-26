@@ -267,6 +267,16 @@ add_executable(test_self_path tests/unit/test_self_path.cpp)
 target_include_directories(test_self_path PRIVATE src)
 add_test(NAME test_self_path COMMAND test_self_path)
 
+# Portable path refs in tracked .quorum/ files (utils/path_ref.h) and the
+# `quorum agent relink` repair for yaml written on another machine.
+add_executable(test_path_ref tests/unit/test_path_ref.cpp)
+target_include_directories(test_path_ref PRIVATE src)
+add_test(NAME test_path_ref COMMAND test_path_ref)
+
+add_executable(test_agent_relink tests/unit/test_agent_relink.cpp)
+target_include_directories(test_agent_relink PRIVATE src)
+add_test(NAME test_agent_relink COMMAND test_agent_relink)
+
 add_executable(test_agent_modify tests/unit/test_agent_modify.cpp)
 target_include_directories(test_agent_modify PRIVATE src)
 add_test(NAME test_agent_modify COMMAND test_agent_modify)

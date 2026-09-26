@@ -114,6 +114,7 @@ quorum close   --conversation 1            # close a conversation
 quorum init                                # scaffold .quorum/ in the cwd
 quorum agent create --role <r> --name <n> [--target-dir <p>] [--no-ai]
 quorum agent list | modify | history
+quorum agent relink [--dry-run]            # rewrite another machine's absolute paths in .quorum/agents/*.yaml as portable refs
 
 # Knowledge layer — knowers are the sole accumulators (scribe/librarian retired in Phase 14)
 quorum knower refresh [--all | --knower <name>] [--project <p>]   # re-run read-only knower scan(s); knowers re-survey + self-write their vaults

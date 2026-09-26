@@ -55,6 +55,8 @@ db.execute("CREATE TABLE IF NOT EXISTS metrics (...)");
 
 Project-local `.quorum/` (created by `quorum init`): `config.yaml`, `quorum.db` (schema from `storage/schema.h`), `agents/*.yaml` (auto-discovered), `vaults/<agent>/` (CONTEXT.md + knowledge/). CLI auto-discovers `.quorum/` by walking up from cwd — no `--config` needed except to run the long-lived daemon.
 
+**Paths in tracked `.quorum/` files are portable refs** (`utils/path_ref.h`): `~/…` (under $HOME), `$QUORUM/…` (the Quorum checkout the running binary was built from), or project-relative (`target_dir: .`). Writers never store this machine's absolute path; readers go through `expand_path_ref`. `quorum agent relink` repairs yaml written before this existed.
+
 Knowledge layer: `quorum knower refresh` re-surveys the codebase into the knower vaults; `quorum ask` gives an LLM answer from them + live code; `quorum search "<q>"` is the deterministic $0 (no-LLM) ranked search over `ref-*.md`.
 
 ## Testing

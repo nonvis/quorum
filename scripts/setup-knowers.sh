@@ -97,12 +97,14 @@ create_agent() {
     echo "    - creating $name agent (thinker, read-only, --no-ai)"
     # cwd = project dir so the daemon discovers THIS project's .quorum/.
     # --no-ai: copy template as-is, no claude -p call (zero token spend).
+    # The absolute --skill-file is stored as a portable $QUORUM/... ref by the
+    # daemon (utils/path_ref.h); target_dir `.` is the project root.
     ( cd "$PROJECT_DIR" && "$DAEMON" agent create \
         --role thinker \
         --name "$name" \
         --skill-file "$skill" \
         --description "$desc" \
-        --target-dir "$PROJECT_DIR" \
+        --target-dir . \
         --no-ai )
 }
 

@@ -16,6 +16,7 @@
 
 #include "utils/config.h"
 #include "utils/frontmatter.h"
+#include "utils/path_ref.h"
 
 namespace sui::quorum {
 
@@ -452,21 +453,14 @@ public:
 
         // Load SKILL.md if provided — stable identity, system_prompt.
         if (!skill_file.empty()) {
-            std::string spath = skill_file;
-            // 1. Expand ~/
-            if (spath.starts_with("~/")) {
-                auto home = std::getenv("HOME");
-                if (home) spath = std::string(home) + spath.substr(1);
+            // 1. Expand the portable reference (~/, $QUORUM/, project-relative;
+            //    utils/path_ref.h). A relative ref that is not under the project
+            //    root falls back to the CWD, as before.
+            auto skill_path = std::filesystem::path(expand_path_ref(skill_file, project_root));
+            if (!std::filesystem::exists(skill_path)) {
+                skill_path = std::filesystem::path(skill_file);
             }
-            auto skill_path = std::filesystem::path(spath);
-            // 2. If relative and project_root provided, try resolving from project root
-            if (skill_path.is_relative() && !project_root.empty()) {
-                auto rooted = std::filesystem::path(project_root) / skill_path;
-                if (std::filesystem::exists(rooted)) {
-                    skill_path = rooted;
-                }
-            }
-            // 3. Load
+            // 2. Load (a missing file is reported by validate_config at startup)
             if (std::filesystem::exists(skill_path)) {
                 auto content = read_file(skill_path);
                 if (!content.empty()) {

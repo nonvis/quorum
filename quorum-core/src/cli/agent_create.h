@@ -11,6 +11,7 @@
 #include "utils/json.h"
 #include "utils/config.h"
 #include "utils/discover.h"
+#include "utils/path_ref.h"
 #include "cli/skills.h"
 #include "vault/context_history.h"
 
@@ -254,31 +255,34 @@ inline int create_agent(const AgentCreateParams& p) {
     fs::create_directories(config_dir);
     fs::create_directories(knowledge_dir);
 
-    // 4b. Auto-detect role skill if none specified
+    // 4b. Auto-detect role skill if none specified. Paths written to the
+    // tracked yaml are portable refs (utils/path_ref.h): `~/`, never this
+    // machine's $HOME.
     auto skill_file = p.skill_file;
     if (skill_file.empty() && !p.role.empty()) {
-        auto home = std::getenv("HOME");
-        if (home) {
-            auto role_skill = std::string(home) + "/.claude/skills/quorum-roles/" + p.role + "/SKILL.md";
-            if (fs::exists(role_skill)) {
-                skill_file = role_skill;
-                std::cout << "  Auto-detected skill: quorum-roles/" << p.role << "\n";
-            }
+        auto role_skill = "~/.claude/skills/quorum-roles/" + p.role + "/SKILL.md";
+        if (fs::exists(sui::quorum::expand_path_ref(role_skill, ""))) {
+            skill_file = role_skill;
+            std::cout << "  Auto-detected skill: quorum-roles/" << p.role << "\n";
         }
     }
 
     // 4c. Phase 9 finding #3 — `--skill <name>` shorthand stores
     // `.claude/skills/<name>/SKILL.md` (project-relative). If that doesn't
-    // resolve project-locally, fall back to $HOME/.claude/skills/<name>/SKILL.md
+    // resolve project-locally, fall back to ~/.claude/skills/<name>/SKILL.md
     // so user-level skills (e.g. quorum-roles/*) work without a full path.
     if (!skill_file.empty() && skill_file.starts_with(".claude/skills/") &&
         !fs::exists(root_prefix + skill_file)) {
-        auto home = std::getenv("HOME");
-        if (home) {
-            auto user_path = std::string(home) + "/" + skill_file;
-            if (fs::exists(user_path)) skill_file = user_path;
-        }
+        auto user_ref = "~/" + skill_file;
+        if (fs::exists(sui::quorum::expand_path_ref(user_ref, ""))) skill_file = user_ref;
     }
+
+    // 4d. An absolute --skill-file / --target-dir (setup-knowers.sh passes
+    // the knower lens SKILLs this way) is stored in its portable spelling:
+    // project-relative, $QUORUM/..., or ~/...
+    const std::string ref_root = is_local ? *project_root : std::string{};
+    skill_file = sui::quorum::portable_path_ref(skill_file, ref_root);
+    const auto target_dir = sui::quorum::portable_path_ref(p.target_dir, ref_root);
 
     // 5. Generate YAML config
     std::string yaml;
@@ -298,7 +302,7 @@ inline int create_agent(const AgentCreateParams& p) {
     }
     if (p.role == "doer") {
         yaml += "\nexecutor:\n";
-        yaml += "  target_dir: " + (p.target_dir.empty() ? "." : p.target_dir) + "\n";
+        yaml += "  target_dir: " + (target_dir.empty() ? "." : target_dir) + "\n";
         yaml += "  allowed_tools: all\n";
     }
 
@@ -315,7 +319,7 @@ inline int create_agent(const AgentCreateParams& p) {
     // 6. Generate CONTEXT.md
     auto gen_type = generate_context_md(context_path, p.name, p.role,
                                          p.description, skill_file,
-                                         p.target_dir, p.no_ai);
+                                         target_dir, p.no_ai);
     std::cout << "  Created: " << context_path << " (" << gen_type << ")\n";
 
     std::cout << "  Created: " << knowledge_dir << "/\n";
@@ -398,23 +402,21 @@ inline int modify_agent(const AgentCreateParams& overrides) {
         changed = true;
     }
     if (!overrides.skill_file.empty() && overrides.skill_file != existing->skill_file) {
-        // Phase 9 finding #3 — resolve --skill <name> shorthand against $HOME
+        // Phase 9 finding #3 — resolve --skill <name> shorthand against ~/
         // when the path is project-relative `.claude/skills/<name>/SKILL.md`
-        // and the file is not present in the project.
+        // and the file is not present in the project. Stored portable, as in
+        // create_agent (utils/path_ref.h).
         auto resolved = overrides.skill_file;
         if (resolved.starts_with(".claude/skills/") &&
             !fs::exists(root + "/" + resolved)) {
-            auto home = std::getenv("HOME");
-            if (home) {
-                auto user_path = std::string(home) + "/" + resolved;
-                if (fs::exists(user_path)) resolved = user_path;
-            }
+            auto user_ref = "~/" + resolved;
+            if (fs::exists(sui::quorum::expand_path_ref(user_ref, root))) resolved = user_ref;
         }
-        existing->skill_file = resolved;
+        existing->skill_file = sui::quorum::portable_path_ref(resolved, root);
         changed = true;
     }
     if (!overrides.target_dir.empty() && overrides.target_dir != existing->target_dir) {
-        existing->target_dir = overrides.target_dir;
+        existing->target_dir = sui::quorum::portable_path_ref(overrides.target_dir, root);
         changed = true;
     }
 

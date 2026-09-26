@@ -457,7 +457,10 @@ static void test_init_attaches_leader_role_skill() {
     {
         auto tmp = make_temp_dir();
         auto home = make_temp_dir();
-        auto skill_path = write_fake_leader_skill(home);
+        write_fake_leader_skill(home);
+        // Stored as the portable ~/ ref, never this machine's $HOME
+        // (utils/path_ref.h); the assembler check below proves it expands.
+        const std::string skill_path = "~/.claude/skills/quorum-roles/leader/SKILL.md";
         ScopedHome scoped(home);
         fs::current_path(tmp);
 
@@ -466,6 +469,8 @@ static void test_init_attaches_leader_role_skill() {
         auto yaml = read_file(".quorum/agents/leader.yaml");
         check(yaml.find("skill_file: " + skill_path + "\n") != std::string::npos,
               "L(i): leader.yaml carries skill_file pointing at the role SKILL");
+        check(yaml.find(home) == std::string::npos,
+              "L(i): leader.yaml does not carry this machine's $HOME");
 
         // The daemon's own reader must see it -- a raw line nobody parses is
         // not a wiring. load_agent_config() is what the engine calls.
