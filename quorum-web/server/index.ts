@@ -38,8 +38,16 @@ import { createDocentAskApp } from "./docentAsk";
 
 const app = new Hono();
 
-// CORS for local dev (Vite runs on different port)
-app.use("*", cors());
+// The UI reaches this API through Vite's same-origin proxy, so CORS only has
+// to admit the UI's own origin. The old wildcard let any page open in the
+// browser drive the API (start conversations, respond to gates). Add origins
+// with QUORUM_WEB_ORIGINS (comma-separated).
+const allowedOrigins = [
+  "http://localhost:3101",
+  "http://127.0.0.1:3101",
+  ...(process.env.QUORUM_WEB_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean),
+];
+app.use("*", cors({ origin: allowedOrigins }));
 
 // -- Project endpoints --
 
@@ -1016,6 +1024,9 @@ else console.log(`  Project: (none — select via UI)`);
 
 export default {
   port: config.port,
+  // Loopback only: the API serves every task prompt and result and spawns the
+  // daemon. QUORUM_WEB_HOST=0.0.0.0 exposes it deliberately.
+  hostname: process.env.QUORUM_WEB_HOST ?? "127.0.0.1",
   fetch: app.fetch,
   idleTimeout: 120, // seconds — prevent premature SSE disconnect
 };
