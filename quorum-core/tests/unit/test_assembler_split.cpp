@@ -334,6 +334,49 @@ static const char* const kAnalystRulesGolden =
 static const char* const kAnalystRule1 = "**NEVER write files directly.**";
 static const char* const kExecTargetDir = "**Write ONLY inside your `target_dir`.**";
 
+// --- S9: the Output Instructions block is class-aware too (2026-09-26) -------
+// Doers used to get the analyst block: PROPOSAL (parsed, never acted on) and
+// no HANDOFF / SUMMARY shape — the two blocks a doer must end every turn with.
+
+static void test_s9_output_instructions_are_class_aware() {
+    std::cout << "\n=== S9. Output Instructions block is class-aware ===\n\n";
+
+    auto vault = make_temp_vault();
+    sui::quorum::ContextAssembler assembler;
+    auto instructions = [](const std::string& sp) {
+        auto b = sp.find("# Output Instructions");
+        return b == std::string::npos ? std::string{} : sp.substr(b);
+    };
+
+    auto doer = instructions(assembler.assemble_split(
+        "agent-s9-doer", vault, "turn", "task S9 doer",
+        /*team_roster=*/{}, /*skill_file=*/{}, /*project_root=*/{},
+        /*agent_role=*/"doer").system_prompt);
+    check(doer.find("```HANDOFF\nto: ") != std::string::npos,
+          "S9: executor instructions show the HANDOFF shape");
+    check(doer.find("```SUMMARY\n") != std::string::npos,
+          "S9: executor instructions show the SUMMARY shape");
+    check(doer.find("PROPOSAL") == std::string::npos,
+          "S9: executor instructions carry no PROPOSAL");
+
+    auto thinker = instructions(assembler.assemble_split(
+        "agent-s9-thinker", vault, "turn", "task S9 thinker",
+        /*team_roster=*/{}, /*skill_file=*/{}, /*project_root=*/{},
+        /*agent_role=*/"thinker").system_prompt);
+    check(thinker.find("```PROPOSAL\n") != std::string::npos &&
+              thinker.find("```HANDOFF") == std::string::npos,
+          "S9: analyst instructions unchanged (PROPOSAL, no HANDOFF shape)");
+
+    auto brainstorm_doer = instructions(assembler.assemble_split(
+        "agent-s9-bdoer", vault, "turn", "task S9 brainstorm doer",
+        /*team_roster=*/{}, /*skill_file=*/{}, /*project_root=*/{},
+        /*agent_role=*/"doer", sui::quorum::ContextBudget{},
+        /*conversation_mode=*/"brainstorm").system_prompt);
+    check(brainstorm_doer == thinker,
+          "S9: brainstorm rides over class — a doer gets the analyst instructions");
+    cleanup(vault);
+}
+
 static void test_s8_output_rules_are_class_aware() {
     std::cout << "\n=== S8. Output Rules block is class-aware ===\n\n";
 
@@ -449,6 +492,7 @@ int main() {
     test_s6_rules_and_roster_in_user_message();
     test_s7_verdict_rule_in_output_rules();
     test_s8_output_rules_are_class_aware();
+    test_s9_output_instructions_are_class_aware();
 
     std::cout << "\n---------------------------------------------------\n";
     std::cout << "  passed: " << g_passed << "  failed: " << g_failed << "\n";

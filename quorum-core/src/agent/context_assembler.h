@@ -371,13 +371,9 @@ public:
     // while the conversation is in brainstorm — the prompt has to agree with
     // the tool surface, which is the whole point of this split.
     //
-    // ⚠ SEAM (open): the only production caller, daemon/conversation.h, hands
-    // this class the agent's ROLE and not its AgentMetadata::agent_class, so
-    // `explicit_class` arrives empty and a hand-written `agent_class:` on a
-    // doer yaml is not honoured HERE (it still is for the tool flags). Closing
-    // it is a one-line change at that caller — pass `a.agent_class` into
-    // assemble_split's new trailing parameter. conversation.h was outside this
-    // change's edit set.
+    // The production caller (daemon/conversation.h) passes the agent's
+    // AgentMetadata::agent_class, so a hand-written `agent_class:` in the yaml
+    // is honoured here as it is for the tool flags (Decision #77).
     [[nodiscard]] static std::string effective_agent_class(
         const std::string& agent_role,
         const std::string& explicit_class,
@@ -421,7 +417,7 @@ public:
     //
     // `agent_class` is the agent yaml's explicit `agent_class:` when the caller
     // has it (AgentMetadata::agent_class). Empty means "derive from role" —
-    // see effective_agent_class() and the SEAM note there.
+    // see effective_agent_class().
     [[nodiscard]] AssembledPrompt assemble_split(
         const std::string& agent_name,
         const std::string& vault_dir,
@@ -902,6 +898,37 @@ public:
 
         system_prompt += "---\n\n";
         system_prompt += "# Output Instructions\n\n";
+        // Class-aware like the Output Rules above (2026-09-26): an executor
+        // ends its turn with SUMMARY + HANDOFF — the shapes it actually needs —
+        // and gets no PROPOSAL (the daemon parses PROPOSAL but never acts on
+        // it). The analyst text below is unchanged.
+        if (effective_agent_class(agent_role, agent_class, conversation_mode)
+                == "executor") {
+            system_prompt += "End every turn with a SUMMARY and a HANDOFF in your response — the daemon routes on them, ";
+            system_prompt += "and your file writes alone are invisible to the team:\n\n";
+            system_prompt += "```SUMMARY\n";
+            system_prompt += "<what you did; build pass/fail; test pass/fail>\n";
+            system_prompt += "```\n\n";
+            system_prompt += "```HANDOFF\n";
+            system_prompt += "to: <evaluator if your team has one, otherwise done>\n";
+            system_prompt += "prompt: <what was done, files changed, build/test results — self-contained>\n";
+            system_prompt += "```\n\n";
+            system_prompt += "Optional, before the HANDOFF:\n\n";
+            system_prompt += "- **OBSERVATION**: something the team should know that is not part of the result.\n";
+            system_prompt += "- **VAULT_UPDATE**: a note for your own vault.\n\n";
+            system_prompt += "```OBSERVATION\n";
+            system_prompt += "title: <what you observed>\n";
+            system_prompt += "tags: [<relevant, topic, tags>]\n";
+            system_prompt += "content: |\n";
+            system_prompt += "  <detail>\n";
+            system_prompt += "```\n\n";
+            system_prompt += "```VAULT_UPDATE\n";
+            system_prompt += "path: knowledge/<filename>.md\n";
+            system_prompt += "content: |\n";
+            system_prompt += "  <content to write>\n";
+            system_prompt += "```\n";
+            return out;
+        }
         system_prompt += "When you have findings, use these structured blocks in your response:\n\n";
         system_prompt += "- **VAULT_UPDATE**: Your current distilled beliefs. Overwrites previous. Keep concise.\n";
         system_prompt += "- **OBSERVATION**: What you noticed. Timestamped, accumulated over time. Write freely.\n";
