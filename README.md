@@ -62,14 +62,10 @@ Orchestrator Daemon (C++20, deterministic, zero LLM in control loop)
 
 ## Quick Start
 
+Set up the machine first: [SETUP.md](SETUP.md) is the runbook (dependencies,
+build, install, `make doctor`). Then:
+
 ```bash
-# Dependencies (macOS)
-brew install openssl@3 sqlite
-
-# Build
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
-
 # Initialize a project
 cd ~/myproject && quorum init
 
@@ -163,7 +159,7 @@ The dashboard also has a **"What's going on?" recap button** (RecapPanel) that c
 | `quorum-core/` | C++20 daemon (src/, tests/) |
 | `quorum-web/` | Bun + Hono API server + React frontend (web dashboard) |
 | `templates/` | Role skills, domain skills, agent CONTEXT.md templates |
-| `scripts/` | install-skills.sh, setup-knowers.sh, run-knower.sh, setup-advisor.sh, web.sh, lint-templates.sh, update-templates.sh |
+| `scripts/` | install-skills.sh, doctor.sh, smoke.sh, setup-knowers.sh, run-knower.sh, setup-advisor.sh, web.sh, lint-templates.sh, update-templates.sh |
 | `docs/` | Design documents |
 | `.claude/commands/` | Claude Code skills |
 

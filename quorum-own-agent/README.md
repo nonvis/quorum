@@ -106,12 +106,12 @@ can never run by accident.
 Against a real project:
 
 ```
-python3 ownagent.py index  --project /Users/sangsoo/projects/bastion
-python3 ownagent.py map    --project /Users/sangsoo/projects/bastion
-python3 ownagent.py search --project /Users/sangsoo/projects/bastion "sweep contract factory" -k 8
-python3 ownagent.py ask    --project /Users/sangsoo/projects/bastion "How does the RegistryFactory authorize a customer sweep?"
-python3 ownagent.py ask    --project /Users/sangsoo/projects/bastion "What is the UpgradeCap emergency authority?" --single-shot
-python3 ownagent.py eval   --project /Users/sangsoo/projects/bastion --agentic
+python3 ownagent.py index  --project ~/projects/bastion
+python3 ownagent.py map    --project ~/projects/bastion
+python3 ownagent.py search --project ~/projects/bastion "sweep contract factory" -k 8
+python3 ownagent.py ask    --project ~/projects/bastion "How does the RegistryFactory authorize a customer sweep?"
+python3 ownagent.py ask    --project ~/projects/bastion "What is the UpgradeCap emergency authority?" --single-shot
+python3 ownagent.py eval   --project ~/projects/bastion --agentic
 ```
 
 `ask` defaults to `--brain claude`; add `--brain local --base-url <url>` to run
@@ -147,7 +147,7 @@ rule turns a weak model into a reliable librarian for your own notes.
   stats: `bank`), and `distill -n N` harvests grounded transcripts on demand
   (brain generates corpus-answerable questions, each runs the real loop).
   The actual LoRA fine-tune waits on a D11 revival trigger — its output is a
-  local model. Recipe lives in the vault (Quorum/Docent/04).
+  local model. Recipe lives in the vault (Quorum/Docent/00 §Roadmap).
 
 ## Eval
 
@@ -158,7 +158,7 @@ name; override with `--golden`). One JSON record per line:
 `expect_cite` path fragment. Exits 0 only if every question passes. `--agentic` grades the loop; default grades single-shot.
 
 ```
-python3 ownagent.py eval --project /Users/sangsoo/projects/bastion --agentic
+python3 ownagent.py eval --project ~/projects/bastion --agentic
 ```
 
 The rule: **the agentic loop must beat single-shot on the golden set before it

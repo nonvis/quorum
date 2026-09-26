@@ -180,7 +180,7 @@ static void print_usage(const char* prog) {
               << "\nOptions:\n"
               << "  --config <path>      Path to config YAML (optional if .quorum/ exists in project)\n"
               << "  --verbose            Enable verbose logging\n"
-              << "  --max-rounds <n>     Max revision rounds (default: 3)\n"
+              << "  --max-rounds <n>     Max turns (default: conversations.default_max_rounds, 20)\n"
               << "  --mode <generic|brainstorm>  Conversation mode (default: generic)\n"
               << "  --keep-alive         converse only: keep the daemon running after the conversation completes (persistent mode)\n"
               << "  --once               converse only: exit when the conversation completes (now the default; retained for back-compat)\n"

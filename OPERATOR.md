@@ -6,25 +6,11 @@ Local-first, single machine. No blockchain.
 
 > **Phase status, roadmap, and design context** live in the maintainer's design vault. This file is a CLI cheatsheet for running Quorum day to day. For "what is it / how does it work" — see `README.md`.
 
-## Build
+## Setup
 
-```bash
-# Dependencies (macOS)
-brew install openssl@3 sqlite
-
-# Build
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
-
-# Run tests
-cd build && ctest --output-on-failure
-
-# Put the `quorum` CLI on PATH (~/.local/bin) + role skills + supervisor agent (make uninstall removes)
-make install
-
-# Scaffold .quorum/ in a project (once per project, from its root)
-quorum init
-```
+Setting up a machine, or bringing a project onto one, follows
+[SETUP.md](SETUP.md). `make doctor` (add `PROJECT=<dir>` for a project) says
+what is missing.
 
 ## Common Operations
 
@@ -196,12 +182,12 @@ sqlite3 .quorum/quorum.db ".schema tasks"
 
 ## Known Issues
 
-- `claude -p` refuses to launch inside another Claude Code session (`CLAUDECODE` env var). Must run from a regular terminal.
+- A bare `claude -p` refuses to launch inside another Claude Code session (`CLAUDECODE` env var). Quorum's own spawns (daemon, `ask`, `agent create`, advisor setup, web, Docent) strip that variable, so `quorum ...` commands work from inside a session.
 - Buffered stdout when redirected to file — add `std::flush` for real-time tailing.
 
 ## Environment
 
-- **Runs on**: macOS (local, single machine)
+- **Runs on**: macOS, Linux, or WSL2 (local, single machine) — setup in `SETUP.md`
 - **Runtime dependency**: `claude` CLI must be installed and authenticated
 - **DB**: `.quorum/quorum.db` (SQLite, WAL mode)
 - **PID file**: `.quorum/quorum.pid`
@@ -213,6 +199,7 @@ sqlite3 .quorum/quorum.db ".schema tasks"
 | "PID file exists" on start | `rm .quorum/quorum.pid` if process is dead |
 | Stale SQLite WAL/SHM | `rm -f .quorum/quorum.db-wal .quorum/quorum.db-shm` |
 | Agent invocation hangs | Check `claude` CLI auth; verify API key is valid |
+| `WARNING: agent '<id>' skill_file not found` | Paths written on another machine — `quorum agent relink` from the project root (SETUP.md P2) |
 | Tasks stuck in pending | Check daemon log for invoker errors; verify token budget not exhausted |
 | Conversation stuck in `waiting_for_human` | Use `respond --conversation <id> "text"` to unblock |
 | Window budget exhausted | Daemon pauses dispatch; increase budget via web UI or wait for window reset |

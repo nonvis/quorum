@@ -17,7 +17,8 @@ Same agents, same HANDOFF protocol, sequential dispatch in both. Only the write 
 make build               # cmake + compile (Release) → build/quorum_daemon
 make test                # build + ctest --output-on-failure
 make build-debug         # debug symbols
-make install             # symlink `quorum` CLI → ~/.local/bin + role skills + supervisor agent (make uninstall removes)
+make install             # link `quorum` CLI → ~/.local/bin + skills/supervisor agent into ~/.claude (make uninstall removes)
+make doctor              # check this machine (PROJECT=<dir> for a project) against SETUP.md — read-only, $0
 make run-verbose         # run daemon with verbose logging
 ./scripts/web.sh start   # web dashboard in background (UI :3101, API :3100)
 ```
@@ -40,7 +41,7 @@ make run-verbose         # run daemon with verbose logging
 - **Zero LLM in the control loop.** The daemon never calls an LLM; all scheduling/routing/events are pure C++. LLMs run only in `claude -p` subprocesses spawned by the task-dispatch loop.
 - **Role → tool class:** `doer` = executor (full tools, `target_dir` cwd); every other role = analyst (`--disallowedTools "Write,Edit,NotebookEdit"`). Analyst roles "write" by emitting structured blocks the daemon applies — they never hold Write/Edit at runtime.
 - **Four core roles:** leader, thinker, doer, evaluator. (evaluator = "is it *good*?" → rubric score; correctness/convention checks — "does it work?" — are a thinker-role review specialty or the doer itself, not a core role.) The read-only **knowers** (cartographer / architect / historian / recap) and **advisor** are thinker-role specialties. Plus the **supervisor** — an installed agent definition (the autopilot driver), started `claude --agent supervisor` (interactive, not a daemon worker).
-- **Sequential dispatch** in the daemon engine — one `claude -p` at a time; per-task token cap + window budget; crash recovery re-dispatches stale `active` tasks on startup.
+- **Sequential dispatch** in the daemon engine — one `claude -p` at a time; a rolling window budget gates dispatch (there is no per-task token cap); crash recovery re-dispatches stale `active` tasks on startup.
 - **Structured output blocks** parsed by `agent/output_parser.h`: HANDOFF, VAULT_UPDATE, PROPOSAL, REVIEW, OBSERVATION, SUMMARY, EVALUATION. Read the parser for exact field shapes — don't restate them.
 
 ## Key idioms
@@ -56,6 +57,8 @@ db.execute("CREATE TABLE IF NOT EXISTS metrics (...)");
 Project-local `.quorum/` (created by `quorum init`): `config.yaml`, `quorum.db` (schema from `storage/schema.h`), `agents/*.yaml` (auto-discovered), `vaults/<agent>/` (CONTEXT.md + knowledge/). CLI auto-discovers `.quorum/` by walking up from cwd — no `--config` needed except to run the long-lived daemon.
 
 **Paths in tracked `.quorum/` files are portable refs** (`utils/path_ref.h`): `~/…` (under $HOME), `$QUORUM/…` (the Quorum checkout the running binary was built from), or project-relative (`target_dir: .`). Writers never store this machine's absolute path; readers go through `expand_path_ref`. `quorum agent relink` repairs yaml written before this existed.
+
+**Setup has one source of truth: `SETUP.md`**, checked step by step by `scripts/doctor.sh` (`make doctor`). A change to dependencies, the build, `make install`, the installed skills, path conventions, or per-project requirements updates both in the same commit; ctest `test_setup_runbook` fails when their step IDs differ or when README/DEVELOPMENT/OPERATOR grow their own install lines.
 
 Knowledge layer: `quorum knower refresh` re-surveys the codebase into the knower vaults; `quorum ask` gives an LLM answer from them + live code; `quorum search "<q>"` is the deterministic $0 (no-LLM) ranked search over `ref-*.md`.
 
@@ -75,5 +78,5 @@ Knowledge layer: `quorum knower refresh` re-surveys the codebase into the knower
 
 ## Known issues
 
-- `claude -p` refuses to launch inside another Claude Code session (`CLAUDECODE` env var) — run from a regular terminal.
+- A bare `claude -p` refuses to launch inside another Claude Code session (`CLAUDECODE` env var). Quorum's own spawns (daemon, `ask`, `agent create`, advisor setup, web, Docent) strip that variable, so `quorum ...` commands work from inside a session.
 - Buffered stdout when redirected to a file — add `std::flush` for real-time tailing.

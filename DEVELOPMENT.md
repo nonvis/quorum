@@ -77,21 +77,22 @@ make test
 # Lint skill/agent templates (driver vs worker contract; no build required)
 make lint-templates
 
+# Check this machine (and PROJECT=<dir>) against SETUP.md — read-only, $0
+make doctor
+
+# Live claude -p round trip on a throwaway project — SPENDS tokens (SETUP.md S10)
+make smoke
+
 # Start web API server + React frontend
 make web-dev         # API on :3100
 make web-client      # React on :3101 (proxy -> :3100)
 ```
 
-### Dependencies (macOS)
+### Dependencies
 
-```bash
-brew install openssl@3 sqlite
-# curl and sqlite3 provided by Xcode SDK
-
-# Web dashboard
-brew install oven-sh/bun/bun   # or: curl -fsSL https://bun.sh/install | bash
-cd quorum-web && bun install && cd client && bun install
-```
+Machine setup (packages, Claude Code, `gh`, bun, install) lives in
+[SETUP.md](SETUP.md); `make doctor` checks it. Change setup there, together
+with `scripts/doctor.sh`.
 
 ## CLI
 
@@ -126,6 +127,10 @@ quorum benchmark --role <r> [--task <name>]
 # Autopilot engine (Phase 13) — second execution engine
 quorum supervisor init [--force]           # generate ./SUPERVISOR.md + checkpoint
 claude --agent supervisor                  # run the flight plan INTERACTIVELY (not claude -p)
+
+# Observability
+quorum spend [--project <p>] [--since <ISO8601>] [--until <ISO8601>] [--json]   # $0 token/$ readout from Claude Code transcripts
+quorum version                             # build identity: version, git sha (-dirty), build stamp; also --version
 ```
 
 ## Source Layout

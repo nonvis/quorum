@@ -1,7 +1,7 @@
 # Quorum — Multi-Domain Agent Orchestration Daemon
 # ============================================================
 
-.PHONY: init build clean test help web web-stop web-status install uninstall
+.PHONY: init build clean test help web web-stop web-status install uninstall doctor smoke
 .DEFAULT_GOAL := help
 
 # ── Config ───────────────────────────────────────────────────
@@ -67,7 +67,7 @@ build-debug: ## Build with debug symbols
 
 BINDIR := $(HOME)/.local/bin
 
-install: build ## Install the `quorum` CLI (-> BINDIR, default ~/.local/bin) + skills + supervisor agent
+install: build ## Install the `quorum` CLI (-> BINDIR, default ~/.local/bin) + link skills + supervisor agent into ~/.claude
 	@mkdir -p "$(BINDIR)"
 	@ln -sfn "$(CURDIR)/$(BUILD_DIR)/quorum_daemon" "$(BINDIR)/quorum"
 	@echo "✓ quorum -> $(BINDIR)/quorum (symlink to $(BUILD_DIR)/quorum_daemon; tracks rebuilds)"
@@ -76,12 +76,18 @@ install: build ## Install the `quorum` CLI (-> BINDIR, default ~/.local/bin) + s
 		|| echo "⚠ $(BINDIR) is not on PATH — add it: export PATH=\"$(BINDIR):\$$PATH\""
 	@./scripts/install-skills.sh
 	@echo ""
-	@echo "✓ Install complete. Next: cd <your-project> && quorum init && quorum supervisor init"
+	@echo "✓ Install complete. Check the machine: make doctor (runbook: SETUP.md)"
 
-uninstall: ## Remove the `quorum` CLI symlink from BINDIR
+uninstall: ## Remove the `quorum` CLI symlink and the ~/.claude links into this checkout
 	@rm -f "$(BINDIR)/quorum"
 	@echo "✓ Removed $(BINDIR)/quorum"
-	@echo "  (skills/agents left intact — remove ~/.claude/skills/quorum-roles + ~/.claude/agents/supervisor.md by hand if desired)"
+	@./scripts/install-skills.sh --uninstall
+
+doctor: ## Check this machine against SETUP.md (read-only, $$0); PROJECT=<dir> adds the project checks
+	@./scripts/doctor.sh $(if $(PROJECT),--project $(PROJECT),)
+
+smoke: build ## Live claude -p round trip on a throwaway project (SETUP.md S10) — SPENDS TOKENS
+	@./scripts/smoke.sh
 
 # ── Run ──────────────────────────────────────────────────────
 

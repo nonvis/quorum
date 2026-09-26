@@ -220,6 +220,14 @@ add_test(NAME test_ownagent
          COMMAND python3
                  ${CMAKE_CURRENT_SOURCE_DIR}/../quorum-own-agent/test_ownagent.py)
 
+# SETUP.md is the single source of truth for machine/project setup
+# (scripts/setup_runbook_test.py): its step IDs must match scripts/doctor.sh's
+# checks one to one, and README/DEVELOPMENT/OPERATOR must not grow their own
+# package-install lines. Python, no build, no network.
+add_test(NAME test_setup_runbook
+         COMMAND python3
+                 ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/setup_runbook_test.py)
+
 add_executable(test_context_history tests/unit/test_context_history.cpp)
 target_include_directories(test_context_history PRIVATE src)
 add_test(NAME test_context_history COMMAND test_context_history)
