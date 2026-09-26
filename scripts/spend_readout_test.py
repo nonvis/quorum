@@ -246,6 +246,23 @@ class SpendReadoutCase(unittest.TestCase):
         p = self.run_readout(iso(self.now - timedelta(hours=1)))
         self.assertEqual(p.returncode, 0, p.stdout)
 
+    def test_subagent_transcripts_are_counted(self):
+        """Subagents write <session>/subagents/*.jsonl; missing them undercounted
+        every run that fanned out (the autopilot's whole shape). $0.012 in the
+        session + $0.018 in its subagent = $0.030."""
+        d = self.tdir()
+        (d / "s1" / "subagents").mkdir(parents=True)
+        ts = self.now - timedelta(minutes=1)
+        (d / "s1.jsonl").write_text(usage_record(
+            "claude-sonnet-5", ts, input_tokens=1000, output_tokens=1000) + "\n")
+        (d / "s1" / "subagents" / "agent-a1.jsonl").write_text(usage_record(
+            "claude-sonnet-4-6", ts, input_tokens=1000, output_tokens=1000) + "\n")
+        p = self.run_readout(iso(self.now - timedelta(hours=1)), ["--json"])
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        r = json.loads(p.stdout)
+        self.assertEqual(r["sessions_scanned"], 2)
+        self.assertAlmostEqual(r["total"]["est_usd"], 0.030, places=6)
+
     def test_empty_dir_scans_zero_sessions(self):
         self.tdir().mkdir(parents=True)
         p = self.run_readout(iso(self.now - timedelta(hours=1)))
@@ -321,6 +338,25 @@ class SpendReadoutCase(unittest.TestCase):
         self.assertAlmostEqual(
             self.price_of("claude-sonnet-5", input_tokens=1000,
                           output_tokens=1000), 0.012, places=6)
+
+    def test_opus_5_5_prices_at_its_own_rate(self):
+        """$4/$20 — it used to prefix-match claude-opus-5 and take $5/$25."""
+        self.assertAlmostEqual(
+            self.price_of("claude-opus-5-5", input_tokens=1000,
+                          output_tokens=1000), 0.024, places=6)
+
+    def test_opus_5_5_cache_read_is_flat(self):
+        """$0.20/MTok flat, not 0.1x of anything."""
+        self.assertAlmostEqual(
+            self.price_of("claude-opus-5-5", cache_read_input_tokens=1_000_000),
+            0.20, places=6)
+
+    def test_a_longer_unseen_id_is_not_its_prefix_model(self):
+        """claude-opus-5-7 is an unseen model, not claude-opus-5: it must be
+        flagged as a family-rate guess, never silently priced as Opus 5."""
+        self.seed_one("claude-opus-5-7", input_tokens=1000, output_tokens=1000)
+        p = self.run_readout(iso(self.now - timedelta(hours=1)), ["--json"])
+        self.assertIn("claude-opus-5-7", json.loads(p.stdout)["family_rate_models"])
 
     def test_sonnet_4_6_keeps_the_older_rate(self):
         """The discriminator: same family, different price. $3/$15."""

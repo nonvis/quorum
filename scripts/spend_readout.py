@@ -9,9 +9,11 @@ budget-comparison line into the morning review.
 
 WHY the transcripts are the source of record: every project's Claude Code
 sessions live under `~/.claude/projects/<munged-cwd>/*.jsonl`, and that covers
-the interactive supervisor session AND its Task subagents AND the daemon-spawned
-headless `claude -p` runs whose cwd is inside the project. One directory, one
-sum. The daemon SQLite (`.quorum/quorum.db`) also tracks `converse` costs — we
+the interactive supervisor session AND the daemon-spawned headless `claude -p`
+runs whose cwd is inside the project. Subagents (Agent/Task tool) write their own
+transcripts under `<munged-cwd>/<session-id>/subagents/*.jsonl` — scanned too
+(2026-09-26: they had been missed; in a meridian knower refresh four Explore
+subagents were most of the architect's cost). One directory tree, one sum. The daemon SQLite (`.quorum/quorum.db`) also tracks `converse` costs — we
 report that as a SEPARATE labeled cross-check line, NEVER added to the transcript
 sum (adding it would double-count the same converse spend). It runs on BOTH
 paths: when the transcript dir is absent the ledger is the only reading left for
@@ -69,23 +71,26 @@ import argparse
 import calendar
 import json
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # ── Per-MTok list prices ───────────────────────────────────────────────────
-# Re-verified 2026-09-04 against a LOCAL source (this script never fetches the
-# web): claude-api skill (Claude Code 2.1.261 bundle), pricing table cached
-# 2026-06-24.
+# Re-verified 2026-09-26 against a LOCAL source (this script never fetches the
+# web): claude-api skill (Claude Code 2.1.283 bundle) — it added Opus 5.5.
 #
-# EXACT ids, resolved by LONGEST PREFIX: "claude-fable-5-1[1m]" and dated
-# suffixes ("claude-opus-5-20260514") resolve to their base row, and
-# "claude-fable-5-1" beats "claude-fable-5" because it is longer. The previous
-# table keyed by family SUBSTRING, which mispriced Sonnet 5 ($2/$10) at the
-# Sonnet 4.6 rate ($3/$15) — hence exact ids.
+# EXACT ids: an id matches a row when it IS that id, or that id plus a context
+# suffix ("claude-fable-5-1[1m]") or a dated snapshot ("claude-opus-5-20260514")
+# — see id_matches(). Anything else is a different model: "claude-opus-5-5"
+# used to prefix-match "claude-opus-5" and was silently priced at $5/$25 with a
+# 0.1x cache read ($0.50) instead of its own $4/$20 and $0.20 (2026-09-26). The
+# previous table keyed by family SUBSTRING, which mispriced Sonnet 5 ($2/$10) at
+# the Sonnet 4.6 rate ($3/$15) — hence exact ids.
 MODEL_RATES = {
     "claude-fable-5-1":  {"in": 10.0, "out": 50.0},
+    "claude-opus-5-5":   {"in": 4.0,  "out": 20.0},
     "claude-fable-5":    {"in": 10.0, "out": 50.0},
     "claude-opus-5":     {"in": 5.0,  "out": 25.0},
     "claude-opus-4-8":   {"in": 5.0,  "out": 25.0},
@@ -121,6 +126,7 @@ CACHE_CREATE_1H_MULT = 2.00
 CACHE_READ_MULT = 0.10
 FLAT_CACHE_READ_USD = {
     "claude-fable-5-1": 0.25,
+    "claude-opus-5-5":  0.20,
     # Listed by the same source; no in/out row here, so it prices n/a today —
     # the flat read rate is recorded so a future row inherits it.
     "claude-mythos-5-1": 0.25,
@@ -212,6 +218,17 @@ def parse_ts(s: str):
     return None
 
 
+def id_matches(model: str, mid: str) -> bool:
+    """`model` is the row id `mid` itself, `mid` + a bracket suffix ("[1m]"), or
+    `mid` + a dated snapshot ("-20260514"). A longer id ("claude-opus-5-5") is a
+    different model, not a variant of "claude-opus-5"."""
+    if not model.startswith(mid):
+        return False
+    rest = model[len(mid):]
+    return (rest == "" or rest.startswith("[")
+            or re.fullmatch(r"-\d{8}(\[.*\])?", rest) is not None)
+
+
 def rate_family(model: str) -> str:
     m = (model or "").lower()
     for fam in FAMILY_RATES:
@@ -232,7 +249,7 @@ def resolve_rate(model: str):
     m = (model or "").lower()
     best = None
     for mid in MODEL_RATES:
-        if m.startswith(mid) and (best is None or len(mid) > len(best)):
+        if id_matches(m, mid) and (best is None or len(mid) > len(best)):
             best = mid
     if best is not None:
         return MODEL_RATES[best], "exact", best
@@ -246,7 +263,7 @@ def cache_read_rate(model: str, in_rate: float) -> float:
     """Per-MTok cache-read price: 0.1x input, or a model's FLAT override."""
     m = (model or "").lower()
     for mid, flat in FLAT_CACHE_READ_USD.items():
-        if m.startswith(mid):
+        if id_matches(m, mid):
             return flat
     return in_rate * CACHE_READ_MULT
 
@@ -374,7 +391,8 @@ def scan_transcripts(tdir: Path, since_dt: datetime, until_dt: datetime):
     lines_skipped = 0
     fallback_key = 0
 
-    for jf in sorted(tdir.glob("*.jsonl")):
+    files = sorted(tdir.glob("*.jsonl")) + sorted(tdir.glob("*/subagents/*.jsonl"))
+    for jf in files:
         try:
             if jf.stat().st_mtime < slack_epoch:
                 continue
