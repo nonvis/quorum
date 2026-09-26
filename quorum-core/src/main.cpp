@@ -978,7 +978,8 @@ int main(int argc, char* argv[]) {
                       << "(Track 2 feature; not yet configured)\n";
             return 2;
         }
-        vault_dedup_opts.vault_path = cfg.global_knowledge_path;
+        vault_dedup_opts.vault_path = sui::quorum::expand_path_ref(
+            cfg.global_knowledge_path, sui::quorum::discover_project_root().value_or(""));
         return sui::quorum::cli::run_vault_dedup(vault_dedup_opts);
     }
     if (subcommand == "vault" && vault_subcmd_arg == "audit" && vault_audit_opts.use_global) {
@@ -987,7 +988,8 @@ int main(int argc, char* argv[]) {
                       << "(Track 2 feature; not yet configured)\n";
             return 2;
         }
-        vault_audit_opts.vault_path = cfg.global_knowledge_path;
+        vault_audit_opts.vault_path = sui::quorum::expand_path_ref(
+            cfg.global_knowledge_path, sui::quorum::discover_project_root().value_or(""));
         return sui::quorum::cli::run_vault_audit(vault_audit_opts);
     }
 

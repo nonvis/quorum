@@ -110,7 +110,7 @@ struct QuorumConfig {
     ConversationConfig conversations;
     AdvisorConfig advisor;
     std::vector<AgentMetadata> agents;
-    std::string global_knowledge_path;  // Phase 10 Track 2 — operator-curated cross-project knowledge (read-only). Empty = 3-scope behavior. Field plumbed in Track 3; YAML parser support added in Track 2.
+    std::string global_knowledge_path;  // Phase 10 Track 2 — operator-curated cross-project knowledge (read-only), a top-level key; `~/` allowed. Read by `vault dedup|audit --global`; the assembler still walks 3 scopes (Track 2 deferred).
 };
 
 namespace detail {
@@ -294,6 +294,15 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
             continue;
         }
 
+        // Top-level scalar: it ends the previous section (it used to be filed
+        // under that section and dropped).
+        if (indent == 0) {
+            section.clear();
+            subsection.clear();
+            if (key == "global_knowledge_path") cfg.global_knowledge_path = val;
+            continue;
+        }
+
         // Subsection header
         if (val.empty() && indent >= 2 && indent <= 4) {
             subsection = key;
@@ -387,9 +396,8 @@ inline std::optional<QuorumConfig> load_config(const std::string& path) {
                 if (!trimmed.empty()) cfg.conversations.default_path.push_back(trimmed);
             }
         } else if (section == "advisor") {
-            // Advisor specialty (thinker + skill). vault_path MUST be a section
-            // key (this branch) — a bare top-level scalar with empty section is
-            // silently dropped, which is why global_knowledge_path never parses.
+            // Advisor specialty (thinker + skill). vault_path is a section key
+            // (this branch); top-level scalars are handled above.
             if (key == "vault_path") cfg.advisor.vault_path = val;
         }
     }

@@ -106,6 +106,33 @@ static void test_skill_file_parsed() {
     cleanup_temp(path);
 }
 
+// --- Test D2: top-level scalars (global_knowledge_path) ----------------------
+// A top-level `key: value` used to be filed under the section before it and
+// dropped, so `vault dedup|audit --global` could never find its path.
+
+static void test_top_level_scalar_parsed() {
+    std::cout << "\n=== D2. top-level scalar ends the section before it ===\n\n";
+
+    auto path = make_temp_yaml(
+        "daemon:\n"
+        "  data_dir: .quorum\n"
+        "global_knowledge_path: ~/notes/quorum-global\n"
+        "pid_file: top-level-not-daemon.pid\n"
+        "conversations:\n"
+        "  leader: leader\n");
+    auto cfg = sui::quorum::load_config(path);
+
+    check(cfg.has_value(), "D2: load_config returned a value");
+    check(cfg->global_knowledge_path == "~/notes/quorum-global",
+          "D2: global_knowledge_path parsed from the top level");
+    check(cfg->daemon.data_dir == ".quorum", "D2: the section before it still parsed");
+    check(cfg->daemon.pid_file != "top-level-not-daemon.pid",
+          "D2: a top-level key is not filed under the previous section");
+    check(cfg->conversations.leader == "leader", "D2: the section after it still parsed");
+
+    cleanup_temp(path);
+}
+
 // --- Test E: validate_config — leader not in agents -------------------------
 
 static void test_validate_leader_not_found() {
@@ -157,6 +184,7 @@ int main() {
     test_explicit_agent_class_overrides();
     test_non_doer_roles_stay_analyst();
     test_skill_file_parsed();
+    test_top_level_scalar_parsed();
     test_validate_leader_not_found();
     test_validate_default_path_missing();
     test_validate_all_valid();
