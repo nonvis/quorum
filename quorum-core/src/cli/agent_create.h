@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "utils/subprocess.h"
+#include "utils/temp_file.h"
 #include "utils/json.h"
 #include "utils/config.h"
 #include "utils/discover.h"
@@ -172,20 +173,16 @@ inline std::string generate_context_md(
     gen_prompt += template_content;
     gen_prompt += "\n--- TEMPLATE END ---\n";
 
-    auto temp_path = "/tmp/quorum_agent_gen_" + agent_name + ".txt";
-    {
-        std::ofstream f(temp_path, std::ios::trunc);
-        f << gen_prompt;
-    }
+    auto prompt_file = sui::quorum::TempFile::create("agent-gen", gen_prompt);
 
     std::cout << "  Generating CONTEXT.md via claude -p...\n";
-    auto cmd = "env -u CLAUDECODE cat " + temp_path
+    auto cmd = "env -u CLAUDECODE cat " + prompt_file.path()
         + " | claude -p --dangerously-skip-permissions"
         + " --disallowedTools \"Write,Edit,NotebookEdit\""
         + " --output-format json 2>&1";
 
-    auto result = sui::quorum::run_command(cmd);
-    std::remove(temp_path.c_str());
+    auto result = prompt_file.path().empty() ? std::nullopt : sui::quorum::run_command(cmd);
+    prompt_file.remove();
 
     if (result && result->exit_code == 0) {
         // DEPTH-0 read of the claude -p envelope (see utils/json.h): a flat

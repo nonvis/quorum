@@ -281,6 +281,11 @@ add_executable(test_path_ref tests/unit/test_path_ref.cpp)
 target_include_directories(test_path_ref PRIVATE src)
 add_test(NAME test_path_ref COMMAND test_path_ref)
 
+# Private temp files for claude -p prompts + the crash sweep (utils/temp_file.h).
+add_executable(test_temp_file tests/unit/test_temp_file.cpp)
+target_include_directories(test_temp_file PRIVATE src)
+add_test(NAME test_temp_file COMMAND test_temp_file)
+
 add_executable(test_agent_relink tests/unit/test_agent_relink.cpp)
 target_include_directories(test_agent_relink PRIVATE src)
 add_test(NAME test_agent_relink COMMAND test_agent_relink)

@@ -39,6 +39,7 @@
 #include "cli/spend.h"
 #include "utils/discover.h"
 #include "utils/self_path.h"
+#include "utils/temp_file.h"
 #include "utils/version.h"
 // Generated at BUILD time by src/version_stamp.cmake (build dir, never
 // committed): QUORUM_VERSION / QUORUM_GIT_SHA / QUORUM_GIT_DIRTY /
@@ -1047,8 +1048,10 @@ int main(int argc, char* argv[]) {
         db, cfg.conversations, cfg.agents, &context_assembler,
         project_root_str.value_or(""));
 
-    // Recover from previous crash (if any)
+    // Recover from previous crash (if any): stale tasks, and the private temp
+    // prompt files a crashed quorum process left behind (utils/temp_file.h).
     recover_stale_tasks(db, conversation_engine, verbose);
+    sui::quorum::sweep_stale_temp_files();
 
     // ── Subcommand early exits (no PID lock, no daemon) ──────────────────
     if (subcommand == "status") {

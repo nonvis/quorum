@@ -38,6 +38,7 @@
 #include "utils/subprocess.h"       // run_command
 #include "utils/json.h"             // json::extract_top_level_string
 #include "utils/path_ref.h"         // expand_path_ref
+#include "utils/temp_file.h"        // TempFile
 
 namespace sui::quorum::cli {
 
@@ -547,14 +548,14 @@ namespace detail {
         header_role = opts.agent;
     }
 
-    // 3. Write the prompt to a temp file (ABSOLUTE path so the cd below doesn't
-    //    break the `cat`).
-    auto temp_path =
-        "/tmp/quorum_ask_" + std::to_string(::getpid()) + ".txt";
-    {
-        std::ofstream f(temp_path, std::ios::trunc);
-        f << prompt;
+    // 3. Write the prompt to a private temp file (ABSOLUTE path so the cd
+    //    below doesn't break the `cat`; utils/temp_file.h).
+    auto prompt_file = sui::quorum::TempFile::create("ask", prompt);
+    if (prompt_file.path().empty()) {
+        std::cerr << "ERROR: cannot write the prompt to a temp file\n";
+        return 1;
     }
+    const auto& temp_path = prompt_file.path();
 
     // 4. Live claude -p invocation — read-only (Write/Edit/NotebookEdit
     //    disallowed), cwd = project root so the leader can Read/Grep/Glob the
@@ -567,7 +568,7 @@ namespace detail {
                " --disallowedTools \"Write,Edit,NotebookEdit\""
                " --output-format json 2>&1";
     auto result = sui::quorum::run_command(cmd);
-    std::remove(temp_path.c_str());
+    prompt_file.remove();
 
     if (!result || result->exit_code != 0) {
         std::cerr << "ERROR: claude -p invocation failed";

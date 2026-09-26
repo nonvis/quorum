@@ -11,6 +11,7 @@
 #include "utils/config.h"
 #include "utils/json.h"
 #include "utils/subprocess.h"
+#include "utils/temp_file.h"
 
 namespace sui::quorum {
 
@@ -141,9 +142,9 @@ public:
     // `--append-system-prompt-file` flag segment. Returns the leading-space
     // form so it can be concatenated directly into the shell command, mirror
     // of build_tool_flags(). The path is NOT shell-escaped — the caller owns
-    // a daemon-controlled temp path under /tmp (matches existing temp_path
-    // handling for the prompt body), and shell escaping is intentionally not
-    // applied to keep behavior identical to tool_flags() conventions.
+    // a daemon-controlled mkstemp path (utils/temp_file.h: no spaces or
+    // quotes), and shell escaping is intentionally not applied to keep
+    // behavior identical to tool_flags() conventions.
     [[nodiscard]] static std::string build_system_prompt_flag(
         const std::string& sysprompt_path) {
         if (sysprompt_path.empty()) return "";
@@ -194,32 +195,27 @@ public:
         // legacy prepend in place would double-emit CONTEXT.md whenever a
         // conversation task ran (because system_prompt already contains it).
 
-        // Write prompt to temp file to avoid shell escaping issues
-        auto temp_path = "/tmp/quorum_prompt_" + std::to_string(task_id) + ".txt";
-        {
-            std::ofstream f(temp_path, std::ios::trunc);
-            if (!f.is_open()) {
-                auto err = "Failed to write temp prompt file";
-                mark_failed(task_id, err);
-                return {.success = false, .error = err};
-            }
-            f << prompt;
+        // Write the prompt to a private temp file (utils/temp_file.h) to avoid
+        // shell escaping. Unique per process — task ids repeat across project
+        // databases, so the old /tmp/quorum_prompt_<task_id>.txt let two
+        // concurrent projects overwrite each other's prompt. Both files live
+        // until invoke() returns (the retry below reuses them).
+        auto prompt_file = TempFile::create("prompt", prompt);
+        if (prompt_file.path().empty()) {
+            auto err = "Failed to write temp prompt file";
+            mark_failed(task_id, err);
+            return {.success = false, .error = err};
         }
+        const auto& temp_path = prompt_file.path();
 
-        // Write system_prompt to its own temp file when present. Daemon-
-        // controlled path; not shell-escaped (matches temp_path convention).
-        std::string sysprompt_path;
+        // The system prompt gets its own file when present. If it can't be
+        // written, fall back to a plain invocation (loses cache reuse but keeps
+        // the run going).
+        TempFile sysprompt_file;
         if (!system_prompt_body.empty()) {
-            sysprompt_path = "/tmp/quorum_sysprompt_" + std::to_string(task_id) + ".txt";
-            std::ofstream f(sysprompt_path, std::ios::trunc);
-            if (f.is_open()) {
-                f << system_prompt_body;
-            } else {
-                // Couldn't write the sysprompt — fall back to plain invocation
-                // (loses cache reuse but keeps the run going).
-                sysprompt_path.clear();
-            }
+            sysprompt_file = TempFile::create("sysprompt", system_prompt_body);
         }
+        const std::string sysprompt_path = sysprompt_file.path();
 
         // Determine session flag
         std::string session_flag;
@@ -285,10 +281,6 @@ public:
 
         auto cmd_result = run_command(cmd);
 
-        // Clean up temp files (prompt + sysprompt)
-        std::remove(temp_path.c_str());
-        if (!sysprompt_path.empty()) std::remove(sysprompt_path.c_str());
-
         if (!cmd_result) {
             auto err = "claude -p process failed to launch for task " + std::to_string(task_id);
             mark_failed(task_id, err);
@@ -308,24 +300,9 @@ public:
                 std::cerr << "WARNING: session resume failed for task " << task_id
                           << " (session " << task_session_id << "), retrying fresh\n";
 
-                // Rewrite prompt + sysprompt temp files (they were cleaned up
-                // on the first exit path). Track 5: same sysprompt flag so
-                // the retry shares the cache prefix with the original try.
-                {
-                    std::ofstream f(temp_path, std::ios::trunc);
-                    if (f.is_open()) f << prompt;
-                }
-                if (!sysprompt_path.empty()) {
-                    std::ofstream f(sysprompt_path, std::ios::trunc);
-                    if (f.is_open()) {
-                        f << system_prompt_body;
-                    } else {
-                        // Match initial-write behavior on failure.
-                        sysprompt_path.clear();
-                        sysprompt_flag.clear();
-                    }
-                }
-
+                // The prompt + sysprompt temp files are still in place (they
+                // live until invoke() returns). Track 5: same sysprompt flag
+                // so the retry shares the cache prefix with the original try.
                 // Retry without -r, with --session-id for fresh session
                 auto retry_cmd = cwd_prefix + "env -u CLAUDECODE cat " + temp_path
                     + " | claude -p --dangerously-skip-permissions"
@@ -336,8 +313,6 @@ public:
                     + " --output-format json 2>&1";
 
                 cmd_result = run_command(retry_cmd);
-                std::remove(temp_path.c_str());
-                if (!sysprompt_path.empty()) std::remove(sysprompt_path.c_str());
 
                 if (cmd_result && !validate_exit_code(*cmd_result)) {
                     // Retry succeeded — continue with the retry result
