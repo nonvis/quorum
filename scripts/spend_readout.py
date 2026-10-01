@@ -13,7 +13,8 @@ the interactive supervisor session AND the daemon-spawned headless `claude -p`
 runs whose cwd is inside the project. Subagents (Agent/Task tool) write their own
 transcripts under `<munged-cwd>/<session-id>/subagents/*.jsonl` — scanned too
 (2026-09-26: they had been missed; in a meridian knower refresh four Explore
-subagents were most of the architect's cost). One directory tree, one sum. The daemon SQLite (`.quorum/quorum.db`) also tracks `converse` costs — we
+subagents were most of the architect's cost) and reported as their own
+`by source` split (main sessions vs subagents) under the TOTAL. One directory tree, one sum. The daemon SQLite (`.quorum/quorum.db`) also tracks `converse` costs — we
 report that as a SEPARATE labeled cross-check line, NEVER added to the transcript
 sum (adding it would double-count the same converse spend). It runs on BOTH
 paths: when the transcript dir is absent the ledger is the only reading left for
@@ -377,15 +378,41 @@ def split_cache_creation(usage: dict):
     return 0, 0, int(usage.get("cache_creation_input_tokens") or 0)
 
 
+SOURCES = ("main", "subagents")
+
+
+def transcript_source(rel_path: str) -> str:
+    """'subagents' when the path (relative to the transcript dir, so HOME can't
+    leak a match) has a `subagents` directory segment, else 'main'."""
+    return "subagents" if "subagents" in Path(rel_path).parts[:-1] else "main"
+
+
+def new_bucket():
+    return {"input_tokens": 0, "output_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_creation_5m_tokens": 0, "cache_creation_1h_tokens": 0,
+            "cache_creation_untiered_tokens": 0,
+            "cache_read_input_tokens": 0}
+
+
+def model_est(model: str, m: dict):
+    """est_usd for one model bucket — the ONE pricing path for every table."""
+    return est_usd(model, m["input_tokens"], m["output_tokens"],
+                   m["cache_creation_5m_tokens"], m["cache_creation_1h_tokens"],
+                   m["cache_creation_untiered_tokens"],
+                   m["cache_read_input_tokens"])
+
+
 def scan_transcripts(tdir: Path, since_dt: datetime, until_dt: datetime):
     """Sum usage per model over records with timestamp in [since, until].
 
     Pre-filter files by mtime >= (since - 1h slack); parse line-by-line; dedupe
     by message.id (keep last occurrence). Returns (per_model, sessions_scanned,
-    lines_skipped, records_counted).
+    lines_skipped, records_counted, per_source) — per_source splits the same
+    deduped records by transcript_source() of the file that holds them.
     """
     slack_epoch = calendar.timegm(since_dt.timetuple()) - 3600
-    # message.id -> (model, in, out, cw5, cw1h, cw_untiered, cr) — last wins.
+    # message.id -> (model, in, out, cw5, cw1h, cw_untiered, cr, file) — last wins.
     by_msg = {}
     sessions_scanned = 0
     lines_skipped = 0
@@ -433,33 +460,35 @@ def scan_transcripts(tdir: Path, since_dt: datetime, until_dt: datetime):
                     int(usage.get("output_tokens") or 0),
                     cw5, cw1h, cw_untiered,
                     int(usage.get("cache_read_input_tokens") or 0),
+                    str(jf.relative_to(tdir)),
                 )
 
     per_model = {}
-    for model, i, o, cw5, cw1h, cwu, cr in by_msg.values():
-        m = per_model.setdefault(
-            model,
-            {"input_tokens": 0, "output_tokens": 0,
-             "cache_creation_input_tokens": 0,
-             "cache_creation_5m_tokens": 0, "cache_creation_1h_tokens": 0,
-             "cache_creation_untiered_tokens": 0,
-             "cache_read_input_tokens": 0},
-        )
-        m["input_tokens"] += i
-        m["output_tokens"] += o
-        m["cache_creation_5m_tokens"] += cw5
-        m["cache_creation_1h_tokens"] += cw1h
-        m["cache_creation_untiered_tokens"] += cwu
-        # The reported cache-w column stays the TOTAL, split or not.
-        m["cache_creation_input_tokens"] += cw5 + cw1h + cwu
-        m["cache_read_input_tokens"] += cr
+    # source -> {"files": set of paths, "records": n, "models": {model: bucket}}
+    per_source = {s: {"files": set(), "records": 0, "models": {}}
+                  for s in SOURCES}
+    for model, i, o, cw5, cw1h, cwu, cr, path in by_msg.values():
+        src = per_source[transcript_source(path)]
+        src["files"].add(path)
+        src["records"] += 1
+        for m in (per_model.setdefault(model, new_bucket()),
+                  src["models"].setdefault(model, new_bucket())):
+            m["input_tokens"] += i
+            m["output_tokens"] += o
+            m["cache_creation_5m_tokens"] += cw5
+            m["cache_creation_1h_tokens"] += cw1h
+            m["cache_creation_untiered_tokens"] += cwu
+            # The reported cache-w column stays the TOTAL, split or not.
+            m["cache_creation_input_tokens"] += cw5 + cw1h + cwu
+            m["cache_read_input_tokens"] += cr
 
-    return per_model, sessions_scanned, lines_skipped, len(by_msg)
+    return per_model, sessions_scanned, lines_skipped, len(by_msg), per_source
 
 
 def build_result(project, tdir, since_dt, until_dt, since_str, until_str,
                  retention):
-    per_model, sessions, skipped, counted = scan_transcripts(tdir, since_dt, until_dt)
+    per_model, sessions, skipped, counted, per_source = scan_transcripts(
+        tdir, since_dt, until_dt)
 
     models = []
     unknown_models = []
@@ -470,10 +499,7 @@ def build_result(project, tdir, since_dt, until_dt, since_str, until_str,
            "est_usd": 0.0}
     for model in sorted(per_model):
         m = per_model[model]
-        e = est_usd(model, m["input_tokens"], m["output_tokens"],
-                    m["cache_creation_5m_tokens"], m["cache_creation_1h_tokens"],
-                    m["cache_creation_untiered_tokens"],
-                    m["cache_read_input_tokens"])
+        e = model_est(model, m)
         _, source, key = resolve_rate(model)
         fam = rate_family(model)
         if source == "unknown":
@@ -508,7 +534,28 @@ def build_result(project, tdir, since_dt, until_dt, since_str, until_str,
     # The TOTAL under-counts whenever a model we saw has no rate: it is a FLOOR.
     tot["est_is_floor"] = bool(unknown_models)
 
-    budget = read_window_budget(project)
+    # Same records, split by which transcript held them; priced per model
+    # through model_est() exactly like the rows above, floored the same way.
+    by_source = {}
+    for name in SOURCES:
+        src = per_source[name]
+        b = {"files": len(src["files"]), "records": src["records"],
+             "input_tokens": 0, "output_tokens": 0,
+             "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+             "est_usd": 0.0, "est_is_floor": False}
+        for model, m in src["models"].items():
+            for k in ("input_tokens", "output_tokens",
+                      "cache_creation_input_tokens", "cache_read_input_tokens"):
+                b[k] += m[k]
+            e = model_est(model, m)
+            if e is None:
+                b["est_is_floor"] = True
+            else:
+                b["est_usd"] += e
+        b["est_usd"] = round(b["est_usd"], 4)
+        by_source[name] = b
+
+    budget =read_window_budget(project)
     budget_pct = None
     if budget and budget > 0:
         budget_pct = round(100.0 * tot["est_usd"] / budget, 1)
@@ -535,6 +582,7 @@ def build_result(project, tdir, since_dt, until_dt, since_str, until_str,
         "family_rate_models": family_rate_models,
         "cache_creation_untiered_models": untiered_models,
         "total": tot,
+        "by_source": by_source,
         "window_budget_usd": budget,
         "budget_pct_est": budget_pct,
         "db_cross_check_usd": (round(db_usd, 4) if db_usd is not None else None),
@@ -642,6 +690,26 @@ def print_human(r):
           % ("TOTAL", n(t["input_tokens"]), n(t["output_tokens"]),
              n(t["cache_creation_input_tokens"]),
              n(t["cache_read_input_tokens"]), total_est))
+    if r.get("by_source") is not None:
+        print("  %-14s %5s %8s %12s %10s %12s %12s %9s %6s"
+              % ("by source", "files", "turns", "in", "out", "cache-w",
+                 "cache-r", "EST $", "share"))
+        for key, label in (("main", "main sessions"), ("subagents", "subagents")):
+            s = r["by_source"][key]
+            est = d(s["est_usd"])
+            if s["est_is_floor"]:
+                est += "+"
+            if s["est_usd"] is None or t["est_usd"] is None:
+                share = "n/a"
+            elif t["est_usd"] > 0:
+                share = "%.0f%%" % (100.0 * s["est_usd"] / t["est_usd"])
+            else:
+                share = "n/a"
+            print("  %-14s %5s %8s %12s %10s %12s %12s %9s %6s"
+                  % (label, n(s["files"]), n(s["records"]),
+                     n(s["input_tokens"]), n(s["output_tokens"]),
+                     n(s["cache_creation_input_tokens"]),
+                     n(s["cache_read_input_tokens"]), est, share))
     if t.get("est_is_floor"):
         print("  TOTAL is a FLOOR — no rate for %s; its tokens are counted, its "
               "$ is not." % ", ".join(r["unknown_families"]))

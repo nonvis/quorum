@@ -161,7 +161,10 @@ class SpendReadoutCase(unittest.TestCase):
 
     def test_absent_dir_json_status(self):
         p = self.run_readout(iso(self.now - timedelta(hours=1)), ["--json"])
-        self.assertEqual(json.loads(p.stdout)["status"], "no_transcript_dir")
+        r = json.loads(p.stdout)
+        self.assertEqual(r["status"], "no_transcript_dir")
+        # No by-source split for a source we cannot see — absent, not zeros.
+        self.assertNotIn("by_source", r)
 
     def test_absent_dir_json_total_is_null(self):
         p = self.run_readout(iso(self.now - timedelta(hours=1)), ["--json"])
@@ -262,6 +265,54 @@ class SpendReadoutCase(unittest.TestCase):
         r = json.loads(p.stdout)
         self.assertEqual(r["sessions_scanned"], 2)
         self.assertAlmostEqual(r["total"]["est_usd"], 0.030, places=6)
+
+    def test_by_source_splits_main_and_subagents(self):
+        """2 fable records in the session file, 1 in its subagent file: each
+        source carries its own records/files/tokens, and the two $ add up to
+        the TOTAL (same pricing path, no second one)."""
+        d = self.tdir()
+        (d / "s1" / "subagents").mkdir(parents=True)
+        ts = self.now - timedelta(minutes=1)
+
+        def rec(mid, i, o, cr):
+            return json.dumps({
+                "type": "assistant", "timestamp": iso(ts),
+                "message": {"id": mid, "model": "claude-fable-5-1", "usage": {
+                    "input_tokens": i, "output_tokens": o,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": cr}}})
+        (d / "s1.jsonl").write_text(rec("msg_m1", 100, 200, 3000) + "\n" +
+                                    rec("msg_m2", 10, 20, 300) + "\n")
+        (d / "s1" / "subagents" / "a.jsonl").write_text(
+            rec("msg_a1", 7, 9, 11) + "\n")
+        p = self.run_readout(iso(self.now - timedelta(hours=1)), ["--json"])
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        r = json.loads(p.stdout)
+        bs = r["by_source"]
+        self.assertEqual(bs["main"]["records"], 2)
+        self.assertEqual(bs["subagents"]["records"], 1)
+        self.assertEqual(bs["main"]["files"], 1)
+        self.assertEqual(bs["subagents"]["files"], 1)
+        self.assertEqual((bs["main"]["input_tokens"], bs["main"]["output_tokens"],
+                          bs["main"]["cache_read_input_tokens"]), (110, 220, 3300))
+        self.assertEqual((bs["subagents"]["input_tokens"],
+                          bs["subagents"]["output_tokens"],
+                          bs["subagents"]["cache_read_input_tokens"]), (7, 9, 11))
+        self.assertEqual(round(bs["main"]["est_usd"] + bs["subagents"]["est_usd"], 2),
+                         round(r["total"]["est_usd"], 2))
+        out = self.run_readout(iso(self.now - timedelta(hours=1))).stdout
+        self.assertIn("by source", out)
+        self.assertIn("main sessions", out)
+        self.assertRegex(out, r"\n  subagents\s+1\s+1\s")
+
+    def test_by_source_no_subagents_is_zero_not_missing(self):
+        """A present dir with no subagent transcripts: the subagents row is a
+        measured zero, never an absent key."""
+        self.seed_one("claude-fable-5-1", input_tokens=1000, output_tokens=1000)
+        p = self.run_readout(iso(self.now - timedelta(hours=1)), ["--json"])
+        sub = json.loads(p.stdout)["by_source"]["subagents"]
+        self.assertEqual((sub["files"], sub["records"], sub["est_usd"]),
+                         (0, 0, 0.0))
 
     def test_empty_dir_scans_zero_sessions(self):
         self.tdir().mkdir(parents=True)
