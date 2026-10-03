@@ -73,14 +73,14 @@ static Fixture make_fixture() {
                "\n"
                "vault_path: .quorum/vaults/cartographer/\n"
                "context_file: .quorum/vaults/cartographer/CONTEXT.md\n"
-               "skill_file: /Users/sangsoo/nonvis/quorum/templates/skills/cartographer/SKILL.md\n");
+               "skill_file: /Users/mac-operator/nonvis/quorum/templates/skills/cartographer/SKILL.md\n");
     write_file(agents / "cpp-dev.yaml",
                "id: cpp-dev\n"
                "role: doer\n"
-               "skill_file: \"/Users/sangsoo/.claude/skills/quorum-roles/doer/SKILL.md\"\n"
+               "skill_file: \"/Users/mac-operator/.claude/skills/quorum-roles/doer/SKILL.md\"\n"
                "\n"
                "executor:\n"
-               "  target_dir: /Users/sangsoo/nonvis/meridian\n"
+               "  target_dir: /Users/mac-operator/nonvis/meridian\n"
                "  allowed_tools: all\n");
     write_file(agents / "leader.yaml",
                "id: leader\n"
@@ -89,7 +89,7 @@ static Fixture make_fixture() {
     write_file(agents / "ghost.yaml",
                "id: ghost\n"
                "role: thinker\n"
-               "skill_file: /Users/sangsoo/nowhere/SKILL.md\n");
+               "skill_file: /Users/mac-operator/nowhere/SKILL.md\n");
     write_file(agents / "portable.yaml",
                "id: portable\n"
                "role: thinker\n"
@@ -97,7 +97,7 @@ static Fixture make_fixture() {
     write_file(agents / "local.yaml",
                "id: local\n"
                "role: doer\n"
-               "skill_file: /Users/sangsoo/nonvis/meridian/.claude/skills/local/SKILL.md\n"
+               "skill_file: /Users/mac-operator/nonvis/meridian/.claude/skills/local/SKILL.md\n"
                "executor:\n"
                "  target_dir: " + (f.project / "sub").string() + "\n");
     fs::create_directories(f.project / "sub");
