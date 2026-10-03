@@ -159,9 +159,10 @@ static void print_usage(const char* prog) {
               << "  " << prog << " knower refresh [--all | --knower <name>] [--project <path|name>]\n"
               << "                                          Re-run the read-only knower scan(s) so the knower vaults re-survey the codebase;\n"
               << "                                            lenses run one after another (a project runs one daemon)\n"
-              << "  " << prog << " spend [--project <path|name>] [--since <ISO8601>] [--until <ISO8601>] [--json]\n"
+              << "  " << prog << " spend [--project <path|name>] [--since <ISO8601>] [--until <ISO8601>] [--session <id|prefix>] [--json]\n"
               << "                                          Per-run token/$ spend readout from the Claude Code transcripts (deterministic, $0);\n"
-              << "                                            --since defaults to the flight start in .quorum/autopilot/LOCK\n"
+              << "                                            --since defaults to the flight start in .quorum/autopilot/LOCK;\n"
+              << "                                            --session scopes it to one main transcript + its subagents (--since then optional)\n"
               << "  " << prog << " benchmark --role <r> --task <name>          Run one synthetic benchmark for a role-specialty\n"
               << "  " << prog << " benchmark --role <r>                        Run all benchmarks for a role-specialty (aggregate)\n"
               << "  " << prog << " benchmark --role <r> --dry-run              Smoke-test setup; skip the daemon spawn\n"
@@ -736,7 +737,7 @@ int main(int argc, char* argv[]) {
         }
     } else if (subcommand == "spend") {
         // Per-run token/$ spend readout — `quorum spend [--project <path|name>]
-        //   [--since <ISO8601>] [--until <ISO8601>] [--json]`.
+        //   [--since <ISO8601>] [--until <ISO8601>] [--session <id|prefix>] [--json]`.
         for (size_t i = 0; i < sub_args.size(); ++i) {
             if (sub_args[i] == "--project" && i + 1 < sub_args.size()) {
                 spend_opts.project = sub_args[++i];
@@ -744,6 +745,8 @@ int main(int argc, char* argv[]) {
                 spend_opts.since = sub_args[++i];
             } else if (sub_args[i] == "--until" && i + 1 < sub_args.size()) {
                 spend_opts.until = sub_args[++i];
+            } else if (sub_args[i] == "--session" && i + 1 < sub_args.size()) {
+                spend_opts.session = sub_args[++i];
             } else if (sub_args[i] == "--json") {
                 spend_opts.json = true;
             }

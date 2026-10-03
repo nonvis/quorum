@@ -1,7 +1,12 @@
 #pragma once
 
 // `quorum spend [--project <path|name>] [--since <ISO8601>] [--until <ISO8601>]
-//               [--json]`.
+//               [--session <id|unique prefix>] [--json]`.
+//
+// --session scopes the readout to ONE main transcript and its own subagents/
+// (2026-10-03): an unscoped window counts every session in the cwd, so two
+// projects closing minutes apart each carried the other's turns. With --session,
+// --since may be omitted — the script defaults it to the session's first record.
 //
 // Per-run token/$ spend readout from the Claude Code transcripts (deterministic,
 // no-LLM, $0). The autopilot supervisor runs this at halt to report token spend
@@ -45,6 +50,7 @@ struct SpendOptions {
     std::string project;        // path OR project name; empty = cwd (".")
     std::string since;          // --since <ISO8601>; empty -> LOCK line-1 fallback
     std::string until;          // --until <ISO8601>; empty -> the script uses now
+    std::string session;        // --session <id|unique prefix>; empty = the whole cwd window
     bool json = false;          // --json: emit one JSON object
     // Resolved during run: the repo root that contains scripts/spend_readout.py.
     // Set from argv[0] in main.cpp (quorum_repo_root_from_exe); empty = let the
@@ -128,12 +134,14 @@ namespace spend_detail {
         return 1;
     }
 
-    // 2. since: --since, else the flight start on the LOCK's line 1, else error.
+    // 2. since: --since, else the flight start on the LOCK's line 1, else error —
+    //    unless --session scopes the read, where the script defaults --since to
+    //    that session's first record and no window is needed here.
     std::string since = opts.since;
-    if (since.empty()) since = lock_started_at(project_root);
-    if (since.empty()) {
-        std::cerr << "ERROR: no --since and no .quorum/autopilot/LOCK — pass "
-                     "--since <ISO8601>\n";
+    if (since.empty() && opts.session.empty()) since = lock_started_at(project_root);
+    if (since.empty() && opts.session.empty()) {
+        std::cerr << "ERROR: no --since, no --session and no .quorum/autopilot/LOCK "
+                     "— pass --since <ISO8601> or --session <id>\n";
         return 1;
     }
 
@@ -150,8 +158,9 @@ namespace spend_detail {
     }
 
     // 4. Shell out. std::system so the (fast) readout streams live. Quote args.
-    std::string cmd = "python3 \"" + script + "\" --project \"" + project_root +
-                      "\" --since \"" + since + "\"";
+    std::string cmd = "python3 \"" + script + "\" --project \"" + project_root + "\"";
+    if (!since.empty()) cmd += " --since \"" + since + "\"";
+    if (!opts.session.empty()) cmd += " --session \"" + opts.session + "\"";
     if (!opts.until.empty()) cmd += " --until \"" + opts.until + "\"";
     if (opts.json) cmd += " --json";
     int status = std::system(cmd.c_str());

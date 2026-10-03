@@ -129,7 +129,7 @@ quorum supervisor init [--force]           # generate ./SUPERVISOR.md + checkpoi
 claude --agent supervisor                  # run the flight plan INTERACTIVELY (not claude -p)
 
 # Observability
-quorum spend [--project <p>] [--since <ISO8601>] [--until <ISO8601>] [--json]   # $0 token/$ readout from Claude Code transcripts
+quorum spend [--project <p>] [--since <ISO8601>] [--until <ISO8601>] [--session <id|prefix>] [--json]   # $0 token/$ readout from Claude Code transcripts; --session = one main transcript + its subagents (--since then optional)
 quorum version                             # build identity: version, git sha (-dirty), build stamp; also --version
 ```
 

@@ -581,6 +581,140 @@ class SpendReadoutCase(unittest.TestCase):
         p = self.run_readout("not-a-timestamp")
         self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
 
+    # -- 7. --session: one main transcript + its own subagents, nothing else --
+    # Why: a close line written for one project's session counted every session
+    # in the cwd's window — on 2026-10-02 the Loqua and Permafrost close lines,
+    # four minutes apart, each carried the other's turns. The session is the
+    # scope, so the window may be omitted and defaults to the session's records.
+
+    def run_raw(self, args, project=PROJECT):
+        env = dict(os.environ)
+        env["HOME"] = str(self.home)
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), "--project", str(project)] + list(args),
+            env=env, capture_output=True, text=True)
+
+    def seed_two_sessions(self, ids=("s1", "s2")):
+        """Two sessions, each a fable main ($0.06) + a sonnet-5 subagent
+        ($0.012). Distinct message ids per file so dedupe cannot merge them."""
+        d = self.tdir()
+        ts = self.now - timedelta(minutes=1)
+        for sid in ids:
+            (d / sid / "subagents").mkdir(parents=True)
+            main = json.loads(usage_record("claude-fable-5-1", ts,
+                                           input_tokens=1000, output_tokens=1000))
+            main["message"]["id"] = "msg_main_%s" % sid
+            sub = json.loads(usage_record("claude-sonnet-5", ts,
+                                          input_tokens=1000, output_tokens=1000))
+            sub["message"]["id"] = "msg_sub_%s" % sid
+            (d / ("%s.jsonl" % sid)).write_text(json.dumps(main) + "\n")
+            (d / sid / "subagents" / "agent-a.jsonl").write_text(
+                json.dumps(sub) + "\n")
+        return d
+
+    def test_session_counts_only_that_session_and_its_subagents(self):
+        """s1 main $0.06 + s1 subagent $0.012 = $0.072; s2's $0.072 excluded."""
+        self.seed_two_sessions()
+        p = self.run_raw(["--session", "s1", "--json"])
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertAlmostEqual(json.loads(p.stdout)["total"]["est_usd"],
+                               0.072, places=6)
+
+    def test_session_by_source_sees_one_main_and_one_subagent_file(self):
+        self.seed_two_sessions()
+        p = self.run_raw(["--session", "s1", "--json"])
+        bs = json.loads(p.stdout)["by_source"]
+        self.assertEqual((bs["main"]["files"], bs["subagents"]["files"]), (1, 1))
+
+    def test_session_unique_prefix_resolves_to_the_full_id(self):
+        """The scratchpad path shows the first 8 chars; a unique prefix is enough."""
+        self.seed_two_sessions(ids=("abc123-x", "abd456-y"))
+        p = self.run_raw(["--session", "abc", "--json"])
+        self.assertEqual(json.loads(p.stdout)["session"], "abc123-x")
+
+    def test_session_ambiguous_prefix_exits_2_and_names_the_matches(self):
+        """Two sessions share the prefix: refuse, say which, never pick one."""
+        self.seed_two_sessions(ids=("abc123-x", "abd456-y"))
+        p = self.run_raw(["--session", "ab", "--json"])
+        self.assertEqual(
+            (p.returncode, "ambiguous" in p.stderr,
+             "abc123-x" in p.stderr and "abd456-y" in p.stderr),
+            (2, True, True), p.stdout + p.stderr)
+
+    def test_session_unknown_exits_2_and_says_so(self):
+        self.seed_two_sessions()
+        p = self.run_raw(["--session", "zzz", "--json"])
+        self.assertEqual((p.returncode, "no session" in p.stderr), (2, True),
+                         p.stdout + p.stderr)
+
+    def test_session_absent_dir_still_exits_3(self):
+        """ABSENT != zero holds for a scoped read too: no dir, no session, 3."""
+        p = self.run_raw(["--session", "s1"])
+        self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+
+    def test_session_without_since_counts_the_whole_session(self):
+        """No --since: the window starts at the session's FIRST record. A record
+        three hours old ($0.06) and one a minute old ($0.06) both count."""
+        d = self.tdir()
+        d.mkdir(parents=True)
+        old = json.loads(usage_record("claude-fable-5-1",
+                                      self.now - timedelta(hours=3),
+                                      input_tokens=1000, output_tokens=1000))
+        old["message"]["id"] = "msg_old"
+        new = json.loads(usage_record("claude-fable-5-1",
+                                      self.now - timedelta(minutes=1),
+                                      input_tokens=1000, output_tokens=1000))
+        new["message"]["id"] = "msg_new"
+        (d / "s1.jsonl").write_text(json.dumps(old) + "\n" + json.dumps(new) + "\n")
+        p = self.run_raw(["--session", "s1", "--json"])
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertAlmostEqual(json.loads(p.stdout)["total"]["est_usd"],
+                               0.12, places=6)
+
+    def test_session_json_reports_the_derived_since(self):
+        """The window line must say where it started: the first record's time."""
+        d = self.tdir()
+        d.mkdir(parents=True)
+        first = self.now - timedelta(hours=3)
+        (d / "s1.jsonl").write_text(
+            json.dumps({"type": "user", "timestamp": iso(first)}) + "\n" +
+            usage_record("claude-fable-5-1", self.now - timedelta(minutes=1),
+                         input_tokens=1000) + "\n")
+        p = self.run_raw(["--session", "s1", "--json"])
+        r = json.loads(p.stdout)
+        self.assertEqual((r["since"], r["since_from_session"]), (iso(first), True))
+
+    def test_session_explicit_since_still_narrows(self):
+        """--since given WITH --session: the window applies inside the session.
+        The 3-hour-old record is outside a 1-hour window => only $0.06."""
+        d = self.tdir()
+        d.mkdir(parents=True)
+        old = json.loads(usage_record("claude-fable-5-1",
+                                      self.now - timedelta(hours=3),
+                                      input_tokens=1000, output_tokens=1000))
+        old["message"]["id"] = "msg_old"
+        new = json.loads(usage_record("claude-fable-5-1",
+                                      self.now - timedelta(minutes=1),
+                                      input_tokens=1000, output_tokens=1000))
+        new["message"]["id"] = "msg_new"
+        (d / "s1.jsonl").write_text(json.dumps(old) + "\n" + json.dumps(new) + "\n")
+        p = self.run_raw(["--session", "s1",
+                          "--since", iso(self.now - timedelta(hours=1)), "--json"])
+        self.assertAlmostEqual(json.loads(p.stdout)["total"]["est_usd"],
+                               0.06, places=6)
+
+    def test_session_human_readout_names_the_session(self):
+        self.seed_two_sessions()
+        p = self.run_raw(["--session", "s1"])
+        self.assertIn("session: s1", p.stdout)
+
+    def test_no_since_and_no_session_exits_2(self):
+        """Unscoped AND unwindowed is a refusal, not a scan of everything."""
+        self.tdir().mkdir(parents=True)
+        p = self.run_raw(["--json"])
+        self.assertEqual((p.returncode, "--since" in p.stderr), (2, True),
+                         p.stdout + p.stderr)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

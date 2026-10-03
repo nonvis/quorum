@@ -59,14 +59,26 @@ RETENTION FLOOR: Claude Code prunes transcripts older than `cleanupPeriodDays`
 days). We print the resulting horizon and WARN when --since predates it — the
 window's older half may simply no longer exist on disk, so the total is a FLOOR.
 
+SESSION SCOPE (--session, 2026-10-03). The readout is otherwise the cwd's whole
+window — every session that ran in it — so two projects closing minutes apart
+each counted the other's turns (the vault's Loqua MVP/100 and Permafrost MVP/31
+close lines, 2026-10-02). `--session <id|unique prefix>` restricts the scan to
+ONE main transcript (`<tdir>/<id>.jsonl`) and its own subagents
+(`<tdir>/<id>/subagents/*.jsonl`). A prefix must match exactly one main
+transcript: several -> exit 2 naming them (never a silent pick); none -> exit 2.
+With --session, --since may be omitted and defaults to the session's FIRST
+record timestamp (JSON `since_from_session: true`); an explicit --since/--until
+still narrows inside the session. An absent transcript dir is still exit 3.
+
 Read-only: file reads + a read-only (mode=ro) SQLite open. Writes nothing.
 
 HOME is the single injection seam for tests: it selects BOTH the transcript root
 (`$HOME/.claude/projects/...`) and the settings file read for cleanupPeriodDays.
 
 Usage: spend_readout.py --project <abs path> --since <ISO8601 UTC>
-                        [--until <ISO8601>] [--json]
-Exit:  0 ok · 2 bad --since/--until · 3 transcript dir absent
+                        [--until <ISO8601>] [--session <id|prefix>] [--json]
+       (--since is optional when --session is given)
+Exit:  0 ok · 2 bad --since/--until/--session · 3 transcript dir absent
 """
 import argparse
 import calendar
@@ -403,13 +415,63 @@ def model_est(model: str, m: dict):
                    m["cache_read_input_tokens"])
 
 
-def scan_transcripts(tdir: Path, since_dt: datetime, until_dt: datetime):
+def resolve_session(tdir: Path, token: str):
+    """(session_id, main_path, subagent_paths, error) for --session.
+
+    `token` is a full session id or a prefix of one; it must match exactly ONE
+    main transcript stem under tdir. Several matches are refused with their ids
+    named — never a silent pick; none is refused too. The subagent transcripts
+    are the session's own <id>/subagents/*.jsonl and nothing else.
+    """
+    matches = sorted(p for p in tdir.glob("*.jsonl") if p.stem.startswith(token))
+    if not matches:
+        return None, None, [], "no session in %s starts with %r" % (tdir, token)
+    if len(matches) > 1:
+        return None, None, [], ("--session %r is ambiguous: %s"
+                                % (token, ", ".join(p.stem for p in matches)))
+    main = matches[0]
+    subs = sorted((tdir / main.stem / "subagents").glob("*.jsonl"))
+    return main.stem, main, subs, None
+
+
+def first_record_ts(path: Path):
+    """The first parseable top-level `timestamp` in a transcript — its start.
+
+    Any record type counts (the first line is normally the operator's prompt,
+    a `user` record), so a session's window begins before its first reply.
+    """
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(d, dict):
+                    continue
+                ts = parse_ts(d.get("timestamp", ""))
+                if ts is not None:
+                    return ts
+    except OSError:
+        return None
+    return None
+
+
+def scan_transcripts(tdir: Path, since_dt: datetime, until_dt: datetime,
+                     files=None):
     """Sum usage per model over records with timestamp in [since, until].
 
     Pre-filter files by mtime >= (since - 1h slack); parse line-by-line; dedupe
     by message.id (keep last occurrence). Returns (per_model, sessions_scanned,
     lines_skipped, records_counted, per_source) — per_source splits the same
     deduped records by transcript_source() of the file that holds them.
+
+    `files` (from --session) names the exact transcripts to scan instead of the
+    whole dir; they are read whole (no mtime pre-filter) and the per-record
+    window still applies.
     """
     slack_epoch = calendar.timegm(since_dt.timetuple()) - 3600
     # message.id -> (model, in, out, cw5, cw1h, cw_untiered, cr, file) — last wins.
@@ -418,13 +480,17 @@ def scan_transcripts(tdir: Path, since_dt: datetime, until_dt: datetime):
     lines_skipped = 0
     fallback_key = 0
 
-    files = sorted(tdir.glob("*.jsonl")) + sorted(tdir.glob("*/subagents/*.jsonl"))
+    prefilter = files is None
+    if prefilter:
+        files = (sorted(tdir.glob("*.jsonl"))
+                 + sorted(tdir.glob("*/subagents/*.jsonl")))
     for jf in files:
-        try:
-            if jf.stat().st_mtime < slack_epoch:
+        if prefilter:
+            try:
+                if jf.stat().st_mtime < slack_epoch:
+                    continue
+            except OSError:
                 continue
-        except OSError:
-            continue
         sessions_scanned += 1
         try:
             fh = jf.open("r", encoding="utf-8", errors="replace")
@@ -486,9 +552,10 @@ def scan_transcripts(tdir: Path, since_dt: datetime, until_dt: datetime):
 
 
 def build_result(project, tdir, since_dt, until_dt, since_str, until_str,
-                 retention):
+                 retention, session=None, session_files=None,
+                 since_from_session=False):
     per_model, sessions, skipped, counted, per_source = scan_transcripts(
-        tdir, since_dt, until_dt)
+        tdir, since_dt, until_dt, files=session_files)
 
     models = []
     unknown_models = []
@@ -577,6 +644,12 @@ def build_result(project, tdir, since_dt, until_dt, since_str, until_str,
         "transcript_dir_present": True,
         "since": since_str,
         "until": until_str,
+        # --session: the one main transcript scanned (its full id) and how many
+        # of its own subagent transcripts came with it; null when unscoped.
+        "session": session,
+        "session_subagent_transcripts": (len(session_files) - 1
+                                         if session_files else None),
+        "since_from_session": since_from_session,
         "models": models,
         "unknown_families": unknown_models,
         "family_rate_models": family_rate_models,
@@ -600,7 +673,7 @@ def build_result(project, tdir, since_dt, until_dt, since_str, until_str,
 
 
 def absent_result(project, tdir, since_dt, until_dt, since_str, until_str,
-                  retention):
+                  retention, session=None):
     """The transcript dir does not exist — every TRANSCRIPT figure is UNKNOWN.
 
     No token counts, no est_usd, no session count: reporting 0 for any of them
@@ -626,6 +699,9 @@ def absent_result(project, tdir, since_dt, until_dt, since_str, until_str,
         "transcript_dir_note": ABSENT_NOTE,
         "since": since_str,
         "until": until_str,
+        "session": session,
+        "session_subagent_transcripts": None,
+        "since_from_session": False,
         "models": [],
         "unknown_families": [],
         "family_rate_models": [],
@@ -661,6 +737,15 @@ def print_human(r):
 
     print("Spend readout — %s" % r["project"])
     print("  window: %s -> %s" % (r["since"], r["until"]))
+    if r.get("session") and not absent:
+        k = r.get("session_subagent_transcripts") or 0
+        print("  session: %s  (its main transcript + %d subagent transcript%s%s)"
+              % (r["session"], k, "" if k == 1 else "s",
+                 "; the window starts at its first record"
+                 if r.get("since_from_session") else ""))
+    elif r.get("session"):
+        print("  session: %s  (not resolved: transcript dir absent)"
+              % r["session"])
     if absent:
         # The required shape: the path, then ABSENT and why. No $ figure here.
         print("  transcripts: %s — %s" % (r["transcript_dir"], ABSENT_NOTE))
@@ -762,17 +847,31 @@ def print_human(r):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", required=True, help="absolute project root")
-    ap.add_argument("--since", required=True, help="window start (ISO8601 UTC)")
+    ap.add_argument("--since", default=None,
+                    help="window start (ISO8601 UTC); required unless --session")
     ap.add_argument("--until", default=None, help="window end (ISO8601 UTC); default now")
+    ap.add_argument("--session", default=None,
+                    help="one session id (or a unique prefix): its main transcript "
+                         "+ its own subagents; --since then defaults to the "
+                         "session's first record")
     ap.add_argument("--json", action="store_true", help="emit one JSON object")
     args = ap.parse_args()
 
     project = str(Path(args.project))
-    since_dt = parse_ts(args.since)
-    if since_dt is None:
-        print("ERROR: could not parse --since %r as ISO8601" % args.since,
+    if args.since is None and args.session is None:
+        print("ERROR: --since is required unless --session <id> scopes the read",
               file=sys.stderr)
         return 2
+    since_dt = None
+    since_str = None
+    since_from_session = False
+    if args.since is not None:
+        since_dt = parse_ts(args.since)
+        if since_dt is None:
+            print("ERROR: could not parse --since %r as ISO8601" % args.since,
+                  file=sys.stderr)
+            return 2
+        since_str = args.since
     if args.until:
         until_dt = parse_ts(args.until)
         if until_dt is None:
@@ -789,16 +888,41 @@ def main():
 
     if not tdir.is_dir():
         # ABSENT != zero: exit 3, distinct from 0 (measured) and 2 (bad args).
-        r = absent_result(project, tdir, since_dt, until_dt, args.since,
-                          until_str, retention)
+        if since_dt is None:
+            # --session with no --since and no dir: the start is unknowable, and
+            # we say so rather than invent one. No retention claim either.
+            since_dt = until_dt
+            since_str = ("session %s (start unknown: transcript dir absent)"
+                         % args.session)
+        r = absent_result(project, tdir, since_dt, until_dt, since_str,
+                          until_str, retention, session=args.session)
         if args.json:
             print(json.dumps(r, indent=2))
         else:
             print_human(r)
         return 3
 
-    r = build_result(project, tdir, since_dt, until_dt, args.since, until_str,
-                     retention)
+    session_id = None
+    session_files = None
+    if args.session is not None:
+        session_id, main_path, sub_paths, err = resolve_session(tdir, args.session)
+        if err:
+            print("ERROR: " + err, file=sys.stderr)
+            return 2
+        session_files = [main_path] + sub_paths
+        if since_dt is None:
+            first = first_record_ts(main_path)
+            if first is None:
+                print("ERROR: no timestamped record in %s — pass --since"
+                      % main_path, file=sys.stderr)
+                return 2
+            since_dt = first
+            since_str = first.strftime("%Y-%m-%dT%H:%M:%SZ")
+            since_from_session = True
+
+    r = build_result(project, tdir, since_dt, until_dt, since_str, until_str,
+                     retention, session=session_id, session_files=session_files,
+                     since_from_session=since_from_session)
     if args.json:
         print(json.dumps(r, indent=2))
     else:
