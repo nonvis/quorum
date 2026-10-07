@@ -402,6 +402,20 @@ class SpendReadoutCase(unittest.TestCase):
             self.price_of("claude-opus-5-5", cache_read_input_tokens=1_000_000),
             0.20, places=6)
 
+    def test_mythos_5_1_prices_at_fables_tier(self):
+        """$10/$50 — the Claude Code 2.1.292 model table tags claude-mythos-5-1
+        `pricing:"tier_10_50_cache_read_0_25"`, the same tier as Fable 5.1.
+        Before the row it had no family rate either, so it priced n/a."""
+        self.assertAlmostEqual(
+            self.price_of("claude-mythos-5-1", input_tokens=1000,
+                          output_tokens=1000), 0.060, places=6)
+
+    def test_mythos_5_1_is_an_exact_row_not_a_family_guess(self):
+        self.seed_one("claude-mythos-5-1", input_tokens=1000)
+        p = self.run_readout(iso(self.now - timedelta(hours=1)), ["--json"])
+        rows = {m["model"]: m for m in json.loads(p.stdout)["models"]}
+        self.assertEqual(rows["claude-mythos-5-1"]["rate_source"], "exact")
+
     def test_a_longer_unseen_id_is_not_its_prefix_model(self):
         """claude-opus-5-7 is an unseen model, not claude-opus-5: it must be
         flagged as a family-rate guess, never silently priced as Opus 5."""

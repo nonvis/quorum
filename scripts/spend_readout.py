@@ -93,6 +93,9 @@ from pathlib import Path
 # ── Per-MTok list prices ───────────────────────────────────────────────────
 # Re-verified 2026-09-26 against a LOCAL source (this script never fetches the
 # web): claude-api skill (Claude Code 2.1.283 bundle) — it added Opus 5.5.
+# Mythos 5.1 added 2026-10-07 from the Claude Code 2.1.292 bundle's model table,
+# which tags claude-mythos-5-1 `pricing:"tier_10_50_cache_read_0_25"` — the
+# same tier tag as claude-fable-5-1 ($10/$50, flat $0.25 cache read).
 #
 # EXACT ids: an id matches a row when it IS that id, or that id plus a context
 # suffix ("claude-fable-5-1[1m]") or a dated snapshot ("claude-opus-5-20260514")
@@ -103,6 +106,7 @@ from pathlib import Path
 # the Sonnet 4.6 rate ($3/$15) — hence exact ids.
 MODEL_RATES = {
     "claude-fable-5-1":  {"in": 10.0, "out": 50.0},
+    "claude-mythos-5-1": {"in": 10.0, "out": 50.0},
     "claude-opus-5-5":   {"in": 4.0,  "out": 20.0},
     "claude-fable-5":    {"in": 10.0, "out": 50.0},
     "claude-opus-5":     {"in": 5.0,  "out": 25.0},
@@ -140,8 +144,7 @@ CACHE_READ_MULT = 0.10
 FLAT_CACHE_READ_USD = {
     "claude-fable-5-1": 0.25,
     "claude-opus-5-5":  0.20,
-    # Listed by the same source; no in/out row here, so it prices n/a today —
-    # the flat read rate is recorded so a future row inherits it.
+    # Same tier tag as Fable 5.1 in the 2.1.292 bundle (its in/out row above).
     "claude-mythos-5-1": 0.25,
 }
 
