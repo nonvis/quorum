@@ -70,15 +70,25 @@ With --session, --since may be omitted and defaults to the session's FIRST
 record timestamp (JSON `since_from_session: true`); an explicit --since/--until
 still narrows inside the session. An absent transcript dir is still exit 3.
 
+CLOSE LINE (--line, 2026-10-09). Every session close pastes a `spend:` line into
+a vault note by hand; in the two days to 2026-10-09 ten sessions wrote 34 such
+lines in three sentence shapes (one session left five progressive copies), so
+the readout that must later dedupe them had no fixed form to parse. `--line`
+prints the ONE canonical shape — main $ (turns, ~context/turn) · subagents $
+(files, share) · total $ EST; window — from the same by-source buckets the
+table prints, and nothing else. It needs --session (a close line names the
+session, never the cwd window: Decision #92) and excludes --json; both are exit
+2. Floors keep the table's '+'; an absent dir prints n/a, no $, exit 3.
+
 Read-only: file reads + a read-only (mode=ro) SQLite open. Writes nothing.
 
 HOME is the single injection seam for tests: it selects BOTH the transcript root
 (`$HOME/.claude/projects/...`) and the settings file read for cleanupPeriodDays.
 
 Usage: spend_readout.py --project <abs path> --since <ISO8601 UTC>
-                        [--until <ISO8601>] [--session <id|prefix>] [--json]
-       (--since is optional when --session is given)
-Exit:  0 ok · 2 bad --since/--until/--session · 3 transcript dir absent
+                        [--until <ISO8601>] [--session <id|prefix>] [--json | --line]
+       (--since is optional when --session is given; --line needs --session)
+Exit:  0 ok · 2 bad --since/--until/--session or --line misuse · 3 transcript dir absent
 """
 import argparse
 import calendar
@@ -847,6 +857,57 @@ def print_human(r):
     print("  " + r["est_caveat"])
 
 
+def window_span(since_str, until_str):
+    """`2026-10-09T02:32Z → 05:33Z`; the end repeats the date only if it differs."""
+    a = parse_ts(since_str)
+    b = parse_ts(until_str)
+    if a is None or b is None:
+        return "%s → %s" % (since_str, until_str)
+    start = a.strftime("%Y-%m-%dT%H:%MZ")
+    end = (b.strftime("%H:%MZ") if b.date() == a.date()
+           else b.strftime("%Y-%m-%dT%H:%MZ"))
+    return "%s → %s" % (start, end)
+
+
+def close_line(r):
+    """The one-line `spend:` close record (--line) for a --session read.
+
+    One shape, from the same by-source buckets print_human prints, so every
+    close line in the vault parses the same way. The session is quoted by its
+    first eight characters — what the scratchpad path shows and what every
+    hand-written line already used. Floors keep the table's '+'. An absent
+    transcript dir prints n/a and no $ figure: ABSENT != ZERO holds here too.
+    """
+    sid = (r.get("session") or "")[:8]
+    head = "spend: `quorum spend --session %s` = " % sid
+    if r["status"] == "no_transcript_dir":
+        return head + "n/a (transcript dir absent: %s)" % r["transcript_dir"]
+
+    def usd(b):
+        return "$%.2f%s" % (b["est_usd"], "+" if b.get("est_is_floor") else "")
+
+    def count(k, word):
+        return "%d %s%s" % (k, word, "" if k == 1 else "s")
+
+    t = r["total"]
+    m = r["by_source"]["main"]
+    s = r["by_source"]["subagents"]
+    turns = m["records"]
+    if turns:
+        ctx = (m["cache_creation_input_tokens"]
+               + m["cache_read_input_tokens"]) / float(turns)
+        ctx_s = "~%dk context/turn" % int(round(ctx / 1000.0))
+    else:
+        ctx_s = "n/a context/turn"
+    share = ("%.0f%%" % (100.0 * s["est_usd"] / t["est_usd"])
+             if t["est_usd"] > 0 else "0%")
+    return (head + "main %s (%s, %s) · subagents %s (%s, %s) · total %s EST; "
+            "window %s"
+            % (usd(m), count(turns, "turn"), ctx_s,
+               usd(s), count(s["files"], "file"), share,
+               usd(t), window_span(r["since"], r["until"])))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", required=True, help="absolute project root")
@@ -858,9 +919,20 @@ def main():
                          "+ its own subagents; --since then defaults to the "
                          "session's first record")
     ap.add_argument("--json", action="store_true", help="emit one JSON object")
+    ap.add_argument("--line", action="store_true",
+                    help="print the one-line `spend:` close record (needs "
+                         "--session; exclusive with --json)")
     args = ap.parse_args()
 
     project = str(Path(args.project))
+    if args.line and args.json:
+        print("ERROR: --line and --json are exclusive — pick one",
+              file=sys.stderr)
+        return 2
+    if args.line and args.session is None:
+        print("ERROR: --line needs --session <id> — a close line names the "
+              "session, never the cwd window", file=sys.stderr)
+        return 2
     if args.since is None and args.session is None:
         print("ERROR: --since is required unless --session <id> scopes the read",
               file=sys.stderr)
@@ -899,7 +971,9 @@ def main():
                          % args.session)
         r = absent_result(project, tdir, since_dt, until_dt, since_str,
                           until_str, retention, session=args.session)
-        if args.json:
+        if args.line:
+            print(close_line(r))
+        elif args.json:
             print(json.dumps(r, indent=2))
         else:
             print_human(r)
@@ -926,7 +1000,9 @@ def main():
     r = build_result(project, tdir, since_dt, until_dt, since_str, until_str,
                      retention, session=session_id, session_files=session_files,
                      since_from_session=since_from_session)
-    if args.json:
+    if args.line:
+        print(close_line(r))
+    elif args.json:
         print(json.dumps(r, indent=2))
     else:
         print_human(r)

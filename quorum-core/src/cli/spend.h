@@ -1,12 +1,15 @@
 #pragma once
 
 // `quorum spend [--project <path|name>] [--since <ISO8601>] [--until <ISO8601>]
-//               [--session <id|unique prefix>] [--json]`.
+//               [--session <id|unique prefix>] [--json | --line]`.
 //
 // --session scopes the readout to ONE main transcript and its own subagents/
 // (2026-10-03): an unscoped window counts every session in the cwd, so two
 // projects closing minutes apart each carried the other's turns. With --session,
 // --since may be omitted — the script defaults it to the session's first record.
+// --line (2026-10-09) prints the one-line `spend:` close record that every
+// session close pastes into a vault note; the script refuses it without
+// --session, so a close line can never be the cwd window.
 //
 // Per-run token/$ spend readout from the Claude Code transcripts (deterministic,
 // no-LLM, $0). The autopilot supervisor runs this at halt to report token spend
@@ -52,6 +55,7 @@ struct SpendOptions {
     std::string until;          // --until <ISO8601>; empty -> the script uses now
     std::string session;        // --session <id|unique prefix>; empty = the whole cwd window
     bool json = false;          // --json: emit one JSON object
+    bool line = false;          // --line: the one-line `spend:` close record (script refuses it without --session)
     // Resolved during run: the repo root that contains scripts/spend_readout.py.
     // Set from argv[0] in main.cpp (quorum_repo_root_from_exe); empty = let the
     // relative-path fallback find it.
@@ -163,6 +167,7 @@ namespace spend_detail {
     if (!opts.session.empty()) cmd += " --session \"" + opts.session + "\"";
     if (!opts.until.empty()) cmd += " --until \"" + opts.until + "\"";
     if (opts.json) cmd += " --json";
+    if (opts.line) cmd += " --line";
     int status = std::system(cmd.c_str());
     int exit_code = (status != -1 && WIFEXITED(status))
                         ? WEXITSTATUS(status) : -1;

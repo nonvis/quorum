@@ -729,6 +729,92 @@ class SpendReadoutCase(unittest.TestCase):
         self.assertEqual((p.returncode, "--since" in p.stderr), (2, True),
                          p.stdout + p.stderr)
 
+    # -- 9. --line: the one-line close record ------------------------------
+    # Every session close pastes a `spend:` line into a vault note by hand. In
+    # the two days to 2026-10-09 ten sessions wrote 34 such lines in three
+    # sentence shapes (one session left five progressive copies), so the
+    # readout that must later dedupe them has no fixed form to parse. --line
+    # emits the ONE canonical shape, and only for a --session read (#92: a
+    # close line names the session, never the cwd window).
+
+    def test_line_requires_session_exits_2(self):
+        """A close line without a session would be the cwd window — refused."""
+        self.tdir().mkdir(parents=True)
+        p = self.run_raw(["--since", iso(self.now - timedelta(hours=1)), "--line"])
+        self.assertEqual((p.returncode, "--line needs --session" in p.stderr),
+                         (2, True), p.stdout + p.stderr)
+
+    def test_line_and_json_together_exit_2(self):
+        self.seed_two_sessions()
+        p = self.run_raw(["--session", "s1", "--line", "--json"])
+        self.assertEqual((p.returncode, "--line and --json" in p.stderr),
+                         (2, True), p.stdout + p.stderr)
+
+    def test_line_is_exactly_one_line(self):
+        """No header, no table, no caveat — the line IS the output."""
+        self.seed_two_sessions()
+        p = self.run_raw(["--session", "s1", "--line"])
+        self.assertEqual((p.returncode, p.stdout.strip().count("\n")), (0, 0),
+                         p.stdout + p.stderr)
+
+    def test_line_names_the_session_by_its_first_eight_chars(self):
+        """The scratchpad path shows 8 chars; the line quotes the same prefix."""
+        self.seed_two_sessions(ids=("0123456789abcdef", "zz"))
+        p = self.run_raw(["--session", "0123", "--line"])
+        self.assertIn("spend: `quorum spend --session 01234567` = ", p.stdout)
+
+    def test_line_carries_main_subagents_and_total(self):
+        """main fable $0.06 · subagents sonnet-5 $0.012 · total $0.072."""
+        self.seed_two_sessions()
+        line = self.run_raw(["--session", "s1", "--line"]).stdout
+        self.assertEqual(("main $0.06 (" in line, "subagents $0.01 (" in line,
+                          "total $0.07 EST" in line), (True, True, True), line)
+
+    def test_line_gives_the_subagent_share(self):
+        """$0.012 of $0.072 = 17%, with the subagent file count beside it."""
+        self.seed_two_sessions()
+        line = self.run_raw(["--session", "s1", "--line"]).stdout
+        self.assertIn("(1 file, 17%)", line)
+
+    def test_line_gives_main_context_per_turn(self):
+        """(cache-w + cache-r) / main turns: (1,000 + 139,000) / 1 = ~140k."""
+        d = self.tdir()
+        d.mkdir(parents=True)
+        (d / "s1.jsonl").write_text(
+            usage_record("claude-fable-5-1", self.now - timedelta(minutes=1),
+                         cache_creation_input_tokens=1000,
+                         cache_read_input_tokens=139000) + "\n")
+        line = self.run_raw(["--session", "s1", "--line"]).stdout
+        self.assertIn("(1 turn, ~140k context/turn)", line)
+
+    def test_line_shows_the_window_start(self):
+        """The window starts at the session's first record (no --since)."""
+        d = self.tdir()
+        d.mkdir(parents=True)
+        first = self.now - timedelta(hours=3)
+        (d / "s1.jsonl").write_text(
+            json.dumps({"type": "user", "timestamp": iso(first)}) + "\n" +
+            usage_record("claude-fable-5-1", self.now - timedelta(minutes=1),
+                         input_tokens=1000) + "\n")
+        line = self.run_raw(["--session", "s1", "--line"]).stdout
+        self.assertIn("window %s" % first.strftime("%Y-%m-%dT%H:%MZ"), line)
+
+    def test_line_marks_a_floored_total_with_a_plus(self):
+        """An unrated subagent model: its tokens count, its $ does not — the
+        total says so with the same '+' the table uses, never a clean figure."""
+        d = self.seed_two_sessions()
+        (d / "s1" / "subagents" / "agent-b.jsonl").write_text(
+            usage_record("claude-zeta-9", self.now - timedelta(minutes=1),
+                         input_tokens=1000, output_tokens=1000) + "\n")
+        line = self.run_raw(["--session", "s1", "--line"]).stdout
+        self.assertIn("total $0.07+ EST", line)
+
+    def test_line_absent_dir_prints_no_dollar_and_exits_3(self):
+        """ABSENT != zero on the one-line form too."""
+        p = self.run_raw(["--session", "s1", "--line"])
+        self.assertEqual((p.returncode, "$" in p.stdout, "n/a" in p.stdout),
+                         (3, False, True), p.stdout + p.stderr)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
