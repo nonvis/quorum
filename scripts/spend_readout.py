@@ -106,6 +106,11 @@ from pathlib import Path
 # Mythos 5.1 added 2026-10-07 from the Claude Code 2.1.292 bundle's model table,
 # which tags claude-mythos-5-1 `pricing:"tier_10_50_cache_read_0_25"` — the
 # same tier tag as claude-fable-5-1 ($10/$50, flat $0.25 cache read).
+# Sonnet 5.5 and Haiku 5.5 added 2026-10-16 from the 2.1.301 table (read by
+# each `{id:"…"` object; the id just before `context:` is `fallback_3p`).
+# Haiku 5.5's `haiku_55` tier bills $0.50/$2.50 above a 100k-token prompt and
+# $0.10/$0.50 below; tokens are summed per model, so the row takes the upper
+# tier and can only overstate.
 #
 # EXACT ids: an id matches a row when it IS that id, or that id plus a context
 # suffix ("claude-fable-5-1[1m]") or a dated snapshot ("claude-opus-5-20260514")
@@ -123,8 +128,10 @@ MODEL_RATES = {
     "claude-opus-4-8":   {"in": 5.0,  "out": 25.0},
     "claude-opus-4-7":   {"in": 5.0,  "out": 25.0},
     "claude-opus-4-6":   {"in": 5.0,  "out": 25.0},
+    "claude-sonnet-5-5": {"in": 2.0,  "out": 10.0},
     "claude-sonnet-5":   {"in": 2.0,  "out": 10.0},
     "claude-sonnet-4-6": {"in": 3.0,  "out": 15.0},
+    "claude-haiku-5-5":  {"in": 0.5,  "out": 2.5},
     "claude-haiku-4-5":  {"in": 1.0,  "out": 5.0},
 }
 
@@ -156,6 +163,8 @@ FLAT_CACHE_READ_USD = {
     "claude-opus-5-5":  0.20,
     # Same tier tag as Fable 5.1 in the 2.1.292 bundle (its in/out row above).
     "claude-mythos-5-1": 0.25,
+    "claude-sonnet-5-5": 0.10,
+    "claude-haiku-5-5":  0.05,
 }
 
 EST_CAVEAT = ("EST. — subscription usage is not billed per-token; this estimate "

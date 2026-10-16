@@ -416,6 +416,40 @@ class SpendReadoutCase(unittest.TestCase):
         rows = {m["model"]: m for m in json.loads(p.stdout)["models"]}
         self.assertEqual(rows["claude-mythos-5-1"]["rate_source"], "exact")
 
+    def test_sonnet_5_5_prices_at_its_own_rate(self):
+        """$2/$10 — the 2.1.301 model table tags it
+        `tier_2_10_cache_read_0_10`; without a row it took the sonnet family's
+        $3/$15 guess."""
+        self.assertAlmostEqual(
+            self.price_of("claude-sonnet-5-5", input_tokens=1000,
+                          output_tokens=1000), 0.012, places=6)
+
+    def test_sonnet_5_5_cache_read_is_flat(self):
+        """$0.10/MTok flat, not 0.1x$2=$0.20."""
+        self.assertAlmostEqual(
+            self.price_of("claude-sonnet-5-5", cache_read_input_tokens=1_000_000),
+            0.10, places=6)
+
+    def test_haiku_5_5_prices_at_its_long_prompt_rate(self):
+        """$0.50/$2.50 — `haiku_55` is $0.10/$0.50 up to a 100k-token prompt
+        and $0.50/$2.50 above it; the readout sums tokens per model, so it takes
+        the upper tier and never understates. The family guess was $1/$5."""
+        self.assertAlmostEqual(
+            self.price_of("claude-haiku-5-5", input_tokens=1000,
+                          output_tokens=1000), 0.003, places=6)
+
+    def test_haiku_5_5_cache_read_is_flat(self):
+        """$0.05/MTok, the long-prompt tier's read rate."""
+        self.assertAlmostEqual(
+            self.price_of("claude-haiku-5-5", cache_read_input_tokens=1_000_000),
+            0.05, places=6)
+
+    def test_haiku_5_5_is_an_exact_row_not_a_family_guess(self):
+        self.seed_one("claude-haiku-5-5", input_tokens=1000)
+        p = self.run_readout(iso(self.now - timedelta(hours=1)), ["--json"])
+        rows = {m["model"]: m for m in json.loads(p.stdout)["models"]}
+        self.assertEqual(rows["claude-haiku-5-5"]["rate_source"], "exact")
+
     def test_a_longer_unseen_id_is_not_its_prefix_model(self):
         """claude-opus-5-7 is an unseen model, not claude-opus-5: it must be
         flagged as a family-rate guess, never silently priced as Opus 5."""
