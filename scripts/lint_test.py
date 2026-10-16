@@ -268,6 +268,13 @@ class LintCase(unittest.TestCase):
         d = {x["target"] for x in self.lint()["dangling_links"]}
         self.assertNotIn("A - B", d)
 
+    def test_fix_safe_quotes_an_unquoted_colon_value(self):
+        write(self.vault / "Bad.md", '---\ntitle: Bad\nsummary: the rule: "one" writer\n---\nbody: x\n')
+        self.cli("lint", "--fix-safe")
+        self.assertEqual((self.vault / "Bad.md").read_text(),
+                         '---\ntitle: Bad\nsummary: "the rule: \\"one\\" writer"\n---\nbody: x\n')
+        self.assertEqual(self.lint()["frontmatter_unquoted_colon"], [])
+
     def test_lint_human_output_names_every_check(self):
         out = self.cli("lint").stdout
         for k in ("dangling links", "orphans", "no summary", "dead mentions", "memory",

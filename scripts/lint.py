@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """`quorum lint` — a deterministic hygiene report over the vault index and the
 allowlisted repo indexes. It never rewrites a note except with --fix-safe, and
-then only links whose intended target is unambiguous.
+then only links whose intended target is unambiguous and frontmatter values an
+unquoted ': ' breaks.
 
 Checks (each a list in the JSON `checks` object):
   dangling_links       [[target]] matching no note or memory file
@@ -255,9 +256,8 @@ def run(idx, fix_safe=False):
         for line in head[4:].split("\n"):
             if line.strip() == "---":
                 break
-            m = FM_LINE.match(line)
-            if m and ": " in m.group(2) and m.group(2)[0] not in "\"'[{|>":
-                colon.append({"note": r["path"], "key": m.group(1)})
+            if _unquoted_colon(line):
+                colon.append({"note": r["path"], "key": FM_LINE.match(line).group(1)})
     checks["frontmatter_unquoted_colon"] = colon
 
     locked = []
@@ -282,6 +282,27 @@ def run(idx, fix_safe=False):
     return {"checks": checks, "counts": {k: len(v) for k, v in checks.items()}, "fixed": fixed}
 
 
+def _unquoted_colon(line):
+    m = FM_LINE.match(line)
+    return bool(m and ": " in m.group(2) and m.group(2)[0] not in "\"'[{|>")
+
+
+def _quote_frontmatter(text):
+    """Double-quote every frontmatter value holding an unquoted ': '. -> (text, n)."""
+    if not text.startswith("---\n"):
+        return text, 0
+    lines = text.split("\n")
+    n = 0
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            break
+        if _unquoted_colon(lines[i]):
+            k, v = FM_LINE.match(lines[i]).groups()
+            lines[i] = '%s: "%s"' % (k, v.replace("\\", "\\\\").replace('"', '\\"'))
+            n += 1
+    return "\n".join(lines), n
+
+
 def _fix_safe(idx, stems):
     """Rewrite [[target]] when target matches no note but exactly one note after
     normalising case, dashes and spaces. Returns the number of links rewritten."""
@@ -299,6 +320,17 @@ def _fix_safe(idx, stems):
         if len(cands) == 1:
             plan.setdefault(r["path"], {})[t] = next(iter(cands))
     n = 0
+    for r in idx.db.execute("SELECT path FROM docs WHERE source='vault'"):
+        if vault_index.is_archived(r["path"]):
+            continue
+        full = idx.vault / r["path"].split(":", 1)[1]
+        try:
+            text, k = _quote_frontmatter(full.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if k:
+            full.write_text(text, encoding="utf-8")
+            n += k
     for path, repl in plan.items():
         src, rel = path.split(":", 1)
         full = (idx.vault if src == "vault" else idx.memory) / rel
