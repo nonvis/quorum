@@ -194,6 +194,15 @@ class LintCase(unittest.TestCase):
                                 "[[maybe_unused]] int x;\n```\nThe Sui vault contract holds funds.\n")
         self.assertNotIn("docs/CPP.md", refs)
 
+    def test_wikilinks_to_markdown_files_in_the_repo_are_not_vault_refs(self):
+        repo = self.home / "nonvis" / "alpha"
+        write(repo / "docs" / "Sibling note.md", "# Sib\n")
+        git(repo, "add", "docs/Sibling note.md")
+        refs, _ = self.doc_case("W.md", "# W\n\nSee [[Sibling note]] and [[Sibling note|it]].\n")
+        self.assertNotIn("docs/W.md", refs)
+        refs, _ = self.doc_case("W2.md", "# W\n\nSee [[Sibling note]] and [[Some Vault Note]].\n")
+        self.assertIn("docs/W2.md", refs)
+
     def test_a_backticked_config_default_is_not_a_vault_ref(self):
         refs, _ = self.doc_case("CFG.md", "# C\n\nThe vault path defaults to `~/nonvis/second-brain`.\n")
         self.assertNotIn("docs/CFG.md", refs)

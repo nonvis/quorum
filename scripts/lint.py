@@ -51,6 +51,7 @@ MD_LINK = re.compile(r"\]\(([^)#\s:]+\.md)(?:#[^)]*)?\)")
 PLACEHOLDER = re.compile(r"YYYY|<[^>]*>|\bpath/to\b|\bpath/file\b|\.\.\.")
 FENCE = re.compile(r"```.*?```", re.S)
 INLINE = re.compile(r"`[^`\n]*`")
+WIKI = re.compile(r"\[\[([^\]|#\n]+)(?:[#|][^\]\n]*)?\]\]")
 NOT_A_FILE_LINE = re.compile(r"\b(?:retired|deleted|removed|superseded|renamed|generated|"
                              r"gitignored|git-ignored)\b", re.I)
 OUTPUT_EXT = (".json", ".jsonl", ".log", ".csv")
@@ -175,12 +176,20 @@ def run(idx, fix_safe=False):
     for name in sorted(repos):
         files_of(name)
         ri = rindex[name][0]
+        # A wikilink naming a markdown file in this repo (a sample vault, say)
+        # stays inside the repo.
+        own = {os.path.splitext(os.path.basename(f))[0].lower()
+               for f in rindex[name][1] if f.endswith(".md")}
+
+        def in_repo(m):
+            return "" if m.group(1).strip().lower() in own else m.group(0)
         # Every tracked, non-vendored markdown file — not only docs/ and the root
         # guides: a nested README or a TASKS.md pointing into the vault breaks
         # the same rule.
         for r in ri.db.execute("SELECT path, body FROM docs ORDER BY path"):
             nofence = FENCE.sub("", r["body"])
-            if VAULT_PROSE.search(INLINE.sub("", nofence)) or VAULT_CITE.search(nofence):
+            prose = WIKI.sub(in_repo, INLINE.sub("", nofence))
+            if VAULT_PROSE.search(prose) or VAULT_CITE.search(nofence):
                 vault_refs.append({"repo": name, "doc": r["path"]})
             files = rindex[name][1]
             tops = {x.split("/", 1)[0] for x in files if "/" in x}
