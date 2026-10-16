@@ -275,6 +275,165 @@ class MentionsCase(unittest.TestCase):
         self.assertEqual([m["path"] for m in self.idx.mentions("alpha")], ["vault:B.md"])
 
 
+class HookCase(unittest.TestCase):
+    """Step 4: `quorum hook` — the UserPromptSubmit hook."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.vault = root / "vault"
+        self.mem = root / "mem"
+        self.mem.mkdir()
+        # 20 filler notes share common words, so they are not salient.
+        for i in range(20):
+            note(self.vault / ("Filler %02d.md" % i), "work next session notes plan today",
+                 title="Filler %02d" % i)
+        note(self.vault / "Litestream Restore.md",
+             "The restore drill: stop writers before litestream restores the WAL segments.",
+             title="Litestream Restore", summary='"How the restore drill runs"')
+        note(self.vault / "Walrus Lease.md", "walrus blob lease renewal epochs",
+             title="Walrus Lease")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def hook(self, prompt, extra_env=None, raw=None):
+        env = dict(os.environ, QUORUM_VAULT=str(self.vault), QUORUM_MEMORY=str(self.mem))
+        env.update(extra_env or {})
+        payload = raw if raw is not None else json.dumps(
+            {"prompt": prompt, "session_id": "sess-1", "hook_event_name": "UserPromptSubmit"})
+        return subprocess.run([sys.executable, str(HERE / "quorum_cli.py"), "hook"],
+                              input=payload, env=env, capture_output=True, text=True)
+
+    def context(self, p):
+        self.assertEqual(p.returncode, 0, p.stderr)
+        if not p.stdout.strip():
+            return ""
+        out = json.loads(p.stdout)["hookSpecificOutput"]
+        self.assertEqual(out["hookEventName"], "UserPromptSubmit")
+        return out["additionalContext"]
+
+    def test_a_relevant_prompt_injects_the_note_path_and_summary(self):
+        c = self.context(self.hook("how does the litestream restore drill handle the WAL?"))
+        self.assertIn("Litestream Restore.md", c)
+        self.assertIn("How the restore drill runs", c)
+
+    def test_a_short_prompt_injects_nothing(self):
+        for p in ("push", "yes do both", "go"):
+            self.assertEqual(self.context(self.hook(p)), "", p)
+
+    def test_common_words_alone_inject_nothing(self):
+        self.assertEqual(self.context(self.hook("what work is next for the session plan today")), "")
+
+    def test_one_rare_term_is_below_the_floor(self):
+        self.assertEqual(self.context(self.hook("tell me about litestream please and thanks")), "")
+
+    def test_the_context_is_capped(self):
+        for i in range(30):
+            note(self.vault / ("Lease %02d.md" % i), "walrus blob lease renewal epochs " * 50,
+                 title="Lease %02d" % i, summary='"' + "x" * 400 + '"')
+        c = self.context(self.hook("walrus blob lease renewal epochs"))
+        self.assertLessEqual(c.count("\n- "), 5)
+        self.assertLessEqual(len(c), 4000)
+
+    def test_rare_words_matched_only_in_a_body_inject_nothing(self):
+        """A note ABOUT a topic names it in its title, summary or path; rare
+        words that only occur in a body (a surname 'Park') are noise."""
+        note(self.vault / "Meeting.md", "Chan Park said the pull request is strong",
+             title="Meeting", summary='"Team intro"')
+        self.assertEqual(self.context(self.hook("can we park this, no strong pull here")), "")
+
+    def test_a_few_rare_terms_need_two_of_them_in_the_head(self):
+        """With <= 3 rare terms, one of them in a title ("Parked rulings") is a
+        coincidence; two is a topic."""
+        note(self.vault / "Parked Rulings.md", "the strong pull of the backlog",
+             title="Parked Rulings", summary='"Rulings parked for later"')
+        self.assertEqual(self.context(self.hook("can we park this, no strong pull here")), "")
+
+    def test_numbers_and_two_letter_terms_never_trigger(self):
+        note(self.vault / "MVP 94.md", "AQ 95 and 2026 items", title="MVP 94 AQ 95")
+        self.assertEqual(self.context(self.hook("what is AQ/95 and MVP/94 in 2026")), "")
+
+    def test_only_a_summary_opening_counts_as_its_head(self):
+        note(self.vault / "Status.md", "status body", title="Status",
+             summary='"' + "x " * 200 + 'litestream restore"')
+        self.assertNotIn("Status.md",
+                         self.context(self.hook("litestream restore questions")))
+
+    def test_off_switch(self):
+        p = self.hook("litestream restore drill WAL", {"QUORUM_HOOK": "off"})
+        self.assertEqual((p.returncode, p.stdout), (0, ""))
+
+    def test_bad_input_or_no_vault_exits_0_silently(self):
+        p = self.hook(None, raw="not json")
+        self.assertEqual((p.returncode, p.stdout), (0, ""))
+        p = self.hook("litestream restore drill", {"QUORUM_VAULT": str(self.vault / "nope")})
+        self.assertEqual((p.returncode, p.stdout), (0, ""))
+        self.assertFalse((self.vault / "nope").exists())
+
+    def test_every_call_is_logged_for_the_readout(self):
+        self.hook("litestream restore drill WAL")
+        self.hook("push")
+        lines = [json.loads(l) for l in
+                 (self.vault / ".quorum" / "hook.log").read_text().splitlines()]
+        self.assertEqual([(l["session"], len(l["hits"]) > 0) for l in lines],
+                         [("sess-1", True), ("sess-1", False)])
+        self.assertNotIn("prompt", lines[0])
+
+
+class HookReportCase(unittest.TestCase):
+    """`quorum hook --report`: was the hook used, and were its hits read?"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name) / "home"
+        self.vault = self.home / "vault"
+        note(self.vault / "A.md", "a", title="A")
+        munged = "".join("-" if c in "/." else c for c in str(self.vault))
+        tdir = self.home / ".claude" / "projects" / munged
+        tdir.mkdir(parents=True)
+        (self.vault / ".quorum").mkdir()
+        log = [
+            {"ts": "2026-10-17T01:00:00Z", "session": "s1", "terms": 4,
+             "hits": ["vault:A.md", "memory:m.md"], "chars": 300},
+            {"ts": "2026-10-17T01:05:00Z", "session": "s1", "terms": 1, "hits": [], "chars": 0},
+            {"ts": "2026-10-17T02:00:00Z", "session": "s2", "terms": 3,
+             "hits": ["vault:A.md"], "chars": 200},
+        ]
+        (self.vault / ".quorum" / "hook.log").write_text(
+            "".join(json.dumps(l) + "\n" for l in log))
+
+        def tool(ts, name, inp):
+            return json.dumps({"type": "assistant", "timestamp": ts, "message": {
+                "content": [{"type": "tool_use", "name": name, "input": inp}]}})
+        (tdir / "s1.jsonl").write_text("\n".join([
+            tool("2026-10-17T01:00:05Z", "Read", {"file_path": str(self.vault / "A.md")}),
+            tool("2026-10-17T01:06:00Z", "Bash", {"command": "quorum q lease"}),
+            tool("2026-10-17T01:07:00Z", "Bash", {"command": "quorum sym renew --all"}),
+        ]) + "\n")
+        (tdir / "s2.jsonl").write_text(
+            tool("2026-10-17T02:00:09Z", "Grep", {"pattern": "A"}) + "\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def report(self):
+        env = dict(os.environ, HOME=str(self.home), QUORUM_VAULT=str(self.vault),
+                   QUORUM_MEMORY=str(self.home / "mem"))
+        p = subprocess.run([sys.executable, str(HERE / "quorum_cli.py"), "hook", "--report",
+                            "--json"], env=env, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return json.loads(p.stdout)
+
+    def test_counts_calls_injections_and_hits_read(self):
+        r = self.report()
+        self.assertEqual((r["calls"], r["injected"], r["hits"], r["hits_read"]), (3, 2, 3, 1))
+
+    def test_counts_sessions_that_called_quorum_lookups(self):
+        r = self.report()
+        self.assertEqual((r["sessions"], r["sessions_with_lookups"], r["lookup_calls"]), (2, 1, 2))
+
+
 class CliCase(unittest.TestCase):
     """`quorum q` / `quorum links` / `quorum index` through scripts/quorum_cli.py."""
 

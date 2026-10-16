@@ -351,6 +351,41 @@ class Index:
         hits.sort(key=lambda h: (-h["matched"], is_archived(h["path"]), h["score"]))
         return hits[:limit]
 
+    def salient_terms(self, text, max_df=0.15, limit=10):
+        """The prompt's terms that are RARE in the index (in at most max_df of
+        docs, at least one), rarest first — so a common word never triggers."""
+        n = self.db.execute("SELECT count(*) FROM docs").fetchone()[0]
+        if not n:
+            return []
+        scored = []
+        for t in query_terms(text):
+            if len(t) < 3 or t.isdigit():
+                continue
+            df = self.db.execute("SELECT count(*) FROM fts WHERE fts MATCH ?",
+                                 ('"%s"*' % t,)).fetchone()[0]
+            if 0 < df <= max(1, max_df * n):
+                scored.append((df, t))
+        return [t for _, t in sorted(scored)[:limit]]
+
+    def prompt_hits(self, prompt, limit=5):
+        """Notes clearly relevant to a prompt, for the UserPromptSubmit hook:
+        >= 2 salient terms in the prompt; a hit covers >= 2 of them and at least
+        a third, and names one in its title, summary or path — two when the prompt
+        has <= 3 salient terms (a note ABOUT the topic says so there; body-only
+        or single-word head matches are coincidence). -> (terms, hits)."""
+        terms = self.salient_terms(prompt)
+        if len(terms) < 2:
+            return terms, []
+        need = max(2, -(-len(terms) // 3))
+        pats = [re.compile(r"(?<!\w)" + re.escape(t)) for t in terms]
+        need_head = 2 if len(terms) <= 3 else 1
+        hits = []
+        for h in self.search(" ".join(terms), limit=limit * 4):
+            head = ("%s %s %s" % (h["path"], h["title"], h["summary"][:300])).lower()
+            if h["matched"] >= need and sum(1 for p in pats if p.search(head)) >= need_head:
+                hits.append(h)
+        return terms, hits[:limit]
+
     def _resolve(self, name):
         """A doc by full path, by path suffix, or by stem (vault first)."""
         r = self.db.execute("SELECT * FROM docs WHERE path=?", (name,)).fetchone()

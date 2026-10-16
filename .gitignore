@@ -1,11 +1,6 @@
 # Python bytecode
 __pycache__/
 
-# Local leftovers from the retired daemon / web app (runtime databases), kept untracked
-quorum-core/
-quorum-web/
-sample/
-
 # Quorum runtime state in project dirs
 .quorum/
 

@@ -27,11 +27,18 @@ tooling that spends no model tokens:
   quorum repo index [--repo <name> | --all] [--rebuild]
       Build or refresh repo indexes now. A repo is indexed only if it is on the
       vault's allowlist or has opted in by having a .quorum/ dir.
+  quorum hook
+      The UserPromptSubmit hook: reads Claude Code's hook JSON on stdin and, when
+      the prompt clearly matches vault notes, prints their paths + summaries as
+      additionalContext (<= 5 hits, ~1k tokens). Never fails a prompt: any error
+      exits 0 silently; QUORUM_HOOK=off disables it. Each call appends a line to
+      <vault>/.quorum/hook.log (session, term count, hit paths — never the prompt).
   quorum version
 
 `~/.local/bin/quorum` is a symlink to this file (scripts/install.sh).
 """
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -62,6 +69,10 @@ USAGE = """usage: quorum <command> [options]
                   where a symbol is defined
   repo index [--repo <name> | --all] [--rebuild]
                   build/refresh repo indexes (allowlisted or opted-in repos only)
+  hook            UserPromptSubmit hook (stdin JSON -> additionalContext)
+  hook --report [--json]
+                  how often the hook injected, how many hits were then Read,
+                  how many sessions ran quorum lookups themselves
   version         print the checkout's commit
 
 The vault defaults to ~/nonvis/second-brain (QUORUM_VAULT overrides); its memory
@@ -358,6 +369,148 @@ def cmd_sym(args):
     return 0
 
 
+HOOK_MAX_CHARS = 3600
+
+
+LOOKUP = re.compile(r"\bquorum\s+(?:q|links|mentions|repos|sym|repo\s+q)\b")
+
+
+def hook_report(as_json):
+    """The readout for the hook and the lookup commands, from hook.log and the
+    vault's session transcripts (main + subagents): how often the hook fired,
+    how many injected notes the session then Read, and how many sessions ran a
+    `quorum` lookup themselves."""
+    import json
+    sys.path.insert(0, str(REPO / "scripts"))
+    import vault_index
+    vault = vault_index.default_vault()
+    memory = vault_index.default_memory(vault)
+    log = []
+    try:
+        for line in (vault / ".quorum" / "hook.log").read_text().splitlines():
+            try:
+                log.append(json.loads(line))
+            except ValueError:
+                pass
+    except OSError:
+        pass
+    # Claude Code names the dir from the path as the session saw it, which may
+    # differ from the resolved one (macOS: /var -> /private/var).
+    tdir = None
+    for v in (os.environ.get("QUORUM_VAULT") or "", str(vault)):
+        if v:
+            cand = Path(os.path.expanduser("~/.claude/projects")) / "".join(
+                "-" if c in "/." else c for c in os.path.expanduser(v))
+            if cand.is_dir():
+                tdir = cand
+                break
+    tdir = tdir or Path("/nonexistent")
+    sessions = sorted({l["session"] for l in log if l.get("session")})
+    reads, lookups = {}, {}
+    for sid in sessions:
+        files = [tdir / ("%s.jsonl" % sid)] + sorted((tdir / sid / "subagents").glob("*.jsonl"))
+        rs, n = [], 0
+        for f in files:
+            try:
+                lines = f.read_text(errors="replace").splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                content = (r.get("message") or {}).get("content")
+                if not isinstance(content, list):
+                    continue
+                for c in content:
+                    if not isinstance(c, dict) or c.get("type") != "tool_use":
+                        continue
+                    inp = c.get("input") or {}
+                    if c.get("name") == "Read" and inp.get("file_path"):
+                        rs.append((r.get("timestamp", ""), os.path.realpath(inp["file_path"])))
+                    if c.get("name") == "Bash" and LOOKUP.search(inp.get("command", "")):
+                        n += 1
+        reads[sid], lookups[sid] = rs, n
+
+    def real(hit):
+        src, rel = hit.split(":", 1)
+        return os.path.realpath(str((vault if src == "vault" else memory) / rel))
+
+    hits = hits_read = injected = 0
+    for l in log:
+        if not l.get("hits"):
+            continue
+        injected += 1
+        for h in l["hits"]:
+            hits += 1
+            target = real(h)
+            if any(ts >= l["ts"] and p == target for ts, p in reads.get(l.get("session"), [])):
+                hits_read += 1
+    out = {"calls": len(log), "injected": injected, "hits": hits, "hits_read": hits_read,
+           "sessions": len(sessions),
+           "sessions_with_lookups": sum(1 for v in lookups.values() if v),
+           "lookup_calls": sum(lookups.values()),
+           "since": log[0]["ts"] if log else None}
+    if as_json:
+        print(json.dumps(out, indent=1))
+    else:
+        print("hook since %s: %d prompts, %d injected (%d notes), %d of them then Read; "
+              "%d of %d sessions ran a quorum lookup themselves (%d calls)" % (
+                  out["since"], out["calls"], injected, hits, hits_read,
+                  out["sessions_with_lookups"], out["sessions"], out["lookup_calls"]))
+    return 0
+
+
+def cmd_hook(args):
+    """Never raises, never exits non-zero: a hook must not block a prompt."""
+    import json
+    import time
+    if "--report" in args:
+        return hook_report("--json" in args)
+    try:
+        if os.environ.get("QUORUM_HOOK", "").lower() in ("off", "0", "no"):
+            return 0
+        if sys.stdin.isatty():
+            return 0
+        payload = json.loads(sys.stdin.read() or "{}")
+        prompt = payload.get("prompt") or ""
+        sys.path.insert(0, str(REPO / "scripts"))
+        import vault_index
+        if not vault_index.default_vault().is_dir():
+            return 0
+        idx = _index()
+        idx.refresh()
+        terms, hits = idx.prompt_hits(prompt)
+        lines = []
+        for h in hits:
+            summary = " ".join((h["summary"] or h["snippet"] or "").split())[:180]
+            lines.append("- %s%s" % (h["path"], " — " + summary if summary else ""))
+        text = ""
+        if lines:
+            text = ("Vault index (quorum q) — notes that match this prompt; read one "
+                    "only if it helps:\n" + "\n".join(lines))
+            while len(text) > HOOK_MAX_CHARS and lines:
+                lines.pop()
+                text = text.split("\n")[0] + "\n" + "\n".join(lines)
+        try:
+            with open(idx.vault / ".quorum" / "hook.log", "a") as f:
+                f.write(json.dumps({
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "session": payload.get("session_id"), "terms": len(terms),
+                    "hits": [h["path"] for h in hits[:len(lines)]],
+                    "chars": len(text)}) + "\n")
+        except OSError:
+            pass
+        idx.close()
+        if text and lines:
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit", "additionalContext": text}}))
+    except Exception:
+        pass
+    return 0
+
+
 def cmd_version(_args):
     sha = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
                          capture_output=True, text=True).stdout.strip() or "unknown"
@@ -388,6 +541,8 @@ def main(argv):
         return cmd_repo(rest)
     if sub == "sym":
         return cmd_sym(rest)
+    if sub == "hook":
+        return cmd_hook(rest)
     if sub in RETIRED:
         print("ERROR: `quorum %s` was retired with the C++ daemon on 2026-10-16 "
               "(vault Quorum Decision Log #98)." % sub, file=sys.stderr)

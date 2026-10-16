@@ -20,6 +20,8 @@ quorum index [--stats] [--rebuild]
 quorum repo q <terms…> [--repo <name> | --all] [--limit N] [--json]
 quorum sym <name> [--repo <name> | --all] [--json]
 quorum repo index [--repo <name> | --all] [--rebuild]
+quorum hook                      # Claude Code UserPromptSubmit hook (stdin JSON)
+quorum hook --report [--json]
 quorum version
 ```
 
@@ -60,6 +62,19 @@ quorum version
   re-reads the history whole after a rewrite. Vendored dirs (`third_party/`,
   `vendor/`, `node_modules/`, `dist/`, `build/`) are listed, not parsed.
   `.quorum/.gitignore` (`*`) keeps the repo clean.
+- **`hook`** is a Claude Code `UserPromptSubmit` hook. It reads the hook JSON on
+  stdin and, only when the prompt clearly matches vault notes, prints up to five
+  of their paths + summaries as `additionalContext` (≤ ~1k tokens). "Clearly":
+  the prompt has ≥ 2 *salient* terms (in ≤ 15% of indexed docs; no numbers or
+  two-letter words); a hit covers ≥ 2 of them and at least a third, and names
+  one in its title, summary opening or path — two, when the prompt has ≤ 3. It
+  never blocks a prompt: any error exits 0 silently; `QUORUM_HOOK=off` disables
+  it. Each call appends one line to `<vault>/.quorum/hook.log` (session, term
+  count, hit paths — never the prompt). Install, in a project's
+  `.claude/settings.json`: `"command": "quorum hook 2>/dev/null || true"`.
+- **`hook --report`** reads that log and the sessions' transcripts: prompts seen,
+  injections, how many injected notes the session then Read, and how many
+  sessions ran a `quorum` lookup themselves.
 
 The vault defaults to `~/nonvis/second-brain` (`QUORUM_VAULT` overrides); its
 memory directory is Claude Code's for that path (`QUORUM_MEMORY` overrides). The
