@@ -150,6 +150,14 @@ class LintCase(unittest.TestCase):
         self.assertNotIn("vault:06_Metadata/Templates/T.md", [x["note"] for x in c["dangling_links"]])
         self.assertNotIn("vault:README.md", c["orphans"] + c["no_summary"])
 
+    def test_an_unquoted_colon_in_a_frontmatter_value_breaks_yaml(self):
+        write(self.vault / "Bad.md", "---\ntitle: Bad\nsummary: the rule: one writer\n---\nx\n")
+        write(self.vault / "Ok.md", "---\ntitle: Ok\nsummary: \"the rule: one writer\"\n"
+              "url: https://x.io/a\ntags: [a, b]\n---\nx\n")
+        c = self.lint()["frontmatter_unquoted_colon"]
+        self.assertIn({"note": "vault:Bad.md", "key": "summary"}, c)
+        self.assertNotIn("vault:Ok.md", [x["note"] for x in c])
+
     def test_memory_unindexed_and_broken_index_rows(self):
         c = self.lint()
         self.assertEqual((c["memory_unindexed"], c["memory_index_broken"]),

@@ -17,6 +17,8 @@ Checks (each a list in the JSON `checks` object):
   docs_vault_refs      repo markdown (any tracked, non-vendored .md) that points
                        into the vault (the vault links to docs, never back)
   docs_dead_refs       repo markdown naming a repo file that is not at HEAD
+  frontmatter_unquoted_colon  vault notes whose frontmatter has an unquoted value
+                       holding ": " (strict YAML, and Obsidian, reject the whole block)
   locked_docs_missing  notes whose `locked_in: <repo>/<path>` frontmatter names a
                        doc that is not at HEAD
 
@@ -57,6 +59,7 @@ WIKI = re.compile(r"\[\[([^\]|#\n]+)(?:[#|][^\]\n]*)?\]\]")
 NOT_A_FILE_LINE = re.compile(r"\b(?:retired|deleted|removed|superseded|renamed|generated|"
                              r"gitignored|git-ignored)\b", re.I)
 OUTPUT_EXT = (".json", ".jsonl", ".log", ".csv")
+FM_LINE = re.compile(r"^([A-Za-z_][\w-]*):[ \t]+(\S.*)$")
 MEM_LINK = re.compile(r"\]\(([^)\s]+\.md)\)")
 
 
@@ -238,6 +241,24 @@ def run(idx, fix_safe=False):
                         doc_dead.append({"repo": name, "doc": r["path"], "file": f})
     checks["docs_vault_refs"] = vault_refs
     checks["docs_dead_refs"] = doc_dead
+
+    colon = []
+    for r in db.execute("SELECT path FROM docs WHERE source='vault' ORDER BY path"):
+        if vault_index.is_archived(r["path"]):
+            continue
+        try:
+            head = (idx.vault / r["path"].split(":", 1)[1]).read_text(errors="replace")[:6000]
+        except OSError:
+            continue
+        if not head.startswith("---\n"):
+            continue
+        for line in head[4:].split("\n"):
+            if line.strip() == "---":
+                break
+            m = FM_LINE.match(line)
+            if m and ": " in m.group(2) and m.group(2)[0] not in "\"'[{|>":
+                colon.append({"note": r["path"], "key": m.group(1)})
+    checks["frontmatter_unquoted_colon"] = colon
 
     locked = []
     for r in db.execute("SELECT path FROM docs WHERE source='vault'"):
