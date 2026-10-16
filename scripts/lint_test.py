@@ -214,6 +214,11 @@ class LintCase(unittest.TestCase):
         self.assertIn(("TASKS.md", "src/gone_too.py"),
                       [(x["doc"], x["file"]) for x in c["docs_dead_refs"]])
 
+    def test_a_file_the_line_calls_generated_or_gitignored_is_not_dead(self):
+        _, dead = self.doc_case("G.md", "# G\n\nThe launcher writes `src/out.live.toml` "
+                                "(generated, gitignored).\n")
+        self.assertEqual([d for d in dead if d[0] == "docs/G.md"], [])
+
     def test_a_locked_doc_that_is_missing(self):
         self.assertEqual([(x["note"], x["doc"]) for x in self.lint()["locked_docs_missing"]],
                          [("vault:Locked.md", "alpha/docs/NOPE.md")])

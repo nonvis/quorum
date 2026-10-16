@@ -51,7 +51,8 @@ MD_LINK = re.compile(r"\]\(([^)#\s:]+\.md)(?:#[^)]*)?\)")
 PLACEHOLDER = re.compile(r"YYYY|<[^>]*>|\bpath/to\b|\bpath/file\b|\.\.\.")
 FENCE = re.compile(r"```.*?```", re.S)
 INLINE = re.compile(r"`[^`\n]*`")
-NOT_A_FILE_LINE = re.compile(r"\b(?:retired|deleted|removed|superseded|renamed)\b", re.I)
+NOT_A_FILE_LINE = re.compile(r"\b(?:retired|deleted|removed|superseded|renamed|generated|"
+                             r"gitignored|git-ignored)\b", re.I)
 OUTPUT_EXT = (".json", ".jsonl", ".log", ".csv")
 MEM_LINK = re.compile(r"\]\(([^)\s]+\.md)\)")
 
