@@ -207,6 +207,15 @@ class LintCase(unittest.TestCase):
                                 "`rgw/rgw_op.cc`; runs `src/gone_now.py`.\n")
         self.assertEqual([d[1] for d in dead if d[0] == "docs/B.md"], ["src/gone_now.py"])
 
+    def test_a_ref_on_a_line_naming_a_repo_outside_the_index_is_not_checked(self):
+        """`beta` is a repo the vault names but does not index: its files can't be
+        looked up, so a ref beside it is unknown, not dead."""
+        note(self.vault / "Beta.md", "beta: ~/nonvis/beta/README.md, [[Live]]", title="Beta",
+             summary='"b"')
+        _, dead = self.doc_case("X.md", "# X\n\n| feed | `beta` `src/resolve_feed.ts` |\n\n"
+                                "Runs `src/gone_too.py`.\n")
+        self.assertEqual([d[1] for d in dead if d[0] == "docs/X.md"], ["src/gone_too.py"])
+
     def test_a_broken_relative_markdown_link_is_a_dead_ref(self):
         _, dead = self.doc_case("L.md", "# L\n\nSee [ops](server-operations.md), "
                                 "[arch](ARCH.md) and [site](https://x.io/a.md).\n")

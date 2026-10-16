@@ -143,6 +143,11 @@ def run(idx, fix_safe=False):
 
     repos = allowed_repos(idx)
     rindex = {}
+    # Repos the vault names but does not index: a ref on a line naming one may be
+    # that repo's file, which can't be looked up, so it is not reported dead.
+    outside = sorted({r["name"] for r in idx.repos()} - set(repos))
+    names_outside = (re.compile(r"(?<![\w./-])(?:%s)(?![\w/-])" % "|".join(map(re.escape, outside)))
+                     if outside else None)
 
     def files_of(name):
         if name not in rindex:
@@ -238,7 +243,8 @@ def run(idx, fix_safe=False):
                     elif not is_link and ("/" not in f or first not in tops):
                         continue  # a bare name or a path outside this repo's tree
                     if not (_present(files, repos[name], f)
-                            or any(_present(files_of(o), repos[o], f) for o in repos if o != name)):
+                            or any(_present(files_of(o), repos[o], f) for o in repos if o != name)
+                            or (names_outside and names_outside.search(line))):
                         doc_dead.append({"repo": name, "doc": r["path"], "file": f})
     checks["docs_vault_refs"] = vault_refs
     checks["docs_dead_refs"] = doc_dead
