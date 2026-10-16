@@ -284,7 +284,10 @@ def run(idx, fix_safe=False):
 
 def _unquoted_colon(line):
     m = FM_LINE.match(line)
-    return bool(m and ": " in m.group(2) and m.group(2)[0] not in "\"'[{|>")
+    if not m or m.group(2)[0] in "\"'[{|>":
+        return False
+    value = re.split(r"\s#", m.group(2), 1)[0]  # " #" starts a YAML comment
+    return ": " in value
 
 
 def _quote_frontmatter(text):

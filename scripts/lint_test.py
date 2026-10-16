@@ -153,7 +153,8 @@ class LintCase(unittest.TestCase):
     def test_an_unquoted_colon_in_a_frontmatter_value_breaks_yaml(self):
         write(self.vault / "Bad.md", "---\ntitle: Bad\nsummary: the rule: one writer\n---\nx\n")
         write(self.vault / "Ok.md", "---\ntitle: Ok\nsummary: \"the rule: one writer\"\n"
-              "url: https://x.io/a\ntags: [a, b]\n---\nx\n")
+              "url: https://x.io/a\ntags: [a, b]\nupdated: 2026-10-16  # note: a comment\n"
+              "status: open #3 is fine\n---\nx\n")
         c = self.lint()["frontmatter_unquoted_colon"]
         self.assertIn({"note": "vault:Bad.md", "key": "summary"}, c)
         self.assertNotIn("vault:Ok.md", [x["note"] for x in c])
