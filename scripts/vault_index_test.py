@@ -23,6 +23,13 @@ def note(path, body, **front):
     path.write_text(fm + body, encoding="utf-8")
 
 
+
+class LinkTargetsCase(unittest.TestCase):
+    def test_links_inside_code_are_not_links(self):
+        body = ("See [[Real]].\n```sh\nif [[ ! -f \"$X\" ]]; then\n```\n"
+                "Inline `[[ -n $Y ]]` too, and [[Also Real|alias]].\n")
+        self.assertEqual(vi.link_targets(body), ["Real", "Also Real"])
+
 class IndexCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -29,7 +29,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"  # 3: no links inside code
 ALLOWLIST = "06_Metadata/quorum-repos.txt"
 M_PATH = re.compile(r"(?:~|/Users/[^/\s`]+)/((?:nonvis|projects)/[A-Za-z0-9._-]+)"
                     r"((?:/[A-Za-z0-9._@+-]+)*)")
@@ -39,6 +39,7 @@ M_SHA = re.compile(r"`([0-9a-f]{7,40})`")
 M_PR = re.compile(r"\bPR\s*#?(\d{1,5})\b")
 SKIP_DIRS = {".git", ".obsidian", "node_modules", ".quorum", ".trash", "__pycache__"}
 WIKILINK = re.compile(r"\[\[([^\]\n]+?)\]\]")
+CODE = re.compile(r"^(```|~~~).*?^\1[^\n]*$|`[^`\n]*`", re.S | re.M)
 STOPWORDS = set("""a an and are as at be by do does for from has have how i in is it
 its of on or so that the this to was we what when where which who why will with
 you your can should would could about into than then them they there these those
@@ -100,7 +101,8 @@ def parse(text):
 
 def link_targets(body):
     out = []
-    for m in WIKILINK.finditer(body):
+    # Obsidian does not link inside code (a shell `[[ -f x ]]` is not a note).
+    for m in WIKILINK.finditer(CODE.sub("", body)):
         t = m.group(1)
         t = re.split(r"\\?\|", t, 1)[0]
         t = t.split("#", 1)[0].strip()
