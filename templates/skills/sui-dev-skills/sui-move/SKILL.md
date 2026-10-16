@@ -890,7 +890,7 @@ For every public function that takes user input, exercise the edges:
 ## 20. Common Pitfalls
 
 Real failure modes drawn from Quorum review history (`sample/move/sweeping-sui`).
-Each pitfall maps to a specific rubric item in `templates/rubrics/move-dev/rubric.md`.
+Each pitfall names the quality check it maps to (the id reads as the check itself).
 
 ### Forgetting `is_trusted` on cross-vault destinations
 

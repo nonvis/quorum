@@ -13,9 +13,9 @@ Checks (each a list in the JSON `checks` object):
                        allowlisted repo
   memory_unindexed     memory files no MEMORY*.md links to
   memory_index_broken  MEMORY*.md rows linking to a missing file
-  docs_vault_refs      repo docs that point into the vault (repos stay
-                       self-sufficient: the vault links to docs, never back)
-  docs_dead_refs       repo docs naming a repo file that is not at HEAD
+  docs_vault_refs      repo markdown (any tracked, non-vendored .md) that points
+                       into the vault (the vault links to docs, never back)
+  docs_dead_refs       repo markdown naming a repo file that is not at HEAD
   locked_docs_missing  notes whose `locked_in: <repo>/<path>` frontmatter names a
                        doc that is not at HEAD
 
@@ -174,9 +174,10 @@ def run(idx, fix_safe=False):
     for name in sorted(repos):
         files_of(name)
         ri = rindex[name][0]
+        # Every tracked, non-vendored markdown file — not only docs/ and the root
+        # guides: a nested README or a TASKS.md pointing into the vault breaks
+        # the same rule.
         for r in ri.db.execute("SELECT path, body FROM docs ORDER BY path"):
-            if not repo_index.is_docs(r["path"]):
-                continue
             nofence = FENCE.sub("", r["body"])
             if VAULT_PROSE.search(INLINE.sub("", nofence)) or VAULT_CITE.search(nofence):
                 vault_refs.append({"repo": name, "doc": r["path"]})

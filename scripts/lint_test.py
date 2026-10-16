@@ -203,6 +203,17 @@ class LintCase(unittest.TestCase):
                                 "See `../src/run.py`.\n")
         self.assertEqual([d for d in dead if d[0] == "docs/D.md"], [])
 
+    def test_every_tracked_markdown_file_is_checked_not_only_docs(self):
+        repo = self.home / "nonvis" / "alpha"
+        write(repo / "demo-app" / "services" / "README.md", "# S\n\nSee vault Permafrost/37 D-6.\n")
+        write(repo / "TASKS.md", "# T\n\nRun `src/gone_too.py`.\n")
+        git(repo, "add", ".")
+        git(repo, "commit", "-q", "-m", "more md")
+        c = self.lint()
+        self.assertIn("demo-app/services/README.md", [x["doc"] for x in c["docs_vault_refs"]])
+        self.assertIn(("TASKS.md", "src/gone_too.py"),
+                      [(x["doc"], x["file"]) for x in c["docs_dead_refs"]])
+
     def test_a_locked_doc_that_is_missing(self):
         self.assertEqual([(x["note"], x["doc"]) for x in self.lint()["locked_docs_missing"]],
                          [("vault:Locked.md", "alpha/docs/NOPE.md")])
