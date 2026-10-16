@@ -13,11 +13,7 @@ bundled assertions cannot be owned separately and a mutation would red them as a
 block. Case map:
   absent dir      -> no "$0.00" anywhere · exit 3 · the ABSENT header wording ·
                      JSON status no_transcript_dir · JSON total.est_usd null
-  absent + db     -> the daemon ledger IS read and labelled the only reading
-                     (sum + conversation count, out-of-window rows excluded),
-                     and the TOTAL still says n/a — one readable source does not
-                     become the missing one's number (Decision #64)
-  absent, no db   -> "db cross-check: unavailable (no .quorum/quorum.db)"
+  old daemon db   -> never read: no "db cross-check" line, no JSON field
   empty dir       -> "$0.00" · exit 0 · "sessions scanned: 0"  — the LIVENESS
                      case the absent-refusal must NOT fire on
   exact rates     -> sonnet-5 $2/$10 vs sonnet-4-6 $3/$15 (the substring table
@@ -90,8 +86,8 @@ class SpendReadoutCase(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix="spend_gate_home_"))
         (self.home / ".claude" / "projects").mkdir(parents=True)
-        # A REAL project dir, for the cases that need a .quorum/quorum.db on
-        # disk. Its transcript dir is still absent unless a case makes it.
+        # A REAL project dir (with a .quorum/, as a project has). Its transcript
+        # dir is absent unless a case makes it.
         self.proj = Path(tempfile.mkdtemp(prefix="spend_gate_proj_"))
         (self.proj / ".quorum").mkdir()
         self.now = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
@@ -116,24 +112,6 @@ class SpendReadoutCase(unittest.TestCase):
              "--since", since] + list(extra),
             env=env, capture_output=True, text=True)
         return p
-
-    def seed_db(self, rows):
-        """Write a minimal conversations table — the columns the script reads.
-
-        Deliberately NOT the daemon's full schema: the cross-check must depend
-        only on (spent_usd, created_at), and a drift into reading more would red
-        here rather than at `quorum spend`.
-        """
-        db = self.proj / ".quorum" / "quorum.db"
-        con = sqlite3.connect(str(db))
-        con.execute("CREATE TABLE conversations (id INTEGER PRIMARY KEY, "
-                    "goal TEXT, spent_usd REAL, created_at TEXT)")
-        con.executemany(
-            "INSERT INTO conversations(goal, spent_usd, created_at) "
-            "VALUES(?,?,?)", rows)
-        con.commit()
-        con.close()
-        return db
 
     # -- 1. absent dir: the refusal --------------------------------------
     # One assertion per method: a mutation stops at the first failure in a
@@ -170,68 +148,32 @@ class SpendReadoutCase(unittest.TestCase):
         p = self.run_readout(iso(self.now - timedelta(hours=1)), ["--json"])
         self.assertIsNone(json.loads(p.stdout)["total"]["est_usd"])
 
-    # -- 1b. absent dir, but the daemon ledger is still a real reading ----
-    # The transcript source is unreadable; the db is a DIFFERENT source and is
-    # readable. Refusing to look at it too would throw away the only measurement
-    # left — but it also must not be promoted into the TOTAL (Decision #64: the
-    # daemon only records `converse`, so it is a partial view of the window).
+    # -- 1b. the retired daemon's ledger is never read ---------------------
+    # The C++ daemon (retired 2026-10-16, vault Decision #98) kept its own
+    # conversations.spent_usd in .quorum/quorum.db; a leftover file must not
+    # bring that second reading back.
 
-    def db_window(self):
-        return (iso(self.now - timedelta(hours=3)), iso(self.now))
+    def seed_old_daemon_db(self):
+        con = sqlite3.connect(str(self.proj / ".quorum" / "quorum.db"))
+        con.execute("CREATE TABLE conversations (spent_usd REAL, created_at TEXT)")
+        con.execute("INSERT INTO conversations VALUES (3.75, ?)",
+                    ((self.now - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S"),))
+        con.commit()
+        con.close()
 
-    def seed_window_db(self):
-        def at(delta):
-            return (self.now - delta).strftime("%Y-%m-%d %H:%M:%S")
-        return self.seed_db([
-            ("in-window a", 1.25, at(timedelta(hours=2))),
-            ("in-window b", 2.50, at(timedelta(hours=1))),
-            ("OUTSIDE the window", 99.0, at(timedelta(hours=30))),
-        ])
+    def test_a_leftover_daemon_db_is_not_read(self):
+        self.seed_old_daemon_db()
+        p = self.run_readout(iso(self.now - timedelta(hours=3)), project=self.proj)
+        self.assertNotIn("db cross-check", p.stdout, p.stdout)
 
-    def run_absent_with_db(self, extra=()):
-        self.seed_window_db()
-        since, until = self.db_window()
-        p = self.run_readout(since, ["--until", until] + list(extra),
+    def test_a_leftover_daemon_db_adds_no_json_field(self):
+        self.seed_old_daemon_db()
+        p = self.run_readout(iso(self.now - timedelta(hours=3)), ["--json"],
                              project=self.proj)
-        self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
-        return p
+        self.assertNotIn("db_cross_check_usd", json.loads(p.stdout))
 
-    def test_absent_dir_runs_the_db_cross_check(self):
-        """The line the operator reads: labelled, summed, counted."""
-        p = self.run_absent_with_db()
-        self.assertIn("db cross-check (daemon-recorded, the only reading for "
-                      "this window): $3.75 across 2 conversations", p.stdout)
-
-    def test_absent_dir_db_cross_check_excludes_out_of_window(self):
-        """The $99 row sits outside [since, until] and must not be counted."""
-        r = json.loads(self.run_absent_with_db(["--json"]).stdout)
-        self.assertEqual(r["db_cross_check_conversations"], 2)
-
-    def test_absent_dir_db_cross_check_json_carries_the_sum(self):
-        r = json.loads(self.run_absent_with_db(["--json"]).stdout)
-        self.assertAlmostEqual(r["db_cross_check_usd"], 3.75, places=6)
-
-    def test_absent_dir_db_figure_never_becomes_the_total(self):
-        """Decision #64: a readable second source is NOT the missing first one.
-        The TOTAL row stays n/a even though we now print a real dollar figure."""
-        p = self.run_absent_with_db()
-        self.assertRegex(p.stdout, r"TOTAL\s+n/a\s+n/a\s+n/a\s+n/a\s+n/a")
-
-    def test_absent_dir_db_figure_never_becomes_the_json_total(self):
-        r = json.loads(self.run_absent_with_db(["--json"]).stdout)
-        self.assertIsNone(r["total"]["est_usd"])
-
-    def test_absent_dir_without_a_db_says_unavailable(self):
-        """No transcripts AND no ledger: name the reason, claim no number."""
-        since, until = self.db_window()
-        p = self.run_readout(since, ["--until", until], project=self.proj)
-        self.assertIn("db cross-check: unavailable (no .quorum/quorum.db)",
-                      p.stdout)
-
-    def test_absent_dir_without_a_db_prints_no_dollar_zero(self):
-        """`unavailable` must not degrade into a $0.00 anywhere on the page."""
-        since, until = self.db_window()
-        p = self.run_readout(since, ["--until", until], project=self.proj)
+    def test_absent_dir_with_a_project_prints_no_dollar_zero(self):
+        p = self.run_readout(iso(self.now - timedelta(hours=3)), project=self.proj)
         self.assertNotIn("$0.00", p.stdout, p.stdout)
 
     # -- 2. empty dir: the LIVENESS case the refusal must not fire on -----

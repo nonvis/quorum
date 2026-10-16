@@ -17,6 +17,9 @@ quorum links <note> [--json]
 quorum mentions <repo|~/path|file|sha> [--json]
 quorum repos [--json]
 quorum index [--stats] [--rebuild]
+quorum repo q <terms…> [--repo <name> | --all] [--limit N] [--json]
+quorum sym <name> [--repo <name> | --all] [--json]
+quorum repo index [--repo <name> | --all] [--rebuild]
 quorum version
 ```
 
@@ -43,7 +46,20 @@ quorum version
   one level down is followed), `not-git`, or `absent` on this host — with origin's
   URL and whether it is on the allowlist, the vault's tracked
   `06_Metadata/quorum-repos.txt` (one repo name per line).
-- **`index`** refreshes the index; `q` and `links` already refresh first.
+- **`index`** refreshes the index; every read already refreshes first.
+- **`repo q`** searches a repo's own index at `<repo>/.quorum/index.db`: its
+  markdown, its commit messages (subject and body) and its symbol names. **`sym`**
+  says where a symbol is defined (case-insensitive prefix; Python, Rust, TS/JS,
+  Move, C/C++, Go, shell). **`repo index`** builds or refreshes repo indexes.
+  The default target is the repo you are in; outside one, every allowlisted repo
+  (`--all`); `--repo <name>` picks one. A repo is indexed only if it is on the
+  vault's allowlist or has opted in with its own `.quorum/` directory — so inside
+  an opted-in repo these work with no vault at all. The index covers the
+  committed tree at HEAD (not uncommitted edits); a refresh re-reads only the
+  blobs `git ls-tree` shows changed and the commits after the indexed head, and
+  re-reads the history whole after a rewrite. Vendored dirs (`third_party/`,
+  `vendor/`, `node_modules/`, `dist/`, `build/`) are listed, not parsed.
+  `.quorum/.gitignore` (`*`) keeps the repo clean.
 
 The vault defaults to `~/nonvis/second-brain` (`QUORUM_VAULT` overrides); its
 memory directory is Claude Code's for that path (`QUORUM_MEMORY` overrides). The
@@ -68,6 +84,7 @@ The three skills linked into `~/.claude/skills` (`sui-dev-skills`,
 scripts/quorum_cli.py      the `quorum` command
 scripts/spend_readout.py   spend (and its tests)
 scripts/vault_index.py     the vault index (and its tests)
+scripts/repo_index.py      the per-repo index (and its tests)
 scripts/install.sh, doctor.sh
 templates/skills/          the three linked skills
 ```

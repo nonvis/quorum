@@ -1,7 +1,8 @@
 # Quorum — Claude Code Instructions
 
 Deterministic Python tooling: `quorum spend` (token/$ readout from Claude Code
-transcripts) and the vault index (`quorum q`, `quorum links`, `quorum index`).
+transcripts), the vault index (`quorum q`, `links`, `mentions`, `repos`, `index`)
+and the per-repo index (`quorum repo q`, `sym`, `repo index`).
 What each command does is in `README.md`; the source is the truth.
 
 > Project status, roadmap and decisions live in the maintainer's private design
@@ -13,8 +14,11 @@ What each command does is in `README.md`; the source is the truth.
 - **Python standard library only.** No pip dependencies, no build step, no
   compiled code. `sqlite3` with FTS5 is the storage.
 - **Zero model calls.** Every command is deterministic and costs $0.
-- **Read-only toward what it reads.** `spend` reads transcripts; the index reads
-  markdown. The only file written is `<vault>/.quorum/index.db`.
+- **Read-only toward what it reads.** `spend` reads transcripts; the indexes read
+  markdown and git. The only files written are `<vault>/.quorum/index.db`,
+  `<repo>/.quorum/index.db` and, if missing, `<repo>/.quorum/.gitignore` (`*`).
+- **Walls.** A repo is indexed only if it is on the vault's allowlist or has its
+  own `.quorum/`; repo content never leaves its repo.
 - **Self-repairing index.** A query refreshes first (stat + re-parse what changed);
   never add a scheduler, daemon or watcher.
 - **Tests first.** Each change gets a test that fails on the old code, then the

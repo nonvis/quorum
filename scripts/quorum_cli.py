@@ -19,6 +19,14 @@ tooling that spends no model tokens:
       not-git, or absent on this host; origin's URL; on the allowlist or not.
   quorum index [--stats] [--rebuild]
       Refresh the index now (every read already refreshes first).
+  quorum repo q <terms…> [--repo <name> | --all] [--limit N] [--json]
+      Search a repo's own index (<repo>/.quorum/index.db): markdown, commit
+      messages, symbol names. Default: the repo you are in; outside one, --all.
+  quorum sym <name> [--repo <name> | --all] [--json]
+      Where a symbol is defined (case-insensitive prefix).
+  quorum repo index [--repo <name> | --all] [--rebuild]
+      Build or refresh repo indexes now. A repo is indexed only if it is on the
+      vault's allowlist or has opted in by having a .quorum/ dir.
   quorum version
 
 `~/.local/bin/quorum` is a symlink to this file (scripts/install.sh).
@@ -48,6 +56,12 @@ USAGE = """usage: quorum <command> [options]
   repos [--json]  repos the notes name, resolved by git, with the allowlist
   index [--stats] [--rebuild]
                   refresh the vault index (every read refreshes on its own)
+  repo q <terms…> [--repo <name> | --all] [--limit N] [--json]
+                  search one repo's docs, commit messages and symbols
+  sym <name> [--repo <name> | --all] [--json]
+                  where a symbol is defined
+  repo index [--repo <name> | --all] [--rebuild]
+                  build/refresh repo indexes (allowlisted or opted-in repos only)
   version         print the checkout's commit
 
 The vault defaults to ~/nonvis/second-brain (QUORUM_VAULT overrides); its memory
@@ -224,6 +238,126 @@ def cmd_index(args):
     return 0
 
 
+def _repo_targets(opts):
+    """-> (list of (name, Path), error). Allowlisted repos come from the vault;
+    the repo you are in counts if allowlisted or opted in (has .quorum/)."""
+    sys.path.insert(0, str(REPO / "scripts"))
+    import repo_index
+    allowed = {}
+    vault_ok = False
+    import vault_index
+    if vault_index.default_vault().is_dir():
+        idx = _index()
+        vault_ok = True
+        idx.refresh()
+        for r in idx.repos():
+            if r["allowed"]:
+                allowed[r["name"]] = Path(os.path.expanduser(r["path"]))
+        idx.close()
+    if opts.get("--all"):
+        if not vault_ok:
+            return None, "--all needs the vault (QUORUM_VAULT) for its allowlist"
+        return sorted(allowed.items()), None
+    if opts.get("--repo"):
+        name = opts["--repo"]
+        if name in allowed:
+            return [(name, allowed[name])], None
+        return None, "repo %r is not on the vault's allowlist (06_Metadata/quorum-repos.txt)" % name
+    top = repo_index.toplevel(os.getcwd())
+    if top is None:
+        if not vault_ok:
+            return None, "not inside a git repo, and no vault for --all"
+        return sorted(allowed.items()), None
+    if top.name in allowed or (top / ".quorum").is_dir():
+        return [(top.name, top)], None
+    return None, ("%s is not opted in: it is not on the vault's allowlist and has no "
+                  ".quorum/ dir (mkdir .quorum to opt in)" % top)
+
+
+def _open_repo(path):
+    sys.path.insert(0, str(REPO / "scripts"))
+    import repo_index
+    ri = repo_index.RepoIndex(path)
+    ri.refresh()
+    return ri
+
+
+def cmd_repo(args):
+    import json
+    if not args or args[0] not in ("q", "index"):
+        print("usage: quorum repo q <terms…> | quorum repo index [...]", file=sys.stderr)
+        return 2
+    sub, args = args[0], args[1:]
+    opts, rest = _flags(args, {"--repo", "--limit"}, {"--all", "--json", "--rebuild"})
+    targets, err = _repo_targets(opts)
+    if err:
+        print("ERROR: " + err, file=sys.stderr)
+        return 1
+    if sub == "index":
+        for name, path in targets:
+            sys.path.insert(0, str(REPO / "scripts"))
+            import repo_index
+            ri = repo_index.RepoIndex(path)
+            r = ri.refresh(rebuild=bool(opts.get("--rebuild")))
+            st = ri.stats()
+            print("%-16s head %s · files %d (docs %d) · symbols %d · commits %d"
+                  " (this refresh: %d files, %d commits)" % (
+                      name, st["head"], st["files"], st["docs"], st["symbols"],
+                      st["commits"], r["files"], r["commits"]))
+            ri.close()
+        return 0
+    if not rest:
+        print("usage: quorum repo q <terms…> [--repo <name> | --all]", file=sys.stderr)
+        return 2
+    limit = int(opts.get("--limit", 10))
+    hits = []
+    for name, path in targets:
+        ri = _open_repo(path)
+        for h in ri.search(" ".join(rest), limit=limit):
+            h["repo"] = name
+            hits.append(h)
+        ri.close()
+    hits.sort(key=lambda h: (-h["matched"], h["score"]))
+    hits = hits[:limit]
+    if opts.get("--json"):
+        print(json.dumps(hits, ensure_ascii=False, indent=1))
+        return 0
+    for h in hits:
+        print("%s  %-6s %s  %s" % (h["repo"], h["kind"], h["ref"], h["title"]))
+        if h["snippet"]:
+            print("    " + " ".join(h["snippet"].split())[:200])
+    if not hits:
+        print("(no match)", file=sys.stderr)
+    return 0
+
+
+def cmd_sym(args):
+    import json
+    opts, rest = _flags(args, {"--repo"}, {"--all", "--json"})
+    if len(rest) != 1:
+        print("usage: quorum sym <name> [--repo <name> | --all] [--json]", file=sys.stderr)
+        return 2
+    targets, err = _repo_targets(opts)
+    if err:
+        print("ERROR: " + err, file=sys.stderr)
+        return 1
+    out = []
+    for name, path in targets:
+        ri = _open_repo(path)
+        for s in ri.symbol(rest[0]):
+            s["repo"] = name
+            out.append(s)
+        ri.close()
+    if opts.get("--json"):
+        print(json.dumps(out, ensure_ascii=False, indent=1))
+        return 0
+    for s in out:
+        print("%s  %s:%d  %s %s" % (s["repo"], s["path"], s["line"], s["kind"], s["name"]))
+    if not out:
+        print("(no symbol %r)" % rest[0], file=sys.stderr)
+    return 0
+
+
 def cmd_version(_args):
     sha = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
                          capture_output=True, text=True).stdout.strip() or "unknown"
@@ -250,6 +384,10 @@ def main(argv):
         return cmd_mentions(rest)
     if sub == "repos":
         return cmd_repos(rest)
+    if sub == "repo":
+        return cmd_repo(rest)
+    if sub == "sym":
+        return cmd_sym(rest)
     if sub in RETIRED:
         print("ERROR: `quorum %s` was retired with the C++ daemon on 2026-10-16 "
               "(vault Quorum Decision Log #98)." % sub, file=sys.stderr)

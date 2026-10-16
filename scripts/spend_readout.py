@@ -2,23 +2,17 @@
 """
 Per-run token/$ spend readout (deterministic, read-only, no LLM).
 
-Reports the token spend of a Quorum autopilot flight against its window budget
-by summing the Claude Code transcript JSONLs — the single source of record. The
-autopilot supervisor runs this at halt (`quorum spend`) and copies the total +
-budget-comparison line into the morning review.
+Reports the token spend of Claude Code sessions by summing their transcript
+JSONLs — the single source of record (`quorum spend`; the session-close line is
+`--session <id> --line`).
 
-WHY the transcripts are the source of record: every project's Claude Code
-sessions live under `~/.claude/projects/<munged-cwd>/*.jsonl`, and that covers
-the interactive supervisor session AND the daemon-spawned headless `claude -p`
-runs whose cwd is inside the project. Subagents (Agent/Task tool) write their own
-transcripts under `<munged-cwd>/<session-id>/subagents/*.jsonl` — scanned too
-(2026-09-26: they had been missed; in a meridian knower refresh four Explore
-subagents were most of the architect's cost) and reported as their own
-`by source` split (main sessions vs subagents) under the TOTAL. One directory tree, one sum. The daemon SQLite (`.quorum/quorum.db`) also tracks `converse` costs — we
-report that as a SEPARATE labeled cross-check line, NEVER added to the transcript
-sum (adding it would double-count the same converse spend). It runs on BOTH
-paths: when the transcript dir is absent the ledger is the only reading left for
-the window, and it is printed as exactly that — still not the TOTAL.
+Every project's Claude Code sessions live under
+`~/.claude/projects/<munged-cwd>/*.jsonl`. Subagents (Agent/Task tool) write
+their own transcripts under `<munged-cwd>/<session-id>/subagents/*.jsonl` —
+scanned too (2026-09-26: they had been missed) and reported as their own
+`by source` split (main sessions vs subagents) under the TOTAL. One directory
+tree, one sum. (The retired C++ daemon's own ledger, `.quorum/quorum.db`, is no
+longer read — 2026-10-16.)
 
 Munge rule (<abs project path> -> transcript dir): every '/' and '.' in the
 absolute project path is replaced with '-', then prefixed by
@@ -37,7 +31,7 @@ lines (identical usage), so we dedupe by `message.id` (keep last occurrence) and
 count each message ONCE.
 
 $ estimate CAVEAT: subscription usage is not billed per token — the "EST." $
-column exists ONLY to compare accumulated tokens against window_budget_usd. Rates
+column is a list-rate estimate for comparing sessions, not a bill. Rates
 are EXACT-ID list prices (MODEL_RATES, longest-prefix match) with a flagged
 per-family fallback (FAMILY_RATES) for ids the table has never seen; a model that
 matches neither is priced `n/a`, NEVER $0 — its tokens are still reported and the
@@ -48,8 +42,6 @@ ABSENT != ZERO. Three distinct outcomes, three exit codes:
     "status":"no_transcript_dir". We cannot see this source; we do not claim it
     spent nothing. The dir is absent either because no Claude Code session ever
     ran with this cwd, or because Claude Code's transcript retention pruned it.
-    The daemon ledger cross-check STILL runs and prints, labelled the only
-    reading for the window (or `unavailable (<reason>)`); the TOTAL stays n/a.
   * transcript dir present but EMPTY (or no record in the window) -> $0.00,
     `sessions scanned: 0`, exit 0. That IS zero: we looked and there was nothing.
   * a bad --since/--until -> exit 2.
@@ -82,7 +74,7 @@ table prints, and nothing else. It needs --session (a close line names the
 session, never the cwd window: Decision #92) and excludes --json; both are exit
 2. Floors keep the table's '+'; an absent dir prints n/a, no $, exit 3.
 
-Read-only: file reads + a read-only (mode=ro) SQLite open. Writes nothing.
+Read-only: file reads only. Writes nothing.
 
 HOME is the single injection seam for tests: it selects BOTH the transcript root
 (`$HOME/.claude/projects/...`) and the settings file read for cleanupPeriodDays.
@@ -97,7 +89,6 @@ import calendar
 import json
 import os
 import re
-import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -169,8 +160,8 @@ FLAT_CACHE_READ_USD = {
     "claude-haiku-5-5":  0.05,
 }
 
-EST_CAVEAT = ("EST. — subscription usage is not billed per-token; this estimate "
-              "exists only to compare against window_budget_usd.")
+EST_CAVEAT = ("EST. — subscription usage is not billed per-token; this is a "
+              "list-rate estimate for comparing sessions, not a bill.")
 
 # Claude Code's documented default transcript retention when settings.json sets
 # no `cleanupPeriodDays`. Empirically consistent on 2026-09-04: the oldest jsonl
@@ -326,74 +317,6 @@ def est_usd(model: str, in_tok: int, out_tok: int, cw5_tok: int, cw1h_tok: int,
         + cr_tok * cache_read_rate(model, r["in"])
     ) / 1_000_000.0
     return dollars
-
-
-def read_window_budget(project: str):
-    """Naive line-parse of budget.window_budget_usd from .quorum/config.yaml.
-
-    No yaml dep: find the first line whose stripped key is 'window_budget_usd'
-    and float-parse the value. Absent/unparseable -> None (comparison omitted).
-    """
-    cfg = Path(project) / ".quorum" / "config.yaml"
-    try:
-        for line in cfg.read_text().splitlines():
-            if ":" not in line:
-                continue
-            key, val = line.split(":", 1)
-            if key.strip() == "window_budget_usd":
-                try:
-                    return float(val.strip())
-                except ValueError:
-                    return None
-    except OSError:
-        return None
-    return None
-
-
-def db_cross_check(project: str, since_dt: datetime, until_dt: datetime):
-    """(usd, conversations, reason) — conversations.spent_usd inside the window.
-
-    A SECOND, INDEPENDENT reading of the same window: the daemon records what it
-    believes it spent, the transcripts record what Claude Code wrote down. On the
-    transcript-present path this is a cross-check ONLY — NEVER added to the
-    transcript EST (that would double-count the same converse spend, Decision
-    #64). On the transcript-ABSENT path it is the ONLY reading we have, so we run
-    it there too and label it as such; it still does not become the TOTAL.
-
-    READ-ONLY (mode=ro) open. Any error (locked/missing db, schema mismatch) ->
-    (None, None, reason) so a concurrent refresh can't crash us.
-
-    Schema (quorum-core/src/storage/schema.h): conversations(spent_usd REAL,
-    created_at TEXT DEFAULT datetime('now')). created_at is UTC "YYYY-MM-DD
-    HH:MM:SS", so a fixed-width string compare against the formatted window
-    bounds is chronological. (tasks.cost is the per-task figure behind the same
-    numbers; conversations is the level the daemon actually settles, so it is
-    what we read — summing both would double-count.)
-    """
-    db_path = Path(project) / ".quorum" / "quorum.db"
-    if not db_path.exists():
-        return None, None, "no .quorum/quorum.db"
-    since_s = since_dt.strftime("%Y-%m-%d %H:%M:%S")
-    until_s = until_dt.strftime("%Y-%m-%d %H:%M:%S")
-    con = None
-    try:
-        uri = db_path.resolve().as_uri() + "?mode=ro"
-        con = sqlite3.connect(uri, uri=True, timeout=1.0)
-        cur = con.execute(
-            "SELECT COALESCE(SUM(spent_usd), 0), COUNT(*) FROM conversations "
-            "WHERE created_at >= ? AND created_at <= ?",
-            (since_s, until_s),
-        )
-        row = cur.fetchone()
-        return float(row[0] or 0.0), int(row[1] or 0), None
-    except Exception as e:
-        return None, None, "%s reading .quorum/quorum.db" % type(e).__name__
-    finally:
-        if con is not None:
-            try:
-                con.close()
-            except Exception:
-                pass
 
 
 def split_cache_creation(usage: dict):
@@ -667,17 +590,6 @@ def build_result(project, tdir, since_dt, until_dt, since_str, until_str,
         b["est_usd"] = round(b["est_usd"], 4)
         by_source[name] = b
 
-    budget =read_window_budget(project)
-    budget_pct = None
-    if budget and budget > 0:
-        budget_pct = round(100.0 * tot["est_usd"] / budget, 1)
-
-    db_usd, db_convs, db_reason = db_cross_check(project, since_dt, until_dt)
-    db_note = None
-    if db_usd is None:
-        db_note = ("(db cross-check unavailable: %s)" % db_reason
-                   if db_reason else "(db cross-check unavailable)")
-
     # The window reaches back past what Claude Code still keeps on disk => the
     # older part of it cannot be measured, only under-reported.
     since_predates = since_dt.date().isoformat() < retention["retention_horizon"]
@@ -702,12 +614,6 @@ def build_result(project, tdir, since_dt, until_dt, since_str, until_str,
         "cache_creation_untiered_models": untiered_models,
         "total": tot,
         "by_source": by_source,
-        "window_budget_usd": budget,
-        "budget_pct_est": budget_pct,
-        "db_cross_check_usd": (round(db_usd, 4) if db_usd is not None else None),
-        "db_cross_check_conversations": db_convs,
-        "db_cross_check_note": db_note,
-        "db_cross_check_is_only_reading": False,
         "sessions_scanned": sessions,
         "lines_skipped": skipped,
         "records_counted": counted,
@@ -724,19 +630,8 @@ def absent_result(project, tdir, since_dt, until_dt, since_str, until_str,
 
     No token counts, no est_usd, no session count: reporting 0 for any of them
     would be a measurement we did not make. `status` and the exit code carry it.
-
-    But the daemon's own ledger is a SEPARATE source, and it is still readable:
-    we run the db cross-check here too and print it labelled as the only reading
-    for this window. It is NOT promoted into the TOTAL — the TOTAL stays n/a,
-    because the daemon only sees `converse` spend, not the interactive session or
-    its subagents (Decision #64). One readable source does not make the missing
-    one zero.
     """
     since_predates = since_dt.date().isoformat() < retention["retention_horizon"]
-    db_usd, db_convs, db_reason = db_cross_check(project, since_dt, until_dt)
-    db_note = None
-    if db_usd is None:
-        db_note = "unavailable (%s)" % (db_reason or "unknown error")
     r = {
         "status": "no_transcript_dir",
         "project": project,
@@ -757,12 +652,6 @@ def absent_result(project, tdir, since_dt, until_dt, since_str, until_str,
                   "cache_creation_input_tokens": None,
                   "cache_read_input_tokens": None,
                   "est_usd": None, "est_is_floor": None},
-        "window_budget_usd": read_window_budget(project),
-        "budget_pct_est": None,
-        "db_cross_check_usd": (round(db_usd, 4) if db_usd is not None else None),
-        "db_cross_check_conversations": db_convs,
-        "db_cross_check_note": db_note,
-        "db_cross_check_is_only_reading": True,
         "sessions_scanned": None,
         "lines_skipped": None,
         "records_counted": None,
@@ -860,31 +749,6 @@ def print_human(r):
     if absent:
         print("  This source could not be read. It is NOT a spend of $0 — carry "
               "n/a into the checkpoint, not a number.")
-    if r["window_budget_usd"] is not None:
-        if t["est_usd"] is None:
-            print("  window_budget_usd: $%.2f  (EST spend n/a — transcript dir "
-                  "absent)" % r["window_budget_usd"])
-        else:
-            pct = ("%.1f%%" % r["budget_pct_est"]
-                   if r["budget_pct_est"] is not None else "n/a")
-            floor = " — a FLOOR" if t.get("est_is_floor") else ""
-            print("  window_budget_usd: $%.2f  (EST spend $%.2f = %s of budget%s)"
-                  % (r["window_budget_usd"], t["est_usd"], pct, floor))
-    if r["db_cross_check_usd"] is not None and absent:
-        # The transcripts are gone; the daemon's ledger is not. Say exactly what
-        # this number is — a real reading of a DIFFERENT source, and the only one
-        # for this window — and that the TOTAL above still stands at n/a.
-        print("  db cross-check (daemon-recorded, the only reading for this "
-              "window): $%.2f across %d conversations"
-              % (r["db_cross_check_usd"], r["db_cross_check_conversations"] or 0))
-        print("    [conversations.spent_usd — `converse` spend ONLY, so it is a "
-              "partial view and is NOT summed into the TOTAL above]")
-    elif r["db_cross_check_usd"] is not None:
-        print("  db cross-check (conversations.spent_usd, created_at in window): "
-              "$%.2f  [separate — NOT added to the transcript EST]"
-              % r["db_cross_check_usd"])
-    elif r["db_cross_check_note"]:
-        print("  db cross-check: %s" % r["db_cross_check_note"])
     print("  sessions scanned: %s   lines skipped (unparseable): %s"
           % (n(r["sessions_scanned"]), n(r["lines_skipped"])))
     print("")
