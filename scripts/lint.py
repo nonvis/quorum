@@ -36,9 +36,33 @@ SKIP_ORPHAN = ("Archive/", "04_Archive/", "00_Inbox/", "Action Queue/", "06_Meta
                "05_Attachments/")
 NON_MD = re.compile(r"\.(png|jpe?g|gif|svg|pdf|canvas|base|webp|mp4|mov|csv|xlsx?|pptx?|docx?)$",
                     re.I)
-VAULT_REF = re.compile(r"\[\[|second-brain|\b0[1-6]_(?:Projects|Areas|Resources|Archive|"
-                       r"Attachments|Metadata)/")
+# Checked on prose (code fences and inline code removed): wikilinks that are not
+# C++-attribute-shaped, the vault's name, its top-level folders, note-ish phrases.
+VAULT_PROSE = re.compile(r"\[\[(?![a-z_]+(?:\([^)]*\))?\]\])[^\]\n]+\]\]|second-brain|"
+                         r"\b0[1-6]_(?:Projects|Areas|Resources|Archive|Attachments|Metadata)/|"
+                         r"\bvault notes?\b", re.I)
+# Checked with inline code kept (cites are often backticked): shorthand note cites
+# and private paths outside any repo.
+VAULT_CITE = re.compile(r"MVP \(Sui\)/\d|\bOps/\d{2,3}\b|\bRaft/0\d|\bPitch/(?:\d|Broker/|Archive/)|"
+                        r"Perf Lab Results/|Action Queue/\d|~/Claude/|\bvault `|"
+                        r"\b(?:MVP|QA|Permafrost|Sidebar|Loqua|Meridian|Crucible|Quorum)/\d+\b|"
+                        r"\bvault [A-Z][\w ]*/")
+MD_LINK = re.compile(r"\]\(([^)#\s:]+\.md)(?:#[^)]*)?\)")
+PLACEHOLDER = re.compile(r"YYYY|<[^>]*>|\bpath/to\b|\bpath/file\b|\.\.\.")
+FENCE = re.compile(r"```.*?```", re.S)
+INLINE = re.compile(r"`[^`\n]*`")
+NOT_A_FILE_LINE = re.compile(r"\b(?:retired|deleted|removed|superseded|renamed)\b", re.I)
+OUTPUT_EXT = (".json", ".jsonl", ".log", ".csv")
 MEM_LINK = re.compile(r"\]\(([^)\s]+\.md)\)")
+
+
+def _present(files, root, f):
+    """At HEAD, as a suffix of a tracked path, on disk, or as an .example/.template twin."""
+    if f in files or any(x.endswith("/" + f) for x in files) or (root / f).exists():
+        return True
+    stem, ext = os.path.splitext(f)
+    return any(t in files for t in (f + ".example", f + ".template", stem + ".template" + ext,
+                                    stem + ".example" + ext))
 
 
 def norm(name):
@@ -153,16 +177,36 @@ def run(idx, fix_safe=False):
         for r in ri.db.execute("SELECT path, body FROM docs ORDER BY path"):
             if not repo_index.is_docs(r["path"]):
                 continue
-            if VAULT_REF.search(r["body"]):
+            nofence = FENCE.sub("", r["body"])
+            if VAULT_PROSE.search(INLINE.sub("", nofence)) or VAULT_CITE.search(nofence):
                 vault_refs.append({"repo": name, "doc": r["path"]})
-            for f in dict.fromkeys(vault_index.M_FILE.findall(r["body"])):
-                f = f[2:] if f.startswith("./") else f
-                if f.endswith(".md") and "/" not in f:
+            files = rindex[name][1]
+            tops = {x.split("/", 1)[0] for x in files if "/" in x}
+            seen = set()
+            for line in nofence.split("\n"):
+                if NOT_A_FILE_LINE.search(line):
                     continue
-                files = rindex[name][1]
-                if not (f in files or any(x.endswith("/" + f) for x in files)
-                        or (repos[name] / f).exists()):
-                    doc_dead.append({"repo": name, "doc": r["path"], "file": f})
+                refs = [(f, False) for f in vault_index.M_FILE.findall(line)]
+                refs += [(f, True) for f in MD_LINK.findall(line)]
+                for f, is_link in refs:
+                    if (f, is_link) in seen or PLACEHOLDER.search(f):
+                        continue
+                    seen.add((f, is_link))
+                    if is_link or f.startswith("../"):
+                        # a markdown link (or ../ path) is relative to the doc
+                        f = os.path.normpath(os.path.join(os.path.dirname(r["path"]), f))
+                    f = f[2:] if f.startswith("./") else f
+                    if f.endswith(OUTPUT_EXT) or f.startswith(".."):
+                        continue
+                    first = f.split("/", 1)[0]
+                    if first in repos and first != name and "/" in f:
+                        if _present(files_of(first), repos[first], f.split("/", 1)[1]):
+                            continue
+                    elif not is_link and ("/" not in f or first not in tops):
+                        continue  # a bare name or a path outside this repo's tree
+                    if not (_present(files, repos[name], f)
+                            or any(_present(files_of(o), repos[o], f) for o in repos if o != name)):
+                        doc_dead.append({"repo": name, "doc": r["path"], "file": f})
     checks["docs_vault_refs"] = vault_refs
     checks["docs_dead_refs"] = doc_dead
 

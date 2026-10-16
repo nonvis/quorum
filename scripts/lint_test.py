@@ -150,6 +150,59 @@ class LintCase(unittest.TestCase):
         self.assertEqual([(x["doc"], x["file"]) for x in self.lint()["docs_dead_refs"]],
                          [("docs/ARCH.md", "src/missing.py")])
 
+    def doc_case(self, name, body):
+        repo = self.home / "nonvis" / "alpha"
+        write(repo / "docs" / name, body)
+        git(repo, "add", "docs/" + name)
+        git(repo, "commit", "-q", "-m", "doc " + name)
+        r = self.lint()
+        return ([x["doc"] for x in r["docs_vault_refs"]],
+                [(x["doc"], x["file"]) for x in r["docs_dead_refs"]])
+
+    def test_shorthand_vault_cites_are_vault_refs(self):
+        for i, line in enumerate(["retired at MVP (Sui)/37.", "see Ops/135 G10.",
+                                  "per vault `Meridian/Raft/03` §4.", "Citable numbers: vault Pitch/06.",
+                                  "from Action Queue/10.", "the ledger at ~/Claude/Projects/X/ledger.md"]):
+            refs, _ = self.doc_case("S%d.md" % i, "# S\n\n%s\n" % line)
+            self.assertIn("docs/S%d.md" % i, refs, line)
+
+    def test_vault_note_ids_are_vault_refs(self):
+        for i, line in enumerate(["see Sidebar/35 (SD-66).", "per QA/43.", "(vault Permafrost/37, r30)"]):
+            refs, _ = self.doc_case("N%d.md" % i, "# N\n\n%s\n" % line)
+            self.assertIn("docs/N%d.md" % i, refs, line)
+
+    def test_bare_names_and_paths_outside_tracked_top_dirs_are_not_checked(self):
+        _, dead = self.doc_case("B.md", "# B\n\nReads `keys.h`, `client.yaml` and "
+                                "`rgw/rgw_op.cc`; runs `src/gone_now.py`.\n")
+        self.assertEqual([d[1] for d in dead if d[0] == "docs/B.md"], ["src/gone_now.py"])
+
+    def test_a_broken_relative_markdown_link_is_a_dead_ref(self):
+        _, dead = self.doc_case("L.md", "# L\n\nSee [ops](server-operations.md), "
+                                "[arch](ARCH.md) and [site](https://x.io/a.md).\n")
+        self.assertEqual([d[1] for d in dead if d[0] == "docs/L.md"], ["docs/server-operations.md"])
+
+    def test_placeholders_and_example_twins_are_not_dead(self):
+        repo = self.home / "nonvis" / "alpha"
+        write(repo / "src" / "keys.h.example", "x")
+        git(repo, "add", "src/keys.h.example")
+        _, dead = self.doc_case("P.md", "# P\n\nCopy `src/keys.h`; logs go to "
+                                "`src/YYYY-MM-DD-run.md` and `src/<bot>_status.sh`.\n")
+        self.assertEqual([d for d in dead if d[0] == "docs/P.md"], [])
+
+    def test_cpp_attributes_and_code_are_not_wikilinks(self):
+        refs, _ = self.doc_case("CPP.md", "# C\n\nUse `[[nodiscard]]` and\n```cpp\n"
+                                "[[maybe_unused]] int x;\n```\nThe Sui vault contract holds funds.\n")
+        self.assertNotIn("docs/CPP.md", refs)
+
+    def test_a_backticked_config_default_is_not_a_vault_ref(self):
+        refs, _ = self.doc_case("CFG.md", "# C\n\nThe vault path defaults to `~/nonvis/second-brain`.\n")
+        self.assertNotIn("docs/CFG.md", refs)
+
+    def test_retired_files_runtime_outputs_and_relative_paths_are_not_dead(self):
+        _, dead = self.doc_case("D.md", "# D\n\n`old.sh` was retired. Writes `report.json`. "
+                                "See `../src/run.py`.\n")
+        self.assertEqual([d for d in dead if d[0] == "docs/D.md"], [])
+
     def test_a_locked_doc_that_is_missing(self):
         self.assertEqual([(x["note"], x["doc"]) for x in self.lint()["locked_docs_missing"]],
                          [("vault:Locked.md", "alpha/docs/NOPE.md")])

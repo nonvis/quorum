@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for scripts/vault_index.py. Run: python3 scripts/vault_index_test.py"""
 import json
+import re
 import os
 import subprocess
 import sys
@@ -204,6 +205,10 @@ class MentionsCase(unittest.TestCase):
         git(self.repo, "commit", "-q", "-m", "c1")
         self.sha = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"],
                                   capture_output=True, text=True).stdout.strip()
+        # The shortest prefix (>= 8) holding a digit and a letter, as a real cite
+        # would be; an all-digit 8-char prefix is (rightly) not taken for a sha.
+        self.short = next(self.sha[:n] for n in range(8, 41)
+                          if re.search(r"[0-9]", self.sha[:n]) and re.search(r"[a-f]", self.sha[:n]))
         git(self.repo, "worktree", "add", "-q", str(self.home / "nonvis" / "alpha-wt"))
         (self.home / "nonvis" / "datadir").mkdir()
         inner = self.home / "projects" / "fluid" / "fluid-pkgs"
@@ -211,7 +216,7 @@ class MentionsCase(unittest.TestCase):
         git(inner, "init", "-q")
         self.vault = self.home / "vault"
         note(self.vault / "A.md",
-             "Ran `~/nonvis/alpha/scripts/run.py` at `%s`; see PR #12." % self.sha[:8],
+             "Ran `~/nonvis/alpha/scripts/run.py` at `%s`; see PR #12." % self.short,
              title="A")
         note(self.vault / "B.md",
              "The worktree ~/nonvis/alpha-wt/scripts/run.py and ~/nonvis/datadir/x and "

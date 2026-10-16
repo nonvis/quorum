@@ -41,7 +41,7 @@ quorum version
 - **`links`** lists a note's outgoing `[[wikilinks]]` (resolved by file name, or
   dangling), its backlinks, and what it mentions outside the vault.
 - **`mentions`** lists the notes that name a repo (by name or `~/` path), a file
-  (`scripts/run.py`, `run.py`, or a full `~/nonvis/…` path) or a commit (any
+  (`scripts/lint.py`, `lint.py`, or a full `~/nonvis/…` path) or a commit (any
   unambiguous prefix; the repo holding it is named). Mentions are `~/nonvis/…` and
   `~/projects/…` paths, backticked repo-relative files, backticked commit hashes,
   and `PR #n` (a bare `#n` is not kept).
@@ -76,7 +76,7 @@ quorum version
 - **`q`** also searches the allowlisted repos' `docs/` and root guides, listed
   after the vault hits (`--vault-only` skips them).
 - **`hook`** is a Claude Code `UserPromptSubmit` hook. It reads the hook JSON on
-  stdin and, only when the prompt clearly matches vault notes, prints up to five
+  stdin and, only when the prompt clearly matches indexed notes, prints up to five
   of their paths + summaries as `additionalContext` (≤ ~1k tokens). "Clearly":
   the prompt has ≥ 2 *salient* terms (in ≤ 15% of indexed docs; no numbers or
   two-letter words); a hit covers ≥ 2 of them and at least a third, and names
@@ -118,6 +118,7 @@ scripts/quorum_cli.py      the `quorum` command
 scripts/spend_readout.py   spend (and its tests)
 scripts/vault_index.py     the vault index (and its tests)
 scripts/repo_index.py      the per-repo index (and its tests)
+scripts/lint.py            quorum lint (and its tests)
 scripts/install.sh, doctor.sh
 templates/skills/          the three linked skills
 ```
