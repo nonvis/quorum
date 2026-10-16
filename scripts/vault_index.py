@@ -114,7 +114,8 @@ def link_targets(body):
 
 
 def is_archived(path):
-    return "/Archive/" in path or ":04_Archive/" in path or "/archive/" in path
+    return ("/Archive/" in path or "/archive/" in path or ":04_Archive/" in path
+            or path.startswith("memory:archive/"))
 
 
 def query_terms(text):

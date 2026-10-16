@@ -114,6 +114,15 @@ class IndexCase(unittest.TestCase):
         self.assertEqual(self.paths(self.idx.search("walrus lease renewal")),
                          ["vault:01_Projects/Live Lease.md", "vault:04_Archive/Old Lease.md"])
 
+    def test_an_archived_memory_file_ranks_after_a_live_one(self):
+        """memory/archive/ is the memory dir's Archive/."""
+        note(self.mem / "archive" / "old_lease.md", "walrus lease renewal; walrus lease renewal",
+             name="old_lease")
+        note(self.mem / "live_lease.md", "walrus lease renewal", name="live_lease")
+        self.idx.refresh()
+        self.assertEqual(self.paths(self.idx.search("walrus lease renewal", source="memory")),
+                         ["memory:live_lease.md", "memory:archive/old_lease.md"])
+
     def test_search_can_filter_by_source(self):
         hits = self.idx.search("quorum", source="memory")
         self.assertTrue(hits and all(p.startswith("memory:") for p in self.paths(hits)))
@@ -371,6 +380,30 @@ class HookCase(unittest.TestCase):
         self.assertEqual((p.returncode, p.stdout), (0, ""))
         self.assertFalse((self.vault / "nope").exists())
 
+    def toggle(self, word):
+        env = dict(os.environ, QUORUM_VAULT=str(self.vault), QUORUM_MEMORY=str(self.mem))
+        return subprocess.run([sys.executable, str(HERE / "quorum_cli.py"), "hook", word],
+                              env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+    def test_hook_off_persists_until_on_and_status_says_which(self):
+        self.toggle("off")
+        self.assertIn("off", self.toggle("status").stdout)
+        self.assertEqual(self.context(self.hook("litestream restore drill WAL")), "")
+        self.toggle("on")
+        self.assertIn("on", self.toggle("status").stdout)
+        self.assertIn("Litestream Restore.md", self.context(self.hook("litestream restore drill WAL")))
+
+    def test_an_off_call_is_logged_as_off_without_hits(self):
+        self.toggle("off")
+        self.hook("litestream restore drill WAL")
+        self.hook("litestream restore drill WAL", {"QUORUM_HOOK": "off"})
+        self.toggle("on")
+        self.hook("litestream restore drill WAL")
+        lines = [json.loads(l) for l in
+                 (self.vault / ".quorum" / "hook.log").read_text().splitlines()]
+        self.assertEqual([(l["mode"], len(l["hits"]) > 0) for l in lines],
+                         [("off", False), ("off", False), ("on", True)])
+
     def test_every_call_is_logged_for_the_readout(self):
         self.hook("litestream restore drill WAL")
         self.hook("push")
@@ -421,13 +454,35 @@ class HookReportCase(unittest.TestCase):
         env = dict(os.environ, HOME=str(self.home), QUORUM_VAULT=str(self.vault),
                    QUORUM_MEMORY=str(self.home / "mem"))
         p = subprocess.run([sys.executable, str(HERE / "quorum_cli.py"), "hook", "--report",
-                            "--json"], env=env, capture_output=True, text=True)
+                            "--json"], env=env, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL)
         self.assertEqual(p.returncode, 0, p.stderr)
         return json.loads(p.stdout)
 
     def test_counts_calls_injections_and_hits_read(self):
         r = self.report()
         self.assertEqual((r["calls"], r["injected"], r["hits"], r["hits_read"]), (3, 2, 3, 1))
+
+    def test_report_splits_sessions_by_mode_with_their_main_context_per_turn(self):
+        """A/B: s1 ran with the hook on, s3 with it off; each mode reports its
+        sessions and the measured main-session context per turn."""
+        tdir = next((self.home / ".claude" / "projects").iterdir())
+        with open(self.vault / ".quorum" / "hook.log", "a") as f:
+            f.write(json.dumps({"ts": "2026-10-17T03:00:00Z", "session": "s3", "mode": "off",
+                                "terms": 0, "hits": [], "chars": 0}) + "\n")
+
+        def usage(mid, ts, cw, cr):
+            return json.dumps({"type": "assistant", "timestamp": ts, "message": {
+                "id": mid, "model": "claude-opus-5-5", "usage": {
+                    "input_tokens": 0, "output_tokens": 0,
+                    "cache_creation_input_tokens": cw, "cache_read_input_tokens": cr}}})
+        with open(tdir / "s1.jsonl", "a") as f:
+            f.write(usage("m1", "2026-10-17T01:00:01Z", 1000, 99000) + "\n")
+        (tdir / "s3.jsonl").write_text(usage("m3", "2026-10-17T03:00:01Z", 0, 50000) + "\n")
+        m = self.report()["by_mode"]
+        self.assertEqual((m["on"]["sessions"], m["off"]["sessions"]), (2, 1))
+        self.assertEqual((m["on"]["context_per_turn"], m["off"]["context_per_turn"]),
+                         (100000, 50000))
 
     def test_counts_sessions_that_called_quorum_lookups(self):
         r = self.report()

@@ -21,6 +21,7 @@ quorum repo q <terms…> [--repo <name> | --all] [--limit N] [--json]
 quorum sym <name> [--repo <name> | --all] [--json]
 quorum repo index [--repo <name> | --all] [--rebuild]
 quorum hook                      # Claude Code UserPromptSubmit hook (stdin JSON)
+quorum hook on|off|status
 quorum hook --report [--json]
 quorum version
 ```
@@ -48,7 +49,8 @@ quorum version
   one level down is followed), `not-git`, or `absent` on this host — with origin's
   URL and whether it is on the allowlist, the vault's tracked
   `06_Metadata/quorum-repos.txt` (one repo name per line).
-- **`index`** refreshes the index; every read already refreshes first.
+- **`index`** refreshes the index; every read already refreshes first. Memory
+  files under `memory/archive/` rank after live ones, like `Archive/` notes.
 - **`repo q`** searches a repo's own index at `<repo>/.quorum/index.db`: its
   markdown, its commit messages (subject and body) and its symbol names. **`sym`**
   says where a symbol is defined (case-insensitive prefix; Python, Rust, TS/JS,
@@ -72,9 +74,14 @@ quorum version
   it. Each call appends one line to `<vault>/.quorum/hook.log` (session, term
   count, hit paths — never the prompt). Install, in a project's
   `.claude/settings.json`: `"command": "quorum hook 2>/dev/null || true"`.
+- **`hook off` / `on` / `status`** turn the hook off or on for every session in the
+  vault (a flag file, `<vault>/.quorum/hook-off`); `QUORUM_HOOK=off claude` does
+  it for one shell's sessions. While off, the hook injects nothing but still logs
+  the call with `"mode":"off"`, so the report can compare.
 - **`hook --report`** reads that log and the sessions' transcripts: prompts seen,
-  injections, how many injected notes the session then Read, and how many
-  sessions ran a `quorum` lookup themselves.
+  injections, how many injected notes the session then Read, how many sessions
+  ran a `quorum` lookup themselves, and per mode (on / off) the sessions, prompts
+  and measured main-session context per turn — an A/B of the hook's cost.
 
 The vault defaults to `~/nonvis/second-brain` (`QUORUM_VAULT` overrides); its
 memory directory is Claude Code's for that path (`QUORUM_MEMORY` overrides). The

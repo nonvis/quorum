@@ -70,9 +70,14 @@ USAGE = """usage: quorum <command> [options]
   repo index [--repo <name> | --all] [--rebuild]
                   build/refresh repo indexes (allowlisted or opted-in repos only)
   hook            UserPromptSubmit hook (stdin JSON -> additionalContext)
+  hook on|off|status
+                  turn the hook on/off for every session in this vault (a flag in
+                  .quorum/); off still logs the prompt's session, so --report can
+                  compare. QUORUM_HOOK=off does the same for one shell's sessions.
   hook --report [--json]
                   how often the hook injected, how many hits were then Read,
-                  how many sessions ran quorum lookups themselves
+                  how many sessions ran quorum lookups themselves, and per mode
+                  (on/off): sessions, prompts, main-session context per turn
   version         print the checkout's commit
 
 The vault defaults to ~/nonvis/second-brain (QUORUM_VAULT overrides); its memory
@@ -437,6 +442,43 @@ def hook_report(as_json):
         src, rel = hit.split(":", 1)
         return os.path.realpath(str((vault if src == "vault" else memory) / rel))
 
+    def main_context(sid):
+        """(main-transcript turns, their cache-write + cache-read tokens),
+        deduplicated by message id — the context-per-turn quorum spend reads."""
+        seen = {}
+        try:
+            lines = (tdir / ("%s.jsonl" % sid)).read_text(errors="replace").splitlines()
+        except OSError:
+            return 0, 0
+        for line in lines:
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            m = r.get("message") or {}
+            u = m.get("usage") if isinstance(m, dict) else None
+            if r.get("type") == "assistant" and isinstance(u, dict) and m.get("id"):
+                seen[m["id"]] = (u.get("cache_creation_input_tokens") or 0) + \
+                    (u.get("cache_read_input_tokens") or 0)
+        return len(seen), sum(seen.values())
+
+    modes = {}
+    for l in log:
+        if l.get("session") and l["session"] not in modes:
+            modes[l["session"]] = l.get("mode", "on")
+    by_mode = {}
+    for mode in ("on", "off"):
+        sids = [s for s, m in modes.items() if m == mode]
+        turns = ctx = 0
+        for sid in sids:
+            t, c = main_context(sid)
+            turns += t
+            ctx += c
+        by_mode[mode] = {"sessions": len(sids),
+                         "prompts": sum(1 for l in log if modes.get(l.get("session")) == mode),
+                         "turns": turns,
+                         "context_per_turn": round(ctx / turns) if turns else None}
+
     hits = hits_read = injected = 0
     for l in log:
         if not l.get("hits"):
@@ -451,6 +493,7 @@ def hook_report(as_json):
            "sessions": len(sessions),
            "sessions_with_lookups": sum(1 for v in lookups.values() if v),
            "lookup_calls": sum(lookups.values()),
+           "by_mode": by_mode,
            "since": log[0]["ts"] if log else None}
     if as_json:
         print(json.dumps(out, indent=1))
@@ -459,6 +502,11 @@ def hook_report(as_json):
               "%d of %d sessions ran a quorum lookup themselves (%d calls)" % (
                   out["since"], out["calls"], injected, hits, hits_read,
                   out["sessions_with_lookups"], out["sessions"], out["lookup_calls"]))
+        for mode, m in by_mode.items():
+            print("  hook %-3s: %d sessions, %d prompts, main context/turn %s" % (
+                mode, m["sessions"], m["prompts"],
+                "~%dk" % round(m["context_per_turn"] / 1000) if m["context_per_turn"]
+                else "n/a"))
     return 0
 
 
@@ -468,16 +516,39 @@ def cmd_hook(args):
     import time
     if "--report" in args:
         return hook_report("--json" in args)
+    sys.path.insert(0, str(REPO / "scripts"))
+    import vault_index
+    flag = vault_index.default_vault() / ".quorum" / "hook-off"
+    if args and args[0] in ("on", "off", "status"):
+        if not vault_index.default_vault().is_dir():
+            print("ERROR: no vault at %s" % vault_index.default_vault(), file=sys.stderr)
+            return 1
+        if args[0] == "off":
+            flag.parent.mkdir(exist_ok=True)
+            flag.touch()
+        elif args[0] == "on" and flag.exists():
+            flag.unlink()
+        print("hook: %s%s" % ("off" if flag.exists() else "on",
+                               "  (QUORUM_HOOK=off in this shell)" if
+                               os.environ.get("QUORUM_HOOK", "").lower() in ("off", "0", "no")
+                               else ""))
+        return 0
     try:
-        if os.environ.get("QUORUM_HOOK", "").lower() in ("off", "0", "no"):
-            return 0
         if sys.stdin.isatty():
             return 0
         payload = json.loads(sys.stdin.read() or "{}")
         prompt = payload.get("prompt") or ""
-        sys.path.insert(0, str(REPO / "scripts"))
-        import vault_index
         if not vault_index.default_vault().is_dir():
+            return 0
+        if os.environ.get("QUORUM_HOOK", "").lower() in ("off", "0", "no") or flag.exists():
+            try:
+                with open(flag.parent / "hook.log", "a") as f:
+                    f.write(json.dumps({
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "session": payload.get("session_id"), "mode": "off",
+                        "terms": 0, "hits": [], "chars": 0}) + "\n")
+            except OSError:
+                pass
             return 0
         idx = _index()
         idx.refresh()
@@ -497,7 +568,8 @@ def cmd_hook(args):
             with open(idx.vault / ".quorum" / "hook.log", "a") as f:
                 f.write(json.dumps({
                     "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "session": payload.get("session_id"), "terms": len(terms),
+                    "session": payload.get("session_id"), "mode": "on",
+                    "terms": len(terms),
                     "hits": [h["path"] for h in hits[:len(lines)]],
                     "chars": len(text)}) + "\n")
         except OSError:
