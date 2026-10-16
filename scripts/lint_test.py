@@ -137,10 +137,20 @@ class LintCase(unittest.TestCase):
         d = [(x["note"], x["path"]) for x in self.lint()["dead_mentions"]]
         self.assertEqual(d, [("vault:Note One.md", "~/nonvis/alpha/src/gone.py")])
 
+    def test_archived_notes_are_not_linted_for_dead_mentions(self):
+        note(self.vault / "Archive" / "Moved.md", "was at `~/nonvis/alpha/src/moved_plan.md`",
+             title="Moved")
+        d = [x["note"] for x in self.lint()["dead_mentions"]]
+        self.assertNotIn("vault:Archive/Moved.md", d)
+
     def test_memory_unindexed_and_broken_index_rows(self):
         c = self.lint()
         self.assertEqual((c["memory_unindexed"], c["memory_index_broken"]),
                          (["m2.md"], [{"index": "MEMORY.md", "file": "gone.md"}]))
+
+    def test_a_memory_file_an_index_wikilinks_by_name_is_indexed(self):
+        write(self.mem / "MEMORY_X.md", "- row with ☠ [[m2]] inline\n")
+        self.assertEqual(self.lint()["memory_unindexed"], [])
 
     def test_repo_docs_that_reference_the_vault(self):
         self.assertEqual([(x["repo"], x["doc"]) for x in self.lint()["docs_vault_refs"]],

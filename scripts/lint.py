@@ -9,8 +9,8 @@ Checks (each a list in the JSON `checks` object):
                        Action Queue, 06_Metadata and "00 - …" folder roots skipped)
   no_summary           live vault notes without a `summary:` (the Note Map is
                        generated from it)
-  dead_mentions        ~/… paths in notes naming a file that is not at HEAD of an
-                       allowlisted repo
+  dead_mentions        ~/… paths in live notes naming a file that is not at HEAD of
+                       an allowlisted repo
   memory_unindexed     memory files no MEMORY*.md links to
   memory_index_broken  MEMORY*.md rows linking to a missing file
   docs_vault_refs      repo markdown (any tracked, non-vendored .md) that points
@@ -21,9 +21,9 @@ Checks (each a list in the JSON `checks` object):
 
 A file counts as present if it is at HEAD or on disk (a gitignored .env is real).
 Memory links resolve by a file's `name:` slug as well as its file name.
-Archived sources (Archive/, memory/archive/) and memory files are not linted for
-dangling links — memory's own rule is that an unwritten [[name]] marks one worth
-writing. A link resolves with dashes and underscores interchangeable.
+Archived sources (Archive/, memory/archive/) are not linted for dangling links or
+dead mentions, and memory files not for dangling links — memory's own rule is
+that an unwritten [[name]] marks one worth writing. A link resolves with dashes and underscores interchangeable.
 """
 import os
 import re
@@ -145,7 +145,8 @@ def run(idx, fix_safe=False):
     dead = []
     for m in db.execute("SELECT d.path note, m.root, m.value FROM mentions m JOIN docs d"
                         " ON d.id = m.src WHERE m.kind='path' ORDER BY d.path"):
-        if not m["value"] or "." not in m["value"].rsplit("/", 1)[-1]:
+        if (not m["value"] or "." not in m["value"].rsplit("/", 1)[-1]
+                or vault_index.is_archived(m["note"])):
             continue
         row = idx._repo_of(m["root"], m["value"])
         if row is None or row["status"] != "repo":
@@ -167,6 +168,12 @@ def run(idx, fix_safe=False):
                 referenced.add(target)
                 if not (mem / target).exists():
                     broken.append({"index": ix.name, "file": target})
+            # an index row may carry a [[name]] link inline; it resolves by
+            # file stem or `name:` slug
+            for w in WIKI.findall(ix.read_text(errors="replace")):
+                for p in stems.get(w.strip().lower(), []):
+                    if p.startswith("memory:"):
+                        referenced.add(p.split(":", 1)[1])
         unindexed = sorted(f.name for f in mem.glob("*.md")
                            if not f.name.startswith("MEMORY") and f.name not in referenced)
     checks["memory_unindexed"] = unindexed
