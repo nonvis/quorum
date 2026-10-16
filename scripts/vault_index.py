@@ -13,13 +13,30 @@ can't be stale when it is read, and nothing has to be scheduled.
   fts    title · summary · tags · body, ranked by bm25 (weights 10 · 5 · 3 · 1)
   links  (src doc, target name) — resolved at read time by file stem, so a new
          note fills a link that was dangling without re-reading its sources
+  mentions (src doc, kind, root, value) — what a note names outside the vault:
+         path  ~/nonvis/<repo>/<file> or ~/projects/… (root = ~/<area>/<name>)
+         file  a backticked repo-relative file (`scripts/run.py`), repo unknown
+         sha   a backticked commit hash (7–40 hex, a digit and a letter)
+         pr    "PR #12" / "PR 12" (a bare #12 is a decision or issue, not kept)
+  repos  each mentioned root (and root/<first segment>, for a parent dir that
+         holds a repo) resolved once by git: repo · not-git · absent, the main
+         worktree it belongs to, and origin's URL. The allowlist is the tracked
+         file <vault>/06_Metadata/quorum-repos.txt (one repo name per line).
 """
+import subprocess
 import os
 import re
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
+ALLOWLIST = "06_Metadata/quorum-repos.txt"
+M_PATH = re.compile(r"(?:~|/Users/[^/\s`]+)/((?:nonvis|projects)/[A-Za-z0-9._-]+)"
+                    r"((?:/[A-Za-z0-9._@+-]+)*)")
+M_FILE = re.compile(r"`((?:[\w.-]+/)*[\w-][\w.-]*\.(?:py|rs|ts|tsx|js|mjs|move|cpp|cc|h|"
+                    r"hpp|sh|toml|json|ya?ml|sql|go|md))(?::\d+)?`")
+M_SHA = re.compile(r"`([0-9a-f]{7,40})`")
+M_PR = re.compile(r"\bPR\s*#?(\d{1,5})\b")
 SKIP_DIRS = {".git", ".obsidian", "node_modules", ".quorum", ".trash", "__pycache__"}
 WIKILINK = re.compile(r"\[\[([^\]\n]+?)\]\]")
 STOPWORDS = set("""a an and are as at be by do does for from has have how i in is it
@@ -110,6 +127,51 @@ def query_terms(text):
     return terms
 
 
+def extract_mentions(body):
+    """-> [(kind, root, value)], deduplicated, in order."""
+    out = []
+    for m in M_PATH.finditer(body):
+        root = "~/" + m.group(1).rstrip(".")
+        out.append(("path", root, m.group(2).rstrip(".").lstrip("/")))
+    for m in M_FILE.finditer(body):
+        out.append(("file", "", m.group(1)))
+    for m in M_SHA.finditer(body):
+        v = m.group(1)
+        if re.search(r"[0-9]", v) and re.search(r"[a-f]", v):
+            out.append(("sha", "", v))
+    for m in M_PR.finditer(body):
+        out.append(("pr", "", m.group(1)))
+    seen, uniq = set(), []
+    for t in out:
+        if t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    return uniq
+
+
+def _git(path, *args):
+    r = subprocess.run(["git", "-C", path] + list(args), capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def _tilde(path):
+    home = os.path.expanduser("~")
+    return "~" + path[len(home):] if path.startswith(home + "/") else path
+
+
+def resolve_root(root):
+    """-> (status, canonical main-worktree path in ~ form, remote)."""
+    full = os.path.expanduser(root)
+    if not os.path.exists(full):
+        return "absent", None, None
+    top = _git(full, "rev-parse", "--show-toplevel")
+    if not top:
+        return "not-git", None, None
+    common = _git(full, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    main = os.path.dirname(common) if common and common.endswith("/.git") else top
+    return "repo", _tilde(os.path.realpath(main)), _git(main, "config", "remote.origin.url")
+
+
 def fts_query(terms):
     """Any term matches (OR), each as a prefix."""
     return " OR ".join('"%s"*' % t for t in terms)
@@ -132,7 +194,7 @@ class Index:
         c.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
         row = c.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
         if row is None or row[0] != SCHEMA_VERSION:
-            for t in ("docs", "fts", "links"):
+            for t in ("docs", "fts", "links", "mentions", "repos"):
                 c.execute("DROP TABLE IF EXISTS %s" % t)
         c.executescript("""
             CREATE TABLE IF NOT EXISTS docs(
@@ -145,6 +207,11 @@ class Index:
             CREATE TABLE IF NOT EXISTS links(src INTEGER, target TEXT);
             CREATE INDEX IF NOT EXISTS links_src ON links(src);
             CREATE INDEX IF NOT EXISTS links_target ON links(target COLLATE NOCASE);
+            CREATE TABLE IF NOT EXISTS mentions(src INTEGER, kind TEXT, root TEXT, value TEXT);
+            CREATE INDEX IF NOT EXISTS mentions_src ON mentions(src);
+            CREATE INDEX IF NOT EXISTS mentions_root ON mentions(root);
+            CREATE TABLE IF NOT EXISTS repos(root TEXT PRIMARY KEY, status TEXT,
+                canonical TEXT, remote TEXT);
         """)
         c.execute("INSERT OR REPLACE INTO meta VALUES('schema', ?)", (SCHEMA_VERSION,))
         c.commit()
@@ -165,7 +232,7 @@ class Index:
     def refresh(self, rebuild=False):
         c = self.db
         if rebuild:
-            for t in ("docs", "fts", "links"):
+            for t in ("docs", "fts", "links", "mentions", "repos"):
                 c.execute("DELETE FROM %s" % t)
         known = {r["path"]: (r["id"], r["mtime"], r["size"])
                  for r in c.execute("SELECT id, path, mtime, size FROM docs")}
@@ -188,6 +255,8 @@ class Index:
             if path not in seen:
                 self._delete(doc_id)
                 removed += 1
+        if changed or removed or rebuild:
+            self._resolve_new_roots()
         c.commit()
         return {"changed": changed, "removed": removed, "total": len(seen)}
 
@@ -195,6 +264,7 @@ class Index:
         self.db.execute("DELETE FROM docs WHERE id=?", (doc_id,))
         self.db.execute("DELETE FROM fts WHERE rowid=?", (doc_id,))
         self.db.execute("DELETE FROM links WHERE src=?", (doc_id,))
+        self.db.execute("DELETE FROM mentions WHERE src=?", (doc_id,))
 
     def _insert(self, source, path, full, st):
         try:
@@ -215,6 +285,31 @@ class Index:
                         (doc_id, title + " " + stem, summary, fm.get("tags", ""), body))
         self.db.executemany("INSERT INTO links(src, target) VALUES(?,?)",
                             [(doc_id, t) for t in link_targets(body)])
+        self.db.executemany("INSERT INTO mentions(src, kind, root, value) VALUES(?,?,?,?)",
+                            [(doc_id,) + m for m in extract_mentions(body)])
+
+    def _resolve_new_roots(self):
+        """git-resolve each root (and root/<first segment>) not seen before."""
+        have = {r[0] for r in self.db.execute("SELECT root FROM repos")}
+        want = set()
+        for r in self.db.execute("SELECT DISTINCT root, value FROM mentions WHERE kind='path'"):
+            want.add(r["root"])
+            seg = r["value"].split("/", 1)[0]
+            if seg:
+                want.add(r["root"] + "/" + seg)
+        for root in sorted(want - have):
+            if root.count("/") > 2 and self._status(root.rsplit("/", 1)[0]) == "repo":
+                continue  # inside a repo: the root already answers
+            self.db.execute("INSERT OR REPLACE INTO repos VALUES(?,?,?,?)",
+                            (root,) + resolve_root(root))
+
+    def _status(self, root):
+        r = self.db.execute("SELECT status FROM repos WHERE root=?", (root,)).fetchone()
+        if r is None:
+            st = resolve_root(root)
+            self.db.execute("INSERT OR REPLACE INTO repos VALUES(?,?,?,?)", (root,) + st)
+            return st[0]
+        return r[0]
 
     # -- reads --------------------------------------------------------------
     def stats(self):
@@ -282,6 +377,93 @@ class Index:
             " WHERE l.target = ? COLLATE NOCASE AND s.id != ? ORDER BY s.path",
             (d["stem"], d["id"]))]
         return {"path": d["path"], "title": d["title"], "outgoing": out, "backlinks": back}
+
+
+    # -- step 2: mentions + repos ---------------------------------------------
+    def _allowlist(self):
+        p = self.vault / ALLOWLIST
+        if not p.exists():
+            return set()
+        return {l.split("#", 1)[0].strip() for l in p.read_text().splitlines()} - {""}
+
+    def _repo_of(self, root, value):
+        """The canonical repo a path mention belongs to, or (status, name)."""
+        rows = {r["root"]: r for r in self.db.execute(
+            "SELECT * FROM repos WHERE root IN (?, ?)",
+            (root, root + "/" + value.split("/", 1)[0]))}
+        top = rows.get(root)
+        if top and top["status"] == "repo":
+            return top
+        sub = rows.get(root + "/" + value.split("/", 1)[0]) if value else None
+        if sub and sub["status"] == "repo":
+            return sub
+        return top
+
+    def repos(self):
+        allow = self._allowlist()
+        out = {}
+        for m in self.db.execute("SELECT src, root, value FROM mentions WHERE kind='path'"):
+            r = self._repo_of(m["root"], m["value"])
+            if r is None:
+                continue
+            key = r["canonical"] if r["status"] == "repo" else r["root"]
+            e = out.setdefault(key, {
+                "name": os.path.basename(key), "status": r["status"],
+                "path": key, "remote": r["remote"], "mentions": 0, "srcs": set()})
+            e["mentions"] += 1
+            e["srcs"].add(m["src"])
+        res = []
+        for e in out.values():
+            e["notes"] = len(e.pop("srcs"))
+            e["allowed"] = e["status"] == "repo" and (e["name"] in allow or e["path"] in allow)
+            res.append(e)
+        return sorted(res, key=lambda e: (e["status"] != "repo", -e["notes"], e["name"]))
+
+    def _sha_repo(self, sha):
+        for r in self.db.execute("SELECT DISTINCT canonical FROM repos WHERE status='repo'"):
+            if _git(os.path.expanduser(r[0]), "cat-file", "-e", sha + "^{commit}") is not None:
+                return os.path.basename(r[0])
+        return None
+
+    def mentions(self, term):
+        """Notes naming a repo (by name or ~ path), a file, or a commit."""
+        term = term.strip()
+        hits = {}
+
+        def add(src, kind, value, repo=None):
+            d = self.db.execute("SELECT path, title FROM docs WHERE id=?", (src,)).fetchone()
+            if d:
+                hits.setdefault(d["path"], {"path": d["path"], "title": d["title"],
+                                            "kind": kind, "value": value, "repo": repo})
+
+        if re.fullmatch(r"[0-9a-f]{7,40}", term):
+            for m in self.db.execute("SELECT src, value FROM mentions WHERE kind='sha'"):
+                if term.startswith(m["value"]) or m["value"].startswith(term):
+                    add(m["src"], "sha", m["value"], self._sha_repo(m["value"]))
+            return sorted(hits.values(), key=lambda h: h["path"])
+        names = {e["name"]: e["path"] for e in self.repos()}
+        repo_path = names.get(term) or (term if term.startswith("~/") else None)
+        for m in self.db.execute("SELECT src, kind, root, value FROM mentions"
+                                 " WHERE kind IN ('path', 'file')"):
+            if m["kind"] == "path":
+                r = self._repo_of(m["root"], m["value"])
+                key = (r["canonical"] if r and r["status"] == "repo" else m["root"])
+                full = m["root"] + ("/" + m["value"] if m["value"] else "")
+                if repo_path and (key == repo_path or m["root"] == repo_path):
+                    add(m["src"], "path", full, os.path.basename(key))
+                elif not repo_path and full.endswith("/" + term):
+                    add(m["src"], "path", full, os.path.basename(key))
+            elif not repo_path and (m["value"] == term or m["value"].endswith("/" + term)
+                                    or term.endswith("/" + m["value"])):
+                add(m["src"], "file", m["value"])
+        return sorted(hits.values(), key=lambda h: h["path"])
+
+    def note_mentions(self, name):
+        d = self._resolve(name)
+        if d is None:
+            return None
+        return [dict(r) for r in self.db.execute(
+            "SELECT kind, root, value FROM mentions WHERE src=?", (d["id"],))]
 
 
 def open_default():

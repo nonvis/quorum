@@ -169,6 +169,112 @@ class IndexCase(unittest.TestCase):
                       [(o["target"], o["path"]) for o in out])
 
 
+def git(cwd, *args):
+    subprocess.run(["git", "-C", str(cwd)] + list(args), check=True, capture_output=True,
+                   env=dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                            GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t"))
+
+
+class MentionsCase(unittest.TestCase):
+    """Step 2: notes -> the repos, files, commits and PRs they name."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name)
+        self.old_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(self.home)
+        # A repo with a commit, a worktree of it, a non-git dir, a parent dir
+        # holding a repo one level down.
+        self.repo = self.home / "nonvis" / "alpha"
+        self.repo.mkdir(parents=True)
+        git(self.repo, "init", "-q")
+        git(self.repo, "remote", "add", "origin", "git@github.com:me/alpha.git")
+        (self.repo / "scripts").mkdir()
+        (self.repo / "scripts" / "run.py").write_text("print(1)\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-q", "-m", "c1")
+        self.sha = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"],
+                                  capture_output=True, text=True).stdout.strip()
+        git(self.repo, "worktree", "add", "-q", str(self.home / "nonvis" / "alpha-wt"))
+        (self.home / "nonvis" / "datadir").mkdir()
+        inner = self.home / "projects" / "fluid" / "fluid-pkgs"
+        inner.mkdir(parents=True)
+        git(inner, "init", "-q")
+        self.vault = self.home / "vault"
+        note(self.vault / "A.md",
+             "Ran `~/nonvis/alpha/scripts/run.py` at `%s`; see PR #12." % self.sha[:8],
+             title="A")
+        note(self.vault / "B.md",
+             "The worktree ~/nonvis/alpha-wt/scripts/run.py and ~/nonvis/datadir/x and "
+             "~/nonvis/gone/y and ~/projects/fluid/fluid-pkgs/README.md. Decision #98.",
+             title="B")
+        note(self.vault / "C.md", "Edit `scripts/run.py` only.", title="C")
+        (self.vault / "06_Metadata").mkdir()
+        (self.vault / "06_Metadata" / "quorum-repos.txt").write_text(
+            "# repos the index may read\nalpha\n")
+        self.idx = vi.Index(self.home / "index.db", self.vault, None)
+        self.idx.refresh()
+
+    def tearDown(self):
+        self.idx.close()
+        if self.old_home is None:
+            del os.environ["HOME"]
+        else:
+            os.environ["HOME"] = self.old_home
+        self.tmp.cleanup()
+
+    def repos(self):
+        return {r["name"]: r for r in self.idx.repos()}
+
+    def test_a_worktree_folds_into_its_repo(self):
+        r = self.repos()["alpha"]
+        self.assertEqual((r["status"], r["mentions"], r["notes"]), ("repo", 2, 2))
+
+    def test_a_repo_records_its_remote_and_the_allowlist(self):
+        r = self.repos()["alpha"]
+        self.assertEqual((r["remote"], r["allowed"]), ("git@github.com:me/alpha.git", True))
+
+    def test_a_repo_one_level_under_a_parent_dir_is_found(self):
+        r = self.repos()["fluid-pkgs"]
+        self.assertEqual((r["status"], r["allowed"]), ("repo", False))
+
+    def test_absent_and_non_git_roots_are_recorded_not_dropped(self):
+        st = {r["name"]: r["status"] for r in self.idx.repos()}
+        self.assertEqual((st["gone"], st["datadir"]), ("absent", "not-git"))
+
+    def test_mentions_of_a_repo_list_its_notes(self):
+        self.assertEqual([m["path"] for m in self.idx.mentions("alpha")],
+                         ["vault:A.md", "vault:B.md"])
+
+    def test_mentions_of_a_file_match_full_and_bare_relative_paths(self):
+        self.assertEqual([m["path"] for m in self.idx.mentions("scripts/run.py")],
+                         ["vault:A.md", "vault:B.md", "vault:C.md"])
+
+    def test_mentions_of_a_bare_file_name_match_full_paths_too(self):
+        self.assertEqual([m["path"] for m in self.idx.mentions("run.py")],
+                         ["vault:A.md", "vault:B.md", "vault:C.md"])
+
+    def test_mentions_of_a_commit_match_by_prefix_and_name_the_repo(self):
+        hits = self.idx.mentions(self.sha)
+        self.assertEqual([(m["path"], m["repo"]) for m in hits], [("vault:A.md", "alpha")])
+
+    def test_a_pr_is_captured_but_a_bare_hash_number_is_not(self):
+        kinds = sorted((m["kind"], m["value"]) for m in self.idx.note_mentions("A"))
+        self.assertIn(("pr", "12"), kinds)
+        self.assertNotIn("98", [v for _, v in sorted(
+            (m["kind"], m["value"]) for m in self.idx.note_mentions("B"))])
+
+    def test_a_note_lists_what_it_mentions(self):
+        kinds = sorted({m["kind"] for m in self.idx.note_mentions("A")})
+        self.assertEqual(kinds, ["path", "pr", "sha"])
+
+    def test_an_edited_note_replaces_its_mentions(self):
+        note(self.vault / "A.md", "nothing now", title="A")
+        os.utime(self.vault / "A.md", (time.time() + 5, time.time() + 5))
+        self.idx.refresh()
+        self.assertEqual([m["path"] for m in self.idx.mentions("alpha")], ["vault:B.md"])
+
+
 class CliCase(unittest.TestCase):
     """`quorum q` / `quorum links` / `quorum index` through scripts/quorum_cli.py."""
 
@@ -205,6 +311,12 @@ class CliCase(unittest.TestCase):
 
     def test_links_on_an_unknown_note_exits_1(self):
         self.assertEqual(self.cli("links", "Nope").returncode, 1)
+
+    def test_repos_and_mentions_commands(self):
+        r = self.cli("repos")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        m = self.cli("mentions", "nothing-mentions-this")
+        self.assertEqual(m.returncode, 0, m.stderr)
 
     def test_index_stats(self):
         p = self.cli("index", "--stats")

@@ -14,6 +14,8 @@ quorum spend [--project <path|name>] [--since <ISO8601>] [--until <ISO8601>]
              [--session <id|prefix>] [--json | --line]
 quorum q <terms…> [--limit N] [--source vault|memory] [--json]
 quorum links <note> [--json]
+quorum mentions <repo|~/path|file|sha> [--json]
+quorum repos [--json]
 quorum index [--stats] [--rebuild]
 quorum version
 ```
@@ -30,7 +32,17 @@ quorum version
   many terms a note covers, live notes before archived ones, then bm25 (title ·
   summary · tags · body weighted 10 · 5 · 3 · 1).
 - **`links`** lists a note's outgoing `[[wikilinks]]` (resolved by file name, or
-  dangling) and its backlinks.
+  dangling), its backlinks, and what it mentions outside the vault.
+- **`mentions`** lists the notes that name a repo (by name or `~/` path), a file
+  (`scripts/run.py`, `run.py`, or a full `~/nonvis/…` path) or a commit (any
+  unambiguous prefix; the repo holding it is named). Mentions are `~/nonvis/…` and
+  `~/projects/…` paths, backticked repo-relative files, backticked commit hashes,
+  and `PR #n` (a bare `#n` is not kept).
+- **`repos`** lists every repo the notes name, resolved by git once per root:
+  `repo` (worktrees folded into their main checkout; a parent dir holding a repo
+  one level down is followed), `not-git`, or `absent` on this host — with origin's
+  URL and whether it is on the allowlist, the vault's tracked
+  `06_Metadata/quorum-repos.txt` (one repo name per line).
 - **`index`** refreshes the index; `q` and `links` already refresh first.
 
 The vault defaults to `~/nonvis/second-brain` (`QUORUM_VAULT` overrides); its

@@ -12,8 +12,13 @@ tooling that spends no model tokens:
       Ranked search over the vault's notes and memory files (scripts/vault_index.py).
   quorum links <note> [--json]
       A note's outgoing [[links]] (resolved or dangling) and its backlinks.
+  quorum mentions <repo|~/path|file|sha> [--json]
+      The notes that name a repo, a file in it, or a commit.
+  quorum repos [--json]
+      Every repo the vault's notes name: resolved by git (worktrees folded in),
+      not-git, or absent on this host; origin's URL; on the allowlist or not.
   quorum index [--stats] [--rebuild]
-      Refresh the index now (every q/links already refreshes first).
+      Refresh the index now (every read already refreshes first).
   quorum version
 
 `~/.local/bin/quorum` is a symlink to this file (scripts/install.sh).
@@ -38,8 +43,11 @@ USAGE = """usage: quorum <command> [options]
                   ranked search over vault notes + memory files ($0)
   links <note> [--json]
                   outgoing [[links]] and backlinks of one note
+  mentions <repo|~/path|file|sha> [--json]
+                  notes that name a repo, a file or a commit
+  repos [--json]  repos the notes name, resolved by git, with the allowlist
   index [--stats] [--rebuild]
-                  refresh the vault index (q and links refresh on their own)
+                  refresh the vault index (every read refreshes on its own)
   version         print the checkout's commit
 
 The vault defaults to ~/nonvis/second-brain (QUORUM_VAULT overrides); its memory
@@ -160,6 +168,48 @@ def cmd_links(args):
     print("  backlinks (%d):" % len(r["backlinks"]))
     for b in r["backlinks"]:
         print("    " + b["path"])
+    ms = idx.note_mentions(rest[0]) or []
+    print("  mentions (%d):" % len(ms))
+    for m in ms:
+        v = m["root"] + ("/" + m["value"] if m["root"] and m["value"] else "") \
+            if m["kind"] == "path" else m["value"]
+        print("    %-5s %s" % (m["kind"], v))
+    return 0
+
+
+def cmd_mentions(args):
+    import json
+    opts, rest = _flags(args, set(), {"--json"})
+    if len(rest) != 1:
+        print("usage: quorum mentions <repo|~/path|file|sha> [--json]", file=sys.stderr)
+        return 2
+    idx = _index()
+    idx.refresh()
+    hits = idx.mentions(rest[0])
+    if opts.get("--json"):
+        print(json.dumps(hits, ensure_ascii=False, indent=1))
+        return 0
+    for h in hits:
+        print("%s\n    %s%s" % (h["path"], h["value"],
+                                "  (%s)" % h["repo"] if h["repo"] else ""))
+    if not hits:
+        print("(no note mentions %r)" % rest[0], file=sys.stderr)
+    return 0
+
+
+def cmd_repos(args):
+    import json
+    opts, _ = _flags(args, set(), {"--json"})
+    idx = _index()
+    idx.refresh()
+    rs = idx.repos()
+    if opts.get("--json"):
+        print(json.dumps(rs, ensure_ascii=False, indent=1))
+        return 0
+    for r in rs:
+        print("%-8s %-4s %-28s %3d notes  %s" % (
+            r["status"], "ALLOW" if r["allowed"] else "", r["name"][:28], r["notes"],
+            r["path"] + ("  " + r["remote"] if r["remote"] else "")))
     return 0
 
 
@@ -196,6 +246,10 @@ def main(argv):
         return cmd_links(rest)
     if sub == "index":
         return cmd_index(rest)
+    if sub == "mentions":
+        return cmd_mentions(rest)
+    if sub == "repos":
+        return cmd_repos(rest)
     if sub in RETIRED:
         print("ERROR: `quorum %s` was retired with the C++ daemon on 2026-10-16 "
               "(vault Quorum Decision Log #98)." % sub, file=sys.stderr)
