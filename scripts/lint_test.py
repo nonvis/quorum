@@ -157,6 +157,8 @@ class LintCase(unittest.TestCase):
               "status: open #3 is fine\n---\nx\n")
         c = self.lint()["frontmatter_unquoted_colon"]
         self.assertIn({"note": "vault:Bad.md", "key": "summary"}, c)
+        write(self.vault / "Bad2.md", "---\ntitle: B\nsummary: closed; open: #13 creep\n---\nx\n")
+        self.assertIn("vault:Bad2.md", [x["note"] for x in self.lint()["frontmatter_unquoted_colon"]])
         self.assertNotIn("vault:Ok.md", [x["note"] for x in c])
 
     def test_memory_unindexed_and_broken_index_rows(self):

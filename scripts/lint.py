@@ -286,7 +286,7 @@ def _unquoted_colon(line):
     m = FM_LINE.match(line)
     if not m or m.group(2)[0] in "\"'[{|>":
         return False
-    value = re.split(r"\s#", m.group(2), 1)[0]  # " #" starts a YAML comment
+    value = re.split(r"(?<=\s)#", m.group(2), 1)[0]  # " #" starts a YAML comment
     return ": " in value
 
 
