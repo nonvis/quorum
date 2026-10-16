@@ -54,8 +54,9 @@ USAGE = """usage: quorum <command> [options]
   spend [--project <path|name>] [--since <ISO8601>] [--until <ISO8601>]
         [--session <id|prefix>] [--json | --line]
                   token/$ readout from Claude Code transcripts ($0)
-  q <terms…> [--limit N] [--source vault|memory] [--json]
-                  ranked search over vault notes + memory files ($0)
+  q <terms…> [--limit N] [--source vault|memory] [--vault-only] [--json]
+                  ranked search over vault notes + memory files, then the
+                  allowlisted repos' docs/ + root guides ($0)
   links <note> [--json]
                   outgoing [[links]] and backlinks of one note
   mentions <repo|~/path|file|sha> [--json]
@@ -69,6 +70,11 @@ USAGE = """usage: quorum <command> [options]
                   where a symbol is defined
   repo index [--repo <name> | --all] [--rebuild]
                   build/refresh repo indexes (allowlisted or opted-in repos only)
+  lint [--fix-safe] [--json] [--show N]
+                  hygiene report: dangling links, orphans, missing summaries, dead
+                  file mentions, memory index gaps, repo docs pointing into the
+                  vault or at gone files, locked docs missing; --fix-safe repairs
+                  only unambiguous link spellings
   hook            UserPromptSubmit hook (stdin JSON -> additionalContext)
   hook on|off|status
                   turn the hook on/off for every session in this vault (a flag in
@@ -152,9 +158,28 @@ def _flags(args, valued, bools):
     return opts, rest
 
 
+def _repo_doc_hits(text, limit=3):
+    """Allowlisted repos' docs/ + root guides matching text, as vault-style hits
+    (path "repo:<name>:<file>")."""
+    sys.path.insert(0, str(REPO / "scripts"))
+    import repo_index
+    targets, err = _repo_targets({"--all": True})
+    out = []
+    for name, path in targets or []:
+        ri = _open_repo(path)
+        for h in ri.search(text, limit=limit * 3):
+            if h["kind"] == "doc" and h["docs"]:
+                out.append({"path": "repo:%s:%s" % (name, h["ref"]), "title": h["title"],
+                            "summary": "", "snippet": h["snippet"], "updated": "",
+                            "score": h["score"], "matched": h["matched"]})
+        ri.close()
+    out.sort(key=lambda h: (-h["matched"], h["score"]))
+    return out[:limit]
+
+
 def cmd_q(args):
     import json
-    opts, terms = _flags(args, {"--limit", "--source"}, {"--json"})
+    opts, terms = _flags(args, {"--limit", "--source"}, {"--json", "--vault-only"})
     if not terms:
         print("usage: quorum q <terms…> [--limit N] [--source vault|memory] [--json]",
               file=sys.stderr)
@@ -163,15 +188,24 @@ def cmd_q(args):
     idx.refresh()
     hits = idx.search(" ".join(terms), limit=int(opts.get("--limit", 8)),
                       source=opts.get("--source"))
+    idx.close()
+    docs = [] if (opts.get("--vault-only") or opts.get("--source")) else \
+        _repo_doc_hits(" ".join(terms))
     if opts.get("--json"):
-        print(json.dumps(hits, ensure_ascii=False, indent=1))
+        print(json.dumps(hits + docs, ensure_ascii=False, indent=1))
         return 0
     for h in hits:
         print(h["path"])
         line = h["summary"] or h["snippet"]
         if line:
             print("    " + " ".join(line.split())[:220])
-    if not hits:
+    if docs:
+        print("— repo docs:")
+        for h in docs:
+            print(h["path"])
+            if h["snippet"]:
+                print("    " + " ".join(h["snippet"].split())[:220])
+    if not hits and not docs:
         print("(no match)", file=sys.stderr)
     return 0
 
@@ -583,6 +617,38 @@ def cmd_hook(args):
     return 0
 
 
+LINT_LABELS = [("dangling_links", "dangling links"), ("orphans", "orphans"),
+               ("no_summary", "no summary"), ("dead_mentions", "dead mentions"),
+               ("memory_unindexed", "memory unindexed"),
+               ("memory_index_broken", "memory index rows → missing file"),
+               ("docs_vault_refs", "docs → vault refs"), ("docs_dead_refs", "docs dead refs"),
+               ("locked_docs_missing", "locked docs missing")]
+
+
+def cmd_lint(args):
+    import json
+    opts, _ = _flags(args, {"--show"}, {"--json", "--fix-safe"})
+    sys.path.insert(0, str(REPO / "scripts"))
+    import lint
+    idx = _index()
+    idx.refresh()
+    r = lint.run(idx, fix_safe=bool(opts.get("--fix-safe")))
+    idx.close()
+    if opts.get("--json"):
+        print(json.dumps(r, ensure_ascii=False, indent=1))
+        return 0
+    show = int(opts.get("--show", 5))
+    if r["fixed"]:
+        print("fixed %d link(s) (--fix-safe)" % r["fixed"])
+    for key, label in LINT_LABELS:
+        items = r["checks"][key]
+        print("%-34s %5d" % (label, len(items)))
+        for it in items[:show]:
+            print("    " + (it if isinstance(it, str) else
+                            " · ".join(str(v) for v in it.values())))
+    return 0
+
+
 def cmd_version(_args):
     sha = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
                          capture_output=True, text=True).stdout.strip() or "unknown"
@@ -615,6 +681,8 @@ def main(argv):
         return cmd_sym(rest)
     if sub == "hook":
         return cmd_hook(rest)
+    if sub == "lint":
+        return cmd_lint(rest)
     if sub in RETIRED:
         print("ERROR: `quorum %s` was retired with the C++ daemon on 2026-10-16 "
               "(vault Quorum Decision Log #98)." % sub, file=sys.stderr)

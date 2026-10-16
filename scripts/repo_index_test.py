@@ -107,6 +107,16 @@ class RepoIndexCase(unittest.TestCase):
     def test_search_finds_markdown_by_body(self):
         self.assertIn(("doc", "docs/design.md"), self.kinds("epochs"))
 
+    def test_docs_and_root_guides_rank_above_other_markdown(self):
+        """docs/ and README/ARCHITECTURE/OPERATOR/CLAUDE are the repo's locked
+        record; a fixture or changelog naming the same words ranks after them."""
+        write(self.repo, "tests/fixtures/sample.md", "walrus blob epochs walrus blob epochs\n")
+        self.commit("fixture")
+        self.idx.refresh()
+        refs = [h["ref"] for h in self.idx.search("walrus blob epochs") if h["kind"] == "doc"]
+        self.assertEqual(refs[0], "docs/design.md")
+        self.assertTrue(self.idx.search("walrus blob epochs")[0]["docs"])
+
     def test_search_finds_a_commit_by_its_message_body(self):
         hits = self.idx.search("nightly")
         self.assertEqual([h["kind"] for h in hits], ["commit"])

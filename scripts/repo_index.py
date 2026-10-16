@@ -6,7 +6,8 @@ It indexes the repo's COMMITTED tree at HEAD (uncommitted edits are not in it):
   files    every tracked blob: path, blob sha, kind (doc | code | other |
            vendored — under third_party/, vendor/, node_modules/, dist/, build/:
            listed, never parsed)
-  docs     markdown full text (FTS5: path · title · body)
+  docs     markdown full text (FTS5: path · title · body); docs/** and the root
+           guides (README, ARCHITECTURE, OPERATOR, CLAUDE, …) rank first
   symbols  definitions found by per-language patterns (Python, Rust, TS/JS,
            Move, C/C++, Go, shell): name, kind, path, line
   commits  every commit on HEAD's history (FTS5: subject · body)
@@ -28,6 +29,16 @@ SCHEMA_VERSION = "2"
 MAX_BLOB = 1_000_000
 DOC_EXT = {".md", ".mdx"}
 VENDORED = {"third_party", "vendor", "vendored", "node_modules", "dist", "build", ".venv"}
+
+
+ROOT_GUIDES = {"readme.md", "architecture.md", "operator.md", "claude.md", "contributing.md",
+               "design.md", "security.md"}
+
+
+def is_docs(path):
+    """docs/** and the root guides — the repo's locked, self-contained record."""
+    p = path.lower()
+    return p.startswith("docs/") or ("/" not in p and p in ROOT_GUIDES)
 
 
 def file_kind(path):
@@ -277,7 +288,7 @@ class RepoIndex:
                 " snippet(docs, 2, '[', ']', '…', 12) AS snip, lower(path||' '||title||' '||body) t"
                 " FROM docs WHERE docs MATCH ? ORDER BY score LIMIT 100", (q,)):
             hits.append({"kind": "doc", "ref": r["path"], "title": r["title"],
-                         "snippet": r["snip"], "score": r["score"],
+                         "snippet": r["snip"], "score": r["score"], "docs": is_docs(r["path"]),
                          "matched": sum(1 for p in pats if p.search(r["t"]))})
         for r in self.db.execute(
                 "SELECT f.sha, f.subject, c.date, bm25(commits_fts, 0, 5.0, 1.0) AS score,"
@@ -286,16 +297,16 @@ class RepoIndex:
                 " FROM commits_fts f JOIN commits c ON c.sha = f.sha WHERE commits_fts MATCH ?"
                 " ORDER BY score LIMIT 100", (q,)):
             hits.append({"kind": "commit", "ref": r["sha"][:10], "title": r["subject"],
-                         "snippet": r["snip"] or r["date"][:10], "score": r["score"],
+                         "snippet": r["snip"] or r["date"][:10], "score": r["score"], "docs": False,
                          "matched": sum(1 for p in pats if p.search(r["t"]))})
         for t in terms:
             for s in self.symbol(t, limit=20):
                 exact = s["name"].lower() == t
                 hits.append({"kind": "symbol", "ref": "%s:%d" % (s["path"], s["line"]),
                              "title": "%s %s" % (s["kind"], s["name"]), "snippet": "",
-                             "score": -1000.0 if exact else -10.0, "matched": 1})
+                             "score": -1000.0 if exact else -10.0, "matched": 1, "docs": False})
         seen, out = set(), []
-        for h in sorted(hits, key=lambda h: (-h["matched"], h["score"])):
+        for h in sorted(hits, key=lambda h: (-h["matched"], not h["docs"], h["score"])):
             if (h["kind"], h["ref"]) not in seen:
                 seen.add((h["kind"], h["ref"]))
                 out.append(h)

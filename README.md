@@ -20,6 +20,7 @@ quorum index [--stats] [--rebuild]
 quorum repo q <terms…> [--repo <name> | --all] [--limit N] [--json]
 quorum sym <name> [--repo <name> | --all] [--json]
 quorum repo index [--repo <name> | --all] [--rebuild]
+quorum lint [--fix-safe] [--json] [--show N]
 quorum hook                      # Claude Code UserPromptSubmit hook (stdin JSON)
 quorum hook on|off|status
 quorum hook --report [--json]
@@ -64,6 +65,16 @@ quorum version
   re-reads the history whole after a rewrite. Vendored dirs (`third_party/`,
   `vendor/`, `node_modules/`, `dist/`, `build/`) are listed, not parsed.
   `.quorum/.gitignore` (`*`) keeps the repo clean.
+- **`lint`** is a hygiene report (see `scripts/lint.py`): dangling wikilinks,
+  orphan notes, live notes without `summary:`, notes naming repo files that are
+  gone, memory files missing from (or index rows pointing past) the MEMORY
+  indexes, repo docs that point into the vault, repo docs naming files that are
+  gone, and notes whose `locked_in: <repo>/<path>` doc is missing. `--fix-safe`
+  rewrites only links whose target matches exactly one note after normalising
+  case, dashes and spaces. A repo's `docs/` holds what is locked and must read
+  without the vault; the vault links to it (`locked_in:`), never the reverse.
+- **`q`** also searches the allowlisted repos' `docs/` and root guides, listed
+  after the vault hits (`--vault-only` skips them).
 - **`hook`** is a Claude Code `UserPromptSubmit` hook. It reads the hook JSON on
   stdin and, only when the prompt clearly matches vault notes, prints up to five
   of their paths + summaries as `additionalContext` (≤ ~1k tokens). "Clearly":

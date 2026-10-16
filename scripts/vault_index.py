@@ -114,8 +114,9 @@ def link_targets(body):
 
 
 def is_archived(path):
-    return ("/Archive/" in path or "/archive/" in path or ":04_Archive/" in path
-            or path.startswith("memory:archive/"))
+    rel = path.split(":", 1)[-1]
+    return (rel.startswith(("Archive/", "archive/", "04_Archive/"))
+            or "/Archive/" in rel or "/archive/" in rel)
 
 
 def query_terms(text):
@@ -223,7 +224,8 @@ class Index:
             roots.append(("memory", self.memory))
         for source, root in roots:
             for dirpath, dirnames, filenames in os.walk(root):
-                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+                dirnames[:] = [d for d in dirnames
+                               if d not in SKIP_DIRS and not d.startswith(".")]
                 for f in filenames:
                     if f.endswith(".md"):
                         full = os.path.join(dirpath, f)
