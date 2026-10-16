@@ -184,7 +184,10 @@ class LintCase(unittest.TestCase):
             self.assertIn("docs/S%d.md" % i, refs, line)
 
     def test_vault_note_ids_are_vault_refs(self):
-        for i, line in enumerate(["see Sidebar/35 (SD-66).", "per QA/43.", "(vault Permafrost/37, r30)"]):
+        for i, line in enumerate(["see Sidebar/35 (SD-66).", "per QA/43.", "(vault Permafrost/37, r30)",
+                                  "closed by AQ/79.", "see DTK/31 §4.", "per PB/02.", "Broker/06 rules it.",
+                                  "Leadsman/38 found it.", "vault Operations/97 has it.",
+                                  "A Day With/06 walks it."]):
             refs, _ = self.doc_case("N%d.md" % i, "# N\n\n%s\n" % line)
             self.assertIn("docs/N%d.md" % i, refs, line)
 

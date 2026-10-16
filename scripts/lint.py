@@ -46,7 +46,8 @@ VAULT_PROSE = re.compile(r"\[\[(?![a-z_]+(?:\([^)]*\))?\]\])[^\]\n]+\]\]|second-
 # and private paths outside any repo.
 VAULT_CITE = re.compile(r"MVP \(Sui\)/\d|\bOps/\d{2,3}\b|\bRaft/0\d|\bPitch/(?:\d|Broker/|Archive/)|"
                         r"Perf Lab Results/|Action Queue/\d|~/Claude/|\bvault `|"
-                        r"\b(?:MVP|QA|Permafrost|Sidebar|Loqua|Meridian|Crucible|Quorum)/\d+\b|"
+                        r"\b(?:MVP|QA|Permafrost|Sidebar|Loqua|Meridian|Crucible|Quorum|AQ|DTK|PB|Broker|"
+                        r"Leadsman|Operations|Pitch|A Day With)/\d+\b|"
                         r"\bvault [A-Z][\w ]*/")
 MD_LINK = re.compile(r"\]\(([^)#\s:]+\.md)(?:#[^)]*)?\)")
 PLACEHOLDER = re.compile(r"YYYY|<[^>]*>|\bpath/to\b|\bpath/file\b|\.\.\.")
