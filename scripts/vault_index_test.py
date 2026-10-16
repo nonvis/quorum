@@ -263,6 +263,33 @@ class MentionsCase(unittest.TestCase):
         st = {r["name"]: r["status"] for r in self.idx.repos()}
         self.assertEqual((st["gone"], st["datadir"]), ("absent", "not-git"))
 
+    def test_a_root_cloned_after_it_was_recorded_absent_becomes_a_repo(self):
+        """A clone changes no note; the next refresh must still see it."""
+        gone = self.home / "nonvis" / "gone"
+        gone.mkdir()
+        git(gone, "init", "-q")
+        self.idx.refresh()
+        self.assertEqual(self.repos()["gone"]["status"], "repo")
+
+    def test_a_non_git_root_that_becomes_a_repo_is_re_resolved(self):
+        git(self.home / "nonvis" / "datadir", "init", "-q")
+        self.idx.refresh()
+        self.assertEqual(self.repos()["datadir"]["status"], "repo")
+
+    def test_a_removed_repo_becomes_absent(self):
+        import shutil
+        shutil.rmtree(self.home / "projects" / "fluid")
+        self.idx.refresh()
+        st = {r["name"]: r["status"] for r in self.idx.repos()}
+        self.assertNotEqual(st.get("fluid-pkgs"), "repo")
+
+    def test_a_dot_named_path_is_not_a_repo(self):
+        """~/nonvis/.host-busy-alpha is a lock file, not a missing repo."""
+        note(self.vault / "D.md", "The lock `~/nonvis/.host-busy-alpha` and ~/nonvis/.host-busy-.",
+             title="D")
+        self.idx.refresh()
+        self.assertEqual([n for n in self.repos() if n.startswith(".")], [])
+
     def test_mentions_of_a_repo_list_its_notes(self):
         self.assertEqual([m["path"] for m in self.idx.mentions("alpha")],
                          ["vault:A.md", "vault:B.md"])

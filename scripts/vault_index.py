@@ -262,6 +262,7 @@ class Index:
                 removed += 1
         if changed or removed or rebuild:
             self._resolve_new_roots()
+        self._recheck_roots()
         c.commit()
         return {"changed": changed, "removed": removed, "total": len(seen)}
 
@@ -307,6 +308,22 @@ class Index:
                 continue  # inside a repo: the root already answers
             self.db.execute("INSERT OR REPLACE INTO repos VALUES(?,?,?,?)",
                             (root,) + resolve_root(root))
+
+    def _recheck_roots(self):
+        """A clone or a removal changes no note, so every refresh re-resolves the
+        roots whose answer no longer holds: absent that now exists, not-git that
+        now has .git, a repo that is gone. A stat each; git only on a change."""
+        for r in self.db.execute("SELECT root, status FROM repos").fetchall():
+            full = os.path.expanduser(r["root"])
+            if r["status"] == "absent":
+                stale = os.path.exists(full)
+            elif r["status"] == "not-git":
+                stale = os.path.exists(os.path.join(full, ".git"))
+            else:
+                stale = not os.path.exists(full)
+            if stale:
+                self.db.execute("INSERT OR REPLACE INTO repos VALUES(?,?,?,?)",
+                                (r["root"],) + resolve_root(r["root"]))
 
     def _status(self, root):
         r = self.db.execute("SELECT status FROM repos WHERE root=?", (root,)).fetchone()
@@ -447,6 +464,8 @@ class Index:
             if r is None:
                 continue
             key = r["canonical"] if r["status"] == "repo" else r["root"]
+            if os.path.basename(key).startswith("."):
+                continue  # ~/nonvis/.host-busy-x: a lock file or a cache, not a repo
             e = out.setdefault(key, {
                 "name": os.path.basename(key), "status": r["status"],
                 "path": key, "remote": r["remote"], "mentions": 0, "srcs": set()})
