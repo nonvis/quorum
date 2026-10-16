@@ -143,6 +143,13 @@ class LintCase(unittest.TestCase):
         d = [x["note"] for x in self.lint()["dead_mentions"]]
         self.assertNotIn("vault:Archive/Moved.md", d)
 
+    def test_templates_and_vault_root_files_are_not_notes_to_lint(self):
+        note(self.vault / "06_Metadata" / "Templates" / "T.md", "[[related note]]", title="T")
+        write(self.vault / "README.md", "# Vault\n")
+        c = self.lint()
+        self.assertNotIn("vault:06_Metadata/Templates/T.md", [x["note"] for x in c["dangling_links"]])
+        self.assertNotIn("vault:README.md", c["orphans"] + c["no_summary"])
+
     def test_memory_unindexed_and_broken_index_rows(self):
         c = self.lint()
         self.assertEqual((c["memory_unindexed"], c["memory_index_broken"]),

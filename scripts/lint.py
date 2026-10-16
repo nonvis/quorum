@@ -6,7 +6,8 @@ then only links whose intended target is unambiguous.
 Checks (each a list in the JSON `checks` object):
   dangling_links       [[target]] matching no note or memory file
   orphans              live vault notes no other note links to (Archive/, Inbox,
-                       Action Queue, 06_Metadata and "00 - …" folder roots skipped)
+                       Action Queue, 06_Metadata, "00 - …" folder roots and upper-case
+                       vault-root files like README.md skipped)
   no_summary           live vault notes without a `summary:` (the Note Map is
                        generated from it)
   dead_mentions        ~/… paths in live notes naming a file that is not at HEAD of
@@ -67,6 +68,13 @@ def _present(files, root, f):
                                     stem + ".example" + ext))
 
 
+def _in_folder(path):
+    """Upper-case files at the vault root (README, CLAUDE.md, CHANGELOG) are the vault
+    repo's own files, not notes."""
+    rel = path.split(":", 1)[1]
+    return "/" in rel or not re.fullmatch(r"[A-Z][A-Z0-9_-]*\.md", rel)
+
+
 def norm(name):
     s = name.lower().replace("—", "-").replace("–", "-")
     return re.sub(r"[\s\-]+", " ", s).strip()
@@ -109,8 +117,9 @@ def run(idx, fix_safe=False):
     for r in db.execute("SELECT DISTINCT d.path, l.target FROM links l JOIN docs d ON d.id = l.src"
                         " ORDER BY d.path, l.target"):
         t = r["target"]
-        if vault_index.is_archived(r["path"]) or r["path"].startswith("memory:"):
-            continue
+        if (vault_index.is_archived(r["path"]) or r["path"].startswith("memory:")
+                or "06_Metadata/Templates/" in r["path"]):
+            continue  # a template's placeholder links are meant to dangle
         if t.lower() not in stems and not NON_MD.search(t):
             dangling.append({"note": r["path"], "target": t})
     checks["dangling_links"] = dangling
@@ -121,10 +130,11 @@ def run(idx, fix_safe=False):
     checks["orphans"] = sorted(
         r["path"] for r in db.execute("SELECT path, stem FROM docs WHERE source='vault'")
         if r["stem"].lower() not in linked and not r["stem"].startswith("00 - ")
-        and not any(x in r["path"] for x in SKIP_ORPHAN))
+        and not any(x in r["path"] for x in SKIP_ORPHAN) and _in_folder(r["path"]))
     checks["no_summary"] = sorted(
         r["path"] for r in db.execute("SELECT path FROM docs WHERE source='vault' AND summary=''")
-        if not any(x in r["path"] for x in SKIP_ORPHAN) and not vault_index.is_archived(r["path"]))
+        if not any(x in r["path"] for x in SKIP_ORPHAN) and not vault_index.is_archived(r["path"])
+        and _in_folder(r["path"]))
 
     repos = allowed_repos(idx)
     rindex = {}
