@@ -408,6 +408,32 @@ class HookCase(unittest.TestCase):
         self.assertNotIn("Status.md",
                          self.context(self.hook("litestream restore questions")))
 
+    def test_a_harness_message_is_not_a_prompt(self):
+        """A background task's completion notice arrives as a prompt; its ids and
+        paths are rare words, never the operator's topic."""
+        for tag in ("task-notification", "system-reminder"):
+            p = "<%s> litestream restore drill WAL </%s>" % (tag, tag)
+            self.assertEqual(self.context(self.hook(p)), "", tag)
+
+    def test_pasted_content_is_still_a_prompt(self):
+        c = self.context(self.hook(
+            "<pasted_content>litestream restore drill WAL</pasted_content> what now"))
+        self.assertIn("Litestream Restore.md", c)
+
+    def test_general_english_words_are_not_salient(self):
+        """Rare in a technical vault but no topic: 'anymore finished installed'."""
+        note(self.vault / "Trying Something.md", "trying something finished installed anymore",
+             title="Trying Something", summary='"Finished, installed, anymore"')
+        self.assertEqual(self.context(self.hook(
+            "i finished trying something installed, anymore?")), "")
+
+    def test_archived_notes_are_never_injected(self):
+        note(self.vault / "Archive" / "Walrus Lease Old.md", "walrus blob lease renewal epochs",
+             title="Walrus Lease Old")
+        c = self.context(self.hook("walrus blob lease renewal epochs"))
+        self.assertIn("Walrus Lease.md", c)
+        self.assertNotIn("Archive/", c)
+
     def test_off_switch(self):
         p = self.hook("litestream restore drill WAL", {"QUORUM_HOOK": "off"})
         self.assertEqual((p.returncode, p.stdout), (0, ""))

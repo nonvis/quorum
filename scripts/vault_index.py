@@ -44,6 +44,55 @@ STOPWORDS = set("""a an and are as at be by do does for from has have how i in i
 its of on or so that the this to was we what when where which who why will with
 you your can should would could about into than then them they there these those
 """.split())
+# Words rare in a technical vault yet no topic ("trying something", "anymore
+# finished"): the hook never matches on them. Picked from the 10-16 replay of
+# 505 real prompts (vault Quorum/16 §Step 4). Explicit `quorum q` keeps them.
+GENERAL_WORDS = set("""
+able about above accounted accum accumulated accumulating accurately across actually
+adopted affect affected after again against ago ahead all almost alone along already also
+although always among analyze angle another any anymore anyone anything anyway anywhere
+appreciate approved appropriate aren around asked asking attention attract attractive
+automatically away back bad bare basic basically because become becoming been before began
+begin begins behind being believe below best better between beyond big biz bit boring
+breaks briefly bring brought but came cannot care case cause certain certainly change
+changed choose clear clearly close come comes coming company completely completing concern
+connecting connects consider continue correct covers created curious currently decide
+decided deeper delivering deliver describe described developed developing did didn
+different directly discussed disposal distribute doesn doesnt doing done don dont dots down
+downside during each early easy effort either else end engaging enough entire especially
+even ever every everyone everything exactly example except expand expected expect
+expensive fact fairly far feasible feel feels few figure fine finally finish finished first
+focus focused follow following found friends full fully further gave get gets getting give
+given gives going gone good got great group guess had handed happen happened happening
+happens happy hard having heavily he help helps her here him his hmm hold honed honestly
+hours however idea ideally ideas imagine implemented important include included including
+increase independently initiative installed instead instructs interested interesting
+internally introduced isn just keep keeping kept keyboard kind know known largely last
+latest later least less let lets level like likely little long look looking looks lose lot
+made main mainly maintain make makes making manually many matter maybe mean meaning means
+meant mention mentioned might mind minimum mixing modify more most mostly moved moving much
+must naturally nearly need needed needs never new newer next nice none nor not noted
+nothing noticed now obviously occurs offering often okay once one ones online only opened
+other others otherwise ourselves our out outdated outstand outstanding over overall own
+part particular past people perhaps place plate plus point poke possible posted powerful
+prefer pretty prevent probably problems produce producing proposed propose provide provided
+provides purpose put quite rather reached real really reason recent recently recommendation
+recommendations recommending reducing refine regard relevant remember remove require
+required researching respond reveal reviewed right rigid said same save saw say saying says
+second seeing seek seem seemed seems seen sense serve set setting several shall she short
+shown significant significantly similar simple simply since slow small solutions some
+someone something sometimes somewhat soon sort sound sounds spending start started starting
+step stripped stuff suggest summarized suppose supposed supported sure take taken takes
+taking targeted tell terms thanks therefore thing things think thinking third though
+thought thoughts through thus today together told tomorrow too took topic toward tried
+tries true trust try trying turn ultimate unable under understand understood unless unlock
+until upon usable usage use used useful uses using usually value various very via wait want
+wanted wants way ways welcome well went were whatever whats whereas whether while whole
+whom whose wins within without wonder work worked working works worthwhile wouldn yeah yes
+yesterday yet
+""".split())
+# Claude Code delivers these as a "prompt"; their ids and paths are not a topic.
+HARNESS_PREFIXES = ("<task-notification", "<system-reminder", "<local-command", "<command-")
 BM25 = "bm25(fts, 10.0, 5.0, 3.0, 1.0)"
 
 
@@ -394,15 +443,23 @@ class Index:
         >= 2 salient terms in the prompt; a hit covers >= 2 of them and at least
         a third, and names one in its title, summary or path — two when the prompt
         has <= 3 salient terms (a note ABOUT the topic says so there; body-only
-        or single-word head matches are coincidence). -> (terms, hits)."""
-        terms = self.salient_terms(prompt)
+        or single-word head matches are coincidence). General English words count
+        toward the prompt's size but never match; archived notes never inject;
+        a harness message is no prompt. -> (terms, hits)."""
+        if prompt.lstrip().startswith(HARNESS_PREFIXES):
+            return [], []
+        ranked = self.salient_terms(prompt, limit=None)
+        size = min(len(ranked), 10)
+        terms = [t for t in ranked if t not in GENERAL_WORDS][:10]
         if len(terms) < 2:
             return terms, []
-        need = max(2, -(-len(terms) // 3))
+        need = max(2, -(-size // 3))
         pats = [re.compile(r"(?<!\w)" + re.escape(t)) for t in terms]
-        need_head = 2 if len(terms) <= 3 else 1
+        need_head = 2 if size <= 3 else 1
         hits = []
         for h in self.search(" ".join(terms), limit=limit * 4):
+            if is_archived(h["path"]):
+                continue
             head = ("%s %s %s" % (h["path"], h["title"], h["summary"][:300])).lower()
             if h["matched"] >= need and sum(1 for p in pats if p.search(head)) >= need_head:
                 hits.append(h)
