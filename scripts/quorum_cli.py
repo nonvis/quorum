@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""quorum — the command-line entry point (Python, stdlib only).
+
+Quorum was a C++ daemon that ran Claude Code agents; that daemon, its web app
+and its agent model were retired on 2026-10-16. What remains is deterministic
+tooling that spends no model tokens:
+
+  quorum spend [--project <path|name>] [--since <ISO8601>] [--until <ISO8601>]
+               [--session <id|prefix>] [--json | --line]
+      Token/$ readout from the Claude Code transcripts (scripts/spend_readout.py).
+  quorum q <terms…> [--limit N] [--source vault|memory] [--json]
+      Ranked search over the vault's notes and memory files (scripts/vault_index.py).
+  quorum links <note> [--json]
+      A note's outgoing [[links]] (resolved or dangling) and its backlinks.
+  quorum index [--stats] [--rebuild]
+      Refresh the index now (every q/links already refreshes first).
+  quorum version
+
+`~/.local/bin/quorum` is a symlink to this file (scripts/install.sh).
+"""
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+SPEND_SCRIPT = REPO / "scripts" / "spend_readout.py"
+
+RETIRED = {"ask", "converse", "knower", "init", "search", "agent", "vault",
+           "brainstorm", "autopilot", "run", "status"}
+
+USAGE = """usage: quorum <command> [options]
+
+  spend [--project <path|name>] [--since <ISO8601>] [--until <ISO8601>]
+        [--session <id|prefix>] [--json | --line]
+                  token/$ readout from Claude Code transcripts ($0)
+  q <terms…> [--limit N] [--source vault|memory] [--json]
+                  ranked search over vault notes + memory files ($0)
+  links <note> [--json]
+                  outgoing [[links]] and backlinks of one note
+  index [--stats] [--rebuild]
+                  refresh the vault index (q and links refresh on their own)
+  version         print the checkout's commit
+
+The vault defaults to ~/nonvis/second-brain (QUORUM_VAULT overrides); its memory
+dir is Claude Code's for that path (QUORUM_MEMORY overrides).
+"""
+
+
+def resolve_project(arg):
+    """A directory as given (a leading ~ expanded), else a project NAME looked up
+    under ~/projects then ~/nonvis — the first holding a .quorum/ wins."""
+    home = os.environ.get("HOME", "")
+    given = home + arg[1:] if arg.startswith("~") and home else arg
+    if os.path.isdir(given):
+        return os.path.abspath(given), None
+    tried = []
+    for root in ("projects", "nonvis"):
+        cand = os.path.join(home, root, arg)
+        if os.path.isdir(os.path.join(cand, ".quorum")):
+            return cand, None
+        tried.append(cand)
+    return None, ("cannot resolve project %r: not a directory, and no .quorum/ in %s"
+                  % (arg, ", ".join(tried)))
+
+
+def cmd_spend(args):
+    opts = {"--project": None, "--since": None, "--until": None, "--session": None}
+    flags = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in opts and i + 1 < len(args):
+            opts[a] = args[i + 1]
+            i += 2
+        elif a in ("--json", "--line"):
+            flags.append(a)
+            i += 1
+        else:
+            print("ERROR: unknown spend argument %r\n\n%s" % (a, USAGE), file=sys.stderr)
+            return 2
+    project, err = resolve_project(opts["--project"] or ".")
+    if err:
+        print("ERROR: " + err, file=sys.stderr)
+        return 1
+    script = os.environ.get("QUORUM_SPEND_SCRIPT") or str(SPEND_SCRIPT)
+    cmd = [sys.executable, script, "--project", project]
+    for k in ("--since", "--session", "--until"):
+        if opts[k]:
+            cmd += [k, opts[k]]
+    cmd += flags
+    return subprocess.call(cmd)
+
+
+def _index():
+    sys.path.insert(0, str(REPO / "scripts"))
+    import vault_index
+    return vault_index.open_default()
+
+
+def _flags(args, valued, bools):
+    opts, rest, i = {}, [], 0
+    while i < len(args):
+        a = args[i]
+        if a in valued and i + 1 < len(args):
+            opts[a] = args[i + 1]
+            i += 2
+        elif a in bools:
+            opts[a] = True
+            i += 1
+        else:
+            rest.append(a)
+            i += 1
+    return opts, rest
+
+
+def cmd_q(args):
+    import json
+    opts, terms = _flags(args, {"--limit", "--source"}, {"--json"})
+    if not terms:
+        print("usage: quorum q <terms…> [--limit N] [--source vault|memory] [--json]",
+              file=sys.stderr)
+        return 2
+    idx = _index()
+    idx.refresh()
+    hits = idx.search(" ".join(terms), limit=int(opts.get("--limit", 8)),
+                      source=opts.get("--source"))
+    if opts.get("--json"):
+        print(json.dumps(hits, ensure_ascii=False, indent=1))
+        return 0
+    for h in hits:
+        print(h["path"])
+        line = h["summary"] or h["snippet"]
+        if line:
+            print("    " + " ".join(line.split())[:220])
+    if not hits:
+        print("(no match)", file=sys.stderr)
+    return 0
+
+
+def cmd_links(args):
+    import json
+    opts, rest = _flags(args, set(), {"--json"})
+    if len(rest) != 1:
+        print("usage: quorum links <note> [--json]", file=sys.stderr)
+        return 2
+    idx = _index()
+    idx.refresh()
+    r = idx.links(rest[0])
+    if r is None:
+        print("ERROR: no note named %r in the index" % rest[0], file=sys.stderr)
+        return 1
+    if opts.get("--json"):
+        print(json.dumps(r, ensure_ascii=False, indent=1))
+        return 0
+    print(r["path"])
+    print("  outgoing (%d):" % len(r["outgoing"]))
+    for o in r["outgoing"]:
+        print("    %s" % (o["path"] or "[[%s]]  (dangling)" % o["target"]))
+    print("  backlinks (%d):" % len(r["backlinks"]))
+    for b in r["backlinks"]:
+        print("    " + b["path"])
+    return 0
+
+
+def cmd_index(args):
+    opts, _ = _flags(args, set(), {"--stats", "--rebuild"})
+    idx = _index()
+    r = idx.refresh(rebuild=bool(opts.get("--rebuild")))
+    st = idx.stats()
+    print("index %s: vault %d · memory %d · links %d (this refresh: %d changed, %d removed)"
+          % (idx.vault / ".quorum" / "index.db", st["vault"], st["memory"], st["links"],
+             r["changed"], r["removed"]))
+    return 0
+
+
+def cmd_version(_args):
+    sha = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
+                         capture_output=True, text=True).stdout.strip() or "unknown"
+    print("quorum (%s) python %s" % (sha, sys.version.split()[0]))
+    return 0
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(USAGE, file=sys.stderr)
+        return 2 if not argv else 0
+    sub, rest = argv[0], argv[1:]
+    if sub == "spend":
+        return cmd_spend(rest)
+    if sub == "version":
+        return cmd_version(rest)
+    if sub == "q":
+        return cmd_q(rest)
+    if sub == "links":
+        return cmd_links(rest)
+    if sub == "index":
+        return cmd_index(rest)
+    if sub in RETIRED:
+        print("ERROR: `quorum %s` was retired with the C++ daemon on 2026-10-16 "
+              "(vault Quorum Decision Log #98)." % sub, file=sys.stderr)
+        return 2
+    print("ERROR: unknown command %r\n\n%s" % (sub, USAGE), file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

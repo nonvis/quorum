@@ -1,157 +1,17 @@
-# Quorum — Multi-Domain Agent Orchestration Daemon
-# ============================================================
+# Quorum — deterministic Python tooling (spend readout; the vault index). No build.
+.PHONY: help test install uninstall doctor
 
-.PHONY: init build clean test help web web-stop web-status install uninstall doctor smoke
-.DEFAULT_GOAL := help
+help: ## List targets
+	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
 
-# ── Config ───────────────────────────────────────────────────
+test: ## Run every python test
+	@for t in scripts/*_test.py; do echo "== $$t"; python3 $$t || exit 1; done
 
-BUILD_DIR    := build
-BUILD_TYPE   := Release
-NPROC        := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-CONFIG       := configs/mm-bot.yaml
+install: ## Link the `quorum` CLI and the three skills; remove the retired daemon's links
+	@scripts/install.sh
 
-# ── Help ─────────────────────────────────────────────────────
+uninstall: ## Remove the links that point into this checkout
+	@scripts/install.sh --uninstall
 
-help: ## Show this help
-	@echo "Quorum — Multi-Domain Agent Orchestration"
-	@echo ""
-	@echo "Usage: make <target>"
-	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
-
-# ── Bootstrap ────────────────────────────────────────────────
-
-init: ## Bootstrap project directory structure
-	@echo "=== Bootstrapping Quorum project structure ==="
-
-	@# ── quorum-core (C++, closed source) ──
-	@mkdir -p quorum-core/src/daemon
-	@mkdir -p quorum-core/src/agent
-	@mkdir -p quorum-core/src/vault
-	@mkdir -p quorum-core/src/storage
-	@mkdir -p quorum-core/src/utils
-	@mkdir -p quorum-core/src/knowledge
-	@mkdir -p quorum-core/tests/unit
-	@mkdir -p quorum-core/tests/integration
-
-	@# ── Configs ──
-	@mkdir -p configs/agents
-	@mkdir -p configs/tasks
-
-	@# ── Data directories (gitignored) ──
-	@mkdir -p data/vaults
-	@mkdir -p data/knowledge/inbox
-	@mkdir -p data/knowledge/library
-	@mkdir -p data/knowledge/archive
-
-	@echo ""
-	@echo "✓ Project structure created."
-	@echo "  Next: run 'make build'"
-
-# ── Build ────────────────────────────────────────────────────
-
-build: ## Build C++ daemon and CLI
-	@echo "=== Building quorum-core ==="
-	cmake -B $(BUILD_DIR) -S quorum-core \
-		-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
-		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-	cmake --build $(BUILD_DIR) -j$(NPROC)
-	@echo "✓ Build complete: $(BUILD_DIR)/"
-
-build-debug: ## Build with debug symbols
-	$(MAKE) build BUILD_TYPE=Debug
-
-# ── Install ──────────────────────────────────────────────────
-
-BINDIR := $(HOME)/.local/bin
-
-install: build ## Install the `quorum` CLI (-> BINDIR, default ~/.local/bin) + link skills + supervisor agent into ~/.claude
-	@mkdir -p "$(BINDIR)"
-	@ln -sfn "$(CURDIR)/$(BUILD_DIR)/quorum_daemon" "$(BINDIR)/quorum"
-	@echo "✓ quorum -> $(BINDIR)/quorum (symlink to $(BUILD_DIR)/quorum_daemon; tracks rebuilds)"
-	@command -v quorum >/dev/null 2>&1 \
-		&& echo "✓ 'quorum' resolves on PATH" \
-		|| echo "⚠ $(BINDIR) is not on PATH — add it: export PATH=\"$(BINDIR):\$$PATH\""
-	@./scripts/install-skills.sh
-	@echo ""
-	@echo "✓ Install complete. Check the machine: make doctor (runbook: SETUP.md)"
-
-uninstall: ## Remove the `quorum` CLI symlink and the ~/.claude links into this checkout
-	@rm -f "$(BINDIR)/quorum"
-	@echo "✓ Removed $(BINDIR)/quorum"
-	@./scripts/install-skills.sh --uninstall
-
-doctor: ## Check this machine against SETUP.md (read-only, $$0); PROJECT=<dir> adds the project checks
-	@./scripts/doctor.sh $(if $(PROJECT),--project $(PROJECT),)
-
-smoke: build ## Live claude -p round trip on a throwaway project (SETUP.md S10) — SPENDS TOKENS
-	@./scripts/smoke.sh
-
-# ── Run ──────────────────────────────────────────────────────
-
-run: build ## Build and run daemon
-	./$(BUILD_DIR)/quorum_daemon --config $(CONFIG)
-
-run-verbose: build ## Build and run daemon with verbose logging
-	./$(BUILD_DIR)/quorum_daemon --config $(CONFIG) --verbose
-
-# ── Test ─────────────────────────────────────────────────────
-
-test: build ## Run C++ tests
-	cd $(BUILD_DIR) && ctest --output-on-failure
-
-# ── Clean ────────────────────────────────────────────────────
-
-clean: ## Remove build artifacts
-	rm -rf $(BUILD_DIR)
-
-clean-data: ## Remove runtime data (vaults, SQLite)
-	rm -rf data/
-	rm -f quorum.db quorum.db-wal quorum.db-shm
-
-clean-all: clean clean-data ## Remove everything (build + data)
-
-# ── Web ─────────────────────────────────────────────────────
-
-web-install: ## Install web dashboard dependencies (server + client)
-	cd quorum-web && bun install && cd client && bun install
-
-web-dev: ## Start web API server (dev mode with watch, :3100)
-	cd quorum-web && bun run dev
-
-web-client: ## Start React frontend (dev mode, :3101 → proxy :3100)
-	cd quorum-web && bun run dev:client
-
-web: ## Start the web dashboard (API :3100 + UI :3101) in the background
-	./scripts/web.sh start
-
-web-stop: ## Stop the background web dashboard
-	./scripts/web.sh stop
-
-web-status: ## Show web dashboard status
-	./scripts/web.sh status
-
-web-build: ## Build React frontend for production
-	cd quorum-web && bun run build:client
-
-web-start: ## Start web API server (production)
-	cd quorum-web && bun run start
-
-# ── Utilities ────────────────────────────────────────────────
-
-fmt: ## Format C++ code (requires clang-format)
-	find quorum-core/src -name '*.h' -o -name '*.cpp' | xargs clang-format -i
-
-lint: ## Lint C++ code (requires clang-tidy)
-	find quorum-core/src -name '*.h' -o -name '*.cpp' | \
-		xargs clang-tidy -p $(BUILD_DIR)
-
-lint-templates: ## Lint skill/agent templates (no build required)
-	./scripts/lint-templates.sh
-
-loc: ## Count lines of code
-	@echo "=== Lines of Code ==="
-	@echo "C++:"
-	@find quorum-core/src -name '*.h' -o -name '*.cpp' | xargs wc -l 2>/dev/null | tail -1 || echo "  0"
+doctor: ## Read-only setup check
+	@scripts/doctor.sh

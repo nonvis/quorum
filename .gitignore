@@ -1,55 +1,16 @@
-# Build artifacts
-build/
-quorum-core/build/
-.cache/
-.ccache/
-
-# Dependencies
-node_modules/
-
-# Python bytecode (scripts/*_test.py)
+# Python bytecode
 __pycache__/
 
-# C++ artifacts
-*.o
-*.a
-*.so
-*.dylib
-*.dSYM/
-compile_commands.json
-CMakeCache.txt
-CMakeFiles/
-
-# Web
-quorum-web/node_modules/
-quorum-web/client/node_modules/
-quorum-web/client/dist/
-quorum-web/data/
-quorum-web/.web/
-quorum-web/.quorum-web-state.json
-
-# Sample/test projects (local only)
+# Local leftovers from the retired daemon / web app (runtime databases), kept untracked
+quorum-core/
+quorum-web/
 sample/
 
-# Move build artifacts
-templates/benchmarks/**/Move.lock
-templates/benchmarks/**/build/
+# Quorum runtime state in project dirs
+.quorum/
 
-# Runtime data
-quorum-core/data/
-data/
-
-# OS
+# OS / IDE
 .DS_Store
 *.swp
-*.swo
-
-# IDE
 .idea/
 .vscode/
-
-# Quorum runtime (in project dirs)
-.quorum/quorum.db
-.quorum/quorum.db-*
-.quorum/*.log
-*.pid
