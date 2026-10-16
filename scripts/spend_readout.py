@@ -67,7 +67,9 @@ ONE main transcript (`<tdir>/<id>.jsonl`) and its own subagents
 (`<tdir>/<id>/subagents/*.jsonl`). A prefix must match exactly one main
 transcript: several -> exit 2 naming them (never a silent pick); none -> exit 2.
 With --session, --since may be omitted and defaults to the session's FIRST
-record timestamp (JSON `since_from_session: true`); an explicit --since/--until
+record timestamp (JSON `since_from_session: true`), and --until to its LAST
+record across main + subagents (`until_from_session: true`), so a line read
+after the session closed ends where the session did; an explicit --since/--until
 still narrows inside the session. An absent transcript dir is still exit 3.
 
 CLOSE LINE (--line, 2026-10-09). Every session close pastes a `spend:` line into
@@ -482,6 +484,27 @@ def first_record_ts(path: Path):
     return None
 
 
+def last_record_ts(paths):
+    """The latest parseable top-level `timestamp` across a session's files."""
+    last = None
+    for path in paths:
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    try:
+                        d = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(d, dict):
+                        continue
+                    ts = parse_ts(d.get("timestamp", ""))
+                    if ts is not None and (last is None or ts > last):
+                        last = ts
+        except OSError:
+            continue
+    return last
+
+
 def scan_transcripts(tdir: Path, since_dt: datetime, until_dt: datetime,
                      files=None):
     """Sum usage per model over records with timestamp in [since, until].
@@ -575,7 +598,7 @@ def scan_transcripts(tdir: Path, since_dt: datetime, until_dt: datetime,
 
 def build_result(project, tdir, since_dt, until_dt, since_str, until_str,
                  retention, session=None, session_files=None,
-                 since_from_session=False):
+                 since_from_session=False, until_from_session=False):
     per_model, sessions, skipped, counted, per_source = scan_transcripts(
         tdir, since_dt, until_dt, files=session_files)
 
@@ -672,6 +695,7 @@ def build_result(project, tdir, since_dt, until_dt, since_str, until_str,
         "session_subagent_transcripts": (len(session_files) - 1
                                          if session_files else None),
         "since_from_session": since_from_session,
+        "until_from_session": until_from_session,
         "models": models,
         "unknown_families": unknown_models,
         "family_rate_models": family_rate_models,
@@ -724,6 +748,7 @@ def absent_result(project, tdir, since_dt, until_dt, since_str, until_str,
         "session": session,
         "session_subagent_transcripts": None,
         "since_from_session": False,
+        "until_from_session": False,
         "models": [],
         "unknown_families": [],
         "family_rate_models": [],
@@ -922,7 +947,7 @@ def main():
     ap.add_argument("--project", required=True, help="absolute project root")
     ap.add_argument("--since", default=None,
                     help="window start (ISO8601 UTC); required unless --session")
-    ap.add_argument("--until", default=None, help="window end (ISO8601 UTC); default now")
+    ap.add_argument("--until", default=None, help="window end (ISO8601 UTC); default now, or the --session's last record")
     ap.add_argument("--session", default=None,
                     help="one session id (or a unique prefix): its main transcript "
                          "+ its own subagents; --since then defaults to the "
@@ -949,6 +974,7 @@ def main():
     since_dt = None
     since_str = None
     since_from_session = False
+    until_from_session = False
     if args.since is not None:
         since_dt = parse_ts(args.since)
         if since_dt is None:
@@ -1005,10 +1031,17 @@ def main():
             since_dt = first
             since_str = first.strftime("%Y-%m-%dT%H:%M:%SZ")
             since_from_session = True
+        if not args.until:
+            last = last_record_ts(session_files)
+            if last is not None and last < until_dt:
+                until_dt = last
+                until_str = last.strftime("%Y-%m-%dT%H:%M:%SZ")
+                until_from_session = True
 
     r = build_result(project, tdir, since_dt, until_dt, since_str, until_str,
                      retention, session=session_id, session_files=session_files,
-                     since_from_session=since_from_session)
+                     since_from_session=since_from_session,
+                     until_from_session=until_from_session)
     if args.line:
         print(close_line(r))
     elif args.json:

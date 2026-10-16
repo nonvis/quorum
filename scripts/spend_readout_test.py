@@ -833,6 +833,39 @@ class SpendReadoutCase(unittest.TestCase):
         line = self.run_raw(["--session", "s1", "--line"]).stdout
         self.assertIn("window %s" % first.strftime("%Y-%m-%dT%H:%MZ"), line)
 
+    def seed_closed_session(self):
+        """A session whose last record (a subagent's) is 2h old, its main 3h."""
+        d = self.tdir()
+        (d / "s1" / "subagents").mkdir(parents=True)
+        (d / "s1.jsonl").write_text(
+            usage_record("claude-fable-5-1", self.now - timedelta(hours=3),
+                         input_tokens=1000) + "\n")
+        sub = json.loads(usage_record("claude-sonnet-5",
+                                      self.now - timedelta(hours=2),
+                                      input_tokens=1000))
+        sub["message"]["id"] = "msg_sub"
+        (d / "s1" / "subagents" / "agent-a.jsonl").write_text(json.dumps(sub) + "\n")
+        return self.now - timedelta(hours=2)
+
+    def test_line_shows_the_window_end_at_the_last_record(self):
+        """No --until: a line read after the session closed (a backfill, 10-16)
+        ends at its LAST record across main + subagents, not at the read time."""
+        last = self.seed_closed_session()
+        line = self.run_raw(["--session", "s1", "--line"]).stdout
+        self.assertIn("→ %s" % last.strftime("%H:%MZ"), line)
+
+    def test_session_json_reports_the_derived_until(self):
+        last = self.seed_closed_session()
+        r = json.loads(self.run_raw(["--session", "s1", "--json"]).stdout)
+        self.assertEqual((r["until"], r["until_from_session"]), (iso(last), True))
+
+    def test_session_explicit_until_is_kept(self):
+        self.seed_closed_session()
+        until = iso(self.now - timedelta(minutes=30))
+        r = json.loads(self.run_raw(["--session", "s1", "--until", until,
+                                     "--json"]).stdout)
+        self.assertEqual((r["until"], r["until_from_session"]), (until, False))
+
     def test_line_marks_a_floored_total_with_a_plus(self):
         """An unrated subagent model: its tokens count, its $ does not — the
         total says so with the same '+' the table uses, never a clean figure."""
