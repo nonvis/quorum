@@ -963,7 +963,7 @@ class RoundCase(unittest.TestCase):
                   "Product: the docs changed. Anything else?", "Good."):
             self.assertFalse(ok(q), q)
         for d in self.cast:
-            if d["id"] != "host":
+            if d["id"] != "host" and d["recap"]:      # brainstorm-only specialties have no recap question
                 self.assertTrue(ok(d["reads"]["question"]), d["id"])
 
     def test_a_restating_follow_up_is_re_asked_once(self):
@@ -1340,7 +1340,7 @@ class SpecialtyCase(unittest.TestCase):
         self.tmp.cleanup()
 
     def add(self, **kw):
-        s = {"id": "contrarian", "name": "Contrarian", "voice": "bm_george", "pan": "far left",
+        s = {"id": "contrarian", "name": "Contrarian", "voice": "bm_daniel", "pan": "far left",
              "angle": "What is the strongest case against it?"}
         s.update(kw)
         return radio.add_specialty(s, self.cast_p, self.lock_p, roles_dir=Path(self.tmp.name) / "roles")
@@ -1351,7 +1351,7 @@ class SpecialtyCase(unittest.TestCase):
         c = next(d for d in cast if d["id"] == "contrarian")
         self.assertFalse(c["recap"])
         self.assertEqual(c["brainstorm"], {"angle": "What is the strongest case against it?", "sources": ["hits"]})
-        self.assertEqual(json.loads(self.lock_p.read_text())["voices"]["contrarian"], "bm_george")
+        self.assertEqual(json.loads(self.lock_p.read_text())["voices"]["contrarian"], "bm_daniel")
         self.assertNotIn("contrarian", radio.ORDER)
         role = (Path(self.tmp.name) / "roles" / "contrarian.md").read_text()      # a starter role to tune
         self.assertIn("What is the strongest case against it?", role)
@@ -1371,7 +1371,8 @@ class SpecialtyCase(unittest.TestCase):
         free = radio.free_voices(self.cast_p, self.lock_p)
         self.assertNotIn("af_heart", free)
         self.assertNotIn("af_nicole", free)
-        self.assertIn("bm_george", free)
+        self.assertIn("bm_daniel", free)
+        self.assertNotIn("bm_george", free)                 # the Historian's since QR-39
 
 
 class BrainstormCliCase(unittest.TestCase):
