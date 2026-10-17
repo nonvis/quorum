@@ -35,6 +35,7 @@ block. Case map:
 Run manually: python3 scripts/spend_readout_test.py   (exit 0 = pass)
 """
 import json
+import re
 import os
 import shutil
 import sqlite3
@@ -794,7 +795,9 @@ class SpendReadoutCase(unittest.TestCase):
         ends at its LAST record across main + subagents, not at the read time."""
         last = self.seed_closed_session()
         line = self.run_raw(["--session", "s1", "--line"]).stdout
-        self.assertIn("→ %s" % last.strftime("%H:%MZ"), line)
+        # The end repeats its date when the window crosses UTC midnight.
+        self.assertRegex(line, r"→ (%s)?%s" % (re.escape(last.strftime("%Y-%m-%dT")),
+                                                re.escape(last.strftime("%H:%MZ"))))
 
     def test_session_json_reports_the_derived_until(self):
         last = self.seed_closed_session()
