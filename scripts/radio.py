@@ -62,7 +62,7 @@ ALWAYS = ("skeptic", "accountant")
 CAST_FIELDS = {"id", "name", "voice", "pan", "reads", "brainstorm", "recap"}
 # A brainstorm's source kinds (QR-26): each built-in specialty reads its own; a
 # specialty added from the web reads the question's general hits.
-BRAIN_KINDS = {"code", "decision", "surface", "evidence", "owed", "hits"}
+BRAIN_KINDS = {"code", "decision", "surface", "evidence", "owed", "hits", "layout", "history", "timeline"}
 BRAIN_CALL_CAP = 20
 BRAIN_ASK_CHARS = 280   # a broadcast host bridge (a recap's host question is ASK_CHARS)
 
@@ -1418,7 +1418,34 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
 # ── brainstorm (QR-26, QR-27): one project, one question, the host drives ───
 
 BRAIN_CLASS = (("evidence", EVIDENCE_NOTE), ("decision", DECISION_NOTE), ("surface", SURFACE_NOTE))
-BRAIN_PREFIX = {"code": "C", "decision": "R", "surface": "P", "evidence": "D", "owed": "O", "hits": "H"}
+BRAIN_PREFIX = {"code": "C", "decision": "R", "surface": "P", "evidence": "D", "owed": "O", "hits": "H",
+                "layout": "M", "history": "Y", "timeline": "W"}
+MANIFESTS = ("package.json", "Cargo.toml", "Move.toml", "CMakeLists.txt", "pyproject.toml", "Makefile", "go.mod",
+             "foundry.toml", "hardhat.config.ts", "requirements.txt", "CLAUDE.md", "README.md")
+PIVOT = re.compile(r"\b(supersed\w*|retir\w*|revers\w*|pivot\w*|parked|dropped|amend\w*|rolled back|removed|replaced|"
+                   r"abandon\w*|un-?parked|re-?scoped)\b", re.I)
+
+
+def layout_scan(repo):
+    """The Cartographer's Tier-1 (QR-39): a repo's top folders at HEAD, its manifests and where they sit, $0."""
+    ls = subprocess.run(["git", "-C", str(repo), "ls-tree", "-r", "--name-only", "HEAD"], capture_output=True, text=True).stdout.splitlines()
+    tops, mans = {}, []
+    for f in ls:
+        top = f.split("/", 1)[0] + ("/" if "/" in f else "")
+        tops[top] = tops.get(top, 0) + 1
+        if f.rsplit("/", 1)[-1] in MANIFESTS and f.count("/") <= 2:
+            mans.append(f)
+    rows = ["%s (%d file%s)" % (k, v, "" if v == 1 else "s") for k, v in sorted(tops.items(), key=lambda kv: (-kv[1], kv[0]))[:25]]
+    return "top level: %s\nmanifests and guides: %s" % ("; ".join(rows), ", ".join(sorted(mans)[:30]) or "none")
+
+
+def repo_state(repo):
+    """The Chronicler's where-I-left-off: the branch, uncommitted files, commits not yet pushed."""
+    g = lambda *a: subprocess.run(["git", "-C", str(repo)] + list(a), capture_output=True, text=True).stdout.strip()
+    branch = g("branch", "--show-current") or "(detached)"
+    dirty = len([x for x in g("status", "--porcelain").splitlines() if x.strip()])
+    ahead = g("rev-list", "--count", "@{u}..HEAD") or "?"
+    return "on branch %s; %d uncommitted file(s); %s commit(s) not pushed" % (branch, dirty, ahead)
 
 
 def index_search(question, vault, repos):
@@ -1492,6 +1519,34 @@ def gather_brainstorm(pid, projects, vault, memory, question, repo_roots, search
                         commits.append({"repo": name, "sha": parts[0], "date": parts[1], "subject": parts[2]})
                 break
     commits.sort(key=lambda c: c["date"], reverse=True)
+    layout = [{"ref": "%s/" % r["name"], "text": "%s\n%s" % (r["name"], layout_scan(r["path"]))} for r in repos]
+    for f in cfg["folders"]:
+        d = vault / f
+        if d.is_dir():
+            subs = sorted(x.name for x in d.iterdir() if x.is_dir() and not x.name.startswith("."))
+            n = len([x for x in d.rglob("*.md")])
+            layout.append({"ref": f + "/", "text": "vault folder %s: %d notes; subfolders: %s" % (f, n, ", ".join(subs) or "none")})
+    timeline, history = [], []
+    for r in repos:
+        out = subprocess.run(["git", "-C", r["path"], "log", "--branches", "--since=14.days", "-n", "30", "--format=%cs %h %s"],
+                             capture_output=True, text=True).stdout.strip()
+        timeline.append({"ref": "%s@recent" % r["name"], "text": "%s, the last 14 days:\n%s\nstate: %s" % (
+            r["name"], out or "(no commits)", repo_state(r["path"]))})
+        merges = subprocess.run(["git", "-C", r["path"], "log", "--merges", "--first-parent", "-n", "15", "--format=%cs %h %s"],
+                                capture_output=True, text=True).stdout.strip()
+        if merges:
+            history.append({"ref": "%s@merges" % r["name"], "text": "%s, merges to its main line (newest first):\n%s" % (r["name"], merges)})
+    for rel in brief_paths:
+        last = [b for h, b in sections(read(rel)) if re.search(r"close|last", h, re.I)]
+        if last:
+            timeline.append({"ref": rel + "#close", "text": "the briefing's last close:\n" + last[0][:1500]})
+    folders_ = [f.rstrip("/") + "/" for f in cfg["folders"]]
+    for f in sorted(x for x in (str(q.relative_to(vault)) for root in cfg["folders"] if (vault / root).is_dir()
+                                 for q in (vault / root).rglob("*.md")) if DECISION_NOTE.search(x.rsplit("/", 1)[-1])):
+        hits_ = [l.strip() for l in read(f).splitlines() if PIVOT.search(l) and len(l.strip()) > 20][:6]
+        if hits_:
+            history.append({"ref": f, "text": "%s\n%s" % (f.rsplit("/", 1)[-1][:-3], "\n".join(h[:300] for h in hits_))})
+    history = history[:24]
     skip = set(brief_paths) | set(concept_paths)
     hits = []
     for h in (search or (lambda q: index_search(q, vault, repos)))(question):
@@ -1502,18 +1557,19 @@ def gather_brainstorm(pid, projects, vault, memory, question, repo_roots, search
             hits.append({"kind": "code", "ref": path[5:], "title": title, "text": text})
         elif path.startswith("vault:"):
             rel = path[6:]
-            if rel in skip or "/Archive/" in rel or rel.startswith(RADIO_DIR + "/"):
+            if rel in skip or rel.startswith(RADIO_DIR + "/"):
                 continue
             stem = rel.rsplit("/", 1)[-1]
-            kind = "hits" if re.search(r"Run Prompt|Run Brief", stem, re.I) else \
+            kind = "history" if "/Archive/" in rel else "hits" if re.search(r"Run Prompt|Run Brief", stem, re.I) else \
                 next((k for k, rx in BRAIN_CLASS if rx.search(stem)), "hits")
             hits.append({"kind": kind, "ref": rel, "title": title, "text": text})
         elif path:
-            hits.append({"kind": "hits", "ref": path, "title": title, "text": text})
+            hits.append({"kind": "history" if path.startswith("memory:archive/") else "hits", "ref": path, "title": title, "text": text})
     return {"kind": "brainstorm", "project": pid, "name": cfg["name"], "question": question,
             "vault": str(vault), "vault_rev": head or None, "as_of": False, "folders": cfg["folders"],
             "repos": repos, "briefing": briefing, "owed": owed[:12], "concept": concept, "commits": commits[:12],
-            "hits": hits[:24], "context": list(context or []), "changed": [], "rules": verification_rules(memory)}
+            "hits": hits[:24], "context": list(context or []), "changed": [], "rules": verification_rules(memory),
+            "layout": layout, "history": history, "timeline": timeline}
 
 
 def brainstorm_sources(inp):
@@ -1524,8 +1580,9 @@ def brainstorm_sources(inp):
         n[kind] = n.get(kind, 0) + 1
         out.append({"id": "%s%d" % (BRAIN_PREFIX[kind], n[kind]), "kind": kind, "ref": ref, "text": text})
 
-    for c in inp["commits"]:
-        put("code", "%s@%s" % (c["repo"], c["sha"]), "recent commit: %s %s %s" % (c["repo"], c["sha"], c["subject"]))
+    for k in ("layout", "history", "timeline"):
+        for x in inp.get(k, []):
+            put(k, x["ref"], x["text"])
     for b in inp["briefing"]:
         if b["state"]:
             put("evidence", b["path"] + "#state", "the briefing's state (as it stands today)\n" + b["state"])

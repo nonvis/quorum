@@ -1,13 +1,16 @@
 {
   "v": 3,
-  "note": "Every voice a specialty has ever held. Append only: an id keeps its voice for life; a retired id's voice stays reserved. QR-12 (2026-10-17, Decision #106): one-time re-binding for the perspective specialties after 3 test episodes, before recognition had formed; the retired project-desk ids (meridian, permafrost, sidebar, bastion, skeptic, accountant) left the lock. Carried over: Skeptic -> Verifier keeps am_fenrir, Accountant -> Operator keeps am_puck. Owner overrides of QR-6 are recorded in `overrides`, each with the ruling that made it; `voices` keeps every original binding. QR-16 (2026-10-17, Sang: af_nicole 'too soft-spoken'): Product af_nicole -> af_bella; af_nicole retires, reserved, never reassigned.",
+  "note": "Every voice a specialty has ever held. Append only: an id keeps its voice for life; a retired id's voice stays reserved. QR-12 (2026-10-17, Decision #106): one-time re-binding for the perspective specialties after 3 test episodes, before recognition had formed; the retired project-desk ids (meridian, permafrost, sidebar, bastion, skeptic, accountant) left the lock. Carried over: Skeptic -> Verifier keeps am_fenrir, Accountant -> Operator keeps am_puck. Owner overrides of QR-6 are recorded in `overrides`, each with the ruling that made it; `voices` keeps every original binding. QR-16 (2026-10-17, Sang: af_nicole 'too soft-spoken'): Product af_nicole -> af_bella; af_nicole retires, reserved, never reassigned. QR-39 (2026-10-17, Sang: \"go with a voice\"): the knower lenses return as brainstorm-only specialties — cartographer am_eric, historian bm_george, chronicler bf_lily.",
   "voices": {
     "host": "af_heart",
     "builder": "am_michael",
     "architect": "bf_emma",
     "verifier": "am_fenrir",
     "operator": "am_puck",
-    "product": "af_nicole"
+    "product": "af_nicole",
+    "cartographer": "am_eric",
+    "historian": "bm_george",
+    "chronicler": "bf_lily"
   },
   "overrides": [
     {

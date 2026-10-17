@@ -1272,7 +1272,7 @@ class BrainstormCase(unittest.TestCase):
         self.assertIn("surface", by("product"))
         self.assertIn("evidence", by("verifier"))
         seen = {}
-        for sid in ("builder", "verifier", "architect", "product", "operator"):
+        for sid in ("builder", "verifier", "architect", "product", "operator", "cartographer", "historian", "chronicler"):
             for k in {d["id"]: d for d in self.cast}[sid]["brainstorm"]["sources"]:
                 self.assertNotIn(k, seen, "%s and %s both read %s" % (seen.get(k), sid, k))
                 seen[k] = sid
@@ -1284,6 +1284,33 @@ class BrainstormCase(unittest.TestCase):
         self.assertEqual(src["sidebar:docs/moderator.md"], "code")
         self.assertEqual(src["01_Projects/Sidebar/40 - Old Note.md"], "hits")
         self.assertEqual(src["memory:feedback_x.md"], "hits")
+
+    def test_the_knower_lenses_get_their_own_first_pass(self):
+        """QR-39: the old knowers' Tier-1 passes, rebuilt as $0 source kinds — layout (Cartographer),
+        history (Historian), timeline (Chronicler)."""
+        self.fx.note("01_Projects/Sidebar/41 - Moderator (Design, 2026-10-01).md",
+                     "---\nsummary: \"m\"\n---\n# M\n\n- Ruled: the gate runs after the screen.\n"
+                     "- SUPERSEDED 10-05: the gate now runs first (the screen was too slow).\n", NOW - timedelta(days=12))
+        inp = radio.gather_brainstorm("sidebar", radio.load_projects(self.fx.vault), self.fx.vault, self.fx.memory,
+                                      QUESTION, [self.fx.home / "nonvis"],
+                                      search=lambda q: fake_search(q) + [{"path": "vault:01_Projects/Sidebar/Archive/02 - Radio (Design).md",
+                                                                          "title": "Radio (Design)", "summary": "retired", "snippet": ""}])
+        src = radio.brainstorm_sources(inp)
+        by = {}
+        for s in src:
+            by.setdefault(s["kind"], []).append(s)
+        self.assertTrue(any("ui/" in s["text"] or "src/" in s["text"] for s in by["layout"]), by.get("layout"))
+        self.assertTrue(any("SUPERSEDED" in s["text"] for s in by["history"]))
+        self.assertTrue(any(s["ref"].endswith("Archive/02 - Radio (Design).md") for s in by["history"]))   # archived = history
+        self.assertTrue(any("violence gate" in s["text"] and "2026-10-17" in s["text"] for s in by["timeline"]))
+        self.assertTrue(any("branch" in s["text"] for s in by["timeline"]))
+        self.assertFalse(any(s["kind"] == "code" and s["ref"].startswith("sidebar@") for s in src))      # commits are the timeline's
+        cast = radio.load_cast(CAST, LOCK)
+        for sid, kind in (("cartographer", "layout"), ("historian", "history"), ("chronicler", "timeline")):
+            d = next(x for x in cast if x["id"] == sid)
+            self.assertEqual((d["recap"], d["brainstorm"]["sources"]), (False, [kind]))
+            self.assertTrue(d["brainstorm"]["angle"].endswith("?"))
+            self.assertGreater(len(radio.role_text(sid, "room")), 300, sid)
 
     def test_the_inputs_carry_the_question_the_repos_and_recent_commits(self):
         self.assertEqual(self.inp["question"], QUESTION)
