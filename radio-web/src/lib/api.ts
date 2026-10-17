@@ -13,6 +13,12 @@ import type {
   ProjectCheck,
   SaveResult,
   Script,
+  StudyCandidate,
+  StudyDay,
+  StudyExcerpt,
+  StudyTrack,
+  StudyTrackSummary,
+  StudyTrackView,
 } from './types';
 
 export class ApiError extends Error {
@@ -77,4 +83,17 @@ export const api = {
     call<Replay>('POST', `/roles/${sid}/replay`, { episode, turn, text }),
   addSpecialty: (s: { id: string; name: string; voice: string; pan: string; angle: string }) =>
     call<CastInfo>('POST', '/cast', s),
+  tracks: () => call<{ tracks: StudyTrackSummary[] }>('GET', '/study').then((r) => r.tracks),
+  track: (id: string) => call<StudyTrackView>('GET', `/study/${id}`),
+  studyDay: (id: string, date: string) => call<StudyDay>('GET', `/study/${id}/days/${date}`),
+  studyCandidates: () => call<{ repos: StudyCandidate[] }>('GET', '/study/candidates').then((r) => r.repos),
+  newTrack: (t: { id: string; project: string; repo: string; subtree?: string; goal: string }) =>
+    call<StudyTrack>('POST', '/study', t),
+  studyStart: (id: string) => call<{ job: string }>('POST', `/study/${id}/start`, {}),
+  studySay: (id: string, message: string) => call<{ job: string }>('POST', `/study/${id}/say`, { message }),
+  studyEnd: (id: string) => call<{ job: string }>('POST', `/study/${id}/end`, {}),
+  studyFinish: (id: string) => call<StudyTrack>('POST', `/study/${id}/finish`, {}),
+  studyDelete: (id: string) => call<{ deleted: string }>('DELETE', `/study/${id}`),
+  studyFile: (id: string, path: string, line: number, end?: number | null) =>
+    call<StudyExcerpt>('GET', `/study/${id}/file?path=${encodeURIComponent(path)}&line=${line}${end ? `&end=${end}` : ''}`),
 };

@@ -227,3 +227,112 @@ export interface Replay {
   new: string;
   cost: number;
 }
+
+/** Study (QR-41…47): a track over one repo, one tutor session a day, the close as the memory. */
+export interface StudyClose {
+  left_off: string;
+  covered: { path: string; what: string }[];
+  unclear: string[];
+  next: string[];
+}
+
+export interface StudyTrackSummary {
+  id: string;
+  project: string;
+  repo: string;
+  subtree: string | null;
+  goal: string;
+  status: 'active' | 'finished';
+  created: string;
+  finished: string | null;
+  days: number;
+  last: string | null;
+  open_day: string | null;
+  cost: number;
+  left_off: string;
+}
+
+export interface StudyTrack {
+  id: string;
+  project: string;
+  repo: string;
+  subtree: string | null;
+  goal: string;
+  status: 'active' | 'finished';
+  created: string;
+  finished: string | null;
+  state: { left_off: string; covered: { path: string; what: string; day?: string }[]; unclear: string[]; next: string[] };
+  head: { ref: string | null; sha: string | null } | null;
+  model: string;
+}
+
+export interface StudyDaySummary {
+  date: string;
+  status: 'open' | 'closed';
+  cost: number;
+  close: StudyClose | null;
+  opened: string;
+  ended: string | null;
+  day_n?: number;
+  turns: number;
+}
+
+export interface StudyTrackView {
+  track: StudyTrack;
+  days: StudyDaySummary[];
+  changed: string[];
+  head: { ref: string | null; sha: string | null } | null;
+  open_day: string | null;
+  running: JobView | null;
+}
+
+export interface StudyTool {
+  name: string;
+  target: string;
+}
+
+export interface StudyTurn {
+  n: number;
+  who: 'sang' | 'tutor';
+  text: string;
+  at: string;
+  cost: number;
+  tools: StudyTool[];
+  secs: number | null;
+  citations?: { path: string; line: number; end: number | null; resolved: string }[];
+}
+
+export interface StudyDay {
+  date: string;
+  session: string;
+  status: 'open' | 'closed';
+  turns: StudyTurn[];
+  cost: number;
+  close: StudyClose | null;
+  day_n?: number;
+}
+
+export interface StudyExcerpt {
+  path: string;
+  start: number;
+  end: number;
+  total: number;
+  line: number;
+  line_end: number;
+  lines: [number, string][];
+}
+
+export interface StudyCandidate {
+  path: string;
+  name: string;
+  head: { ref: string | null; sha: string | null } | null;
+}
+
+export type StudyEvent =
+  | { event: 'started'; id: string; date: string }
+  | { event: 'tool'; name: string; target: string }
+  | { event: 'turn'; turn: StudyTurn }
+  | { event: 'closed'; date: string; close: StudyClose }
+  | { event: 'done'; date?: string; cost?: number }
+  | { event: 'error'; message: string; open_day?: string }
+  | { event: 'exit'; code: number };

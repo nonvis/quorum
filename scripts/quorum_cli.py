@@ -38,6 +38,9 @@ tooling that spends no model tokens:
       run as a subprocess): the one verb that calls a model. See scripts/radio.py.
   quorum web start|stop|status|logs|dev
       Radio Studio, the React front over a 127.0.0.1 API (scripts/web_ctl.py).
+  quorum study new|list|show|start|say|end|finish|delete …
+      Learn one repo ~30 min a day: one tutor session a day, its close the memory the
+      next day starts from (scripts/study.py, run as a subprocess; calls a model).
   quorum version
 
 `~/.local/bin/quorum` is a symlink to this file (scripts/install.sh).
@@ -101,6 +104,11 @@ USAGE = """usage: quorum <command> [options]
                   delete, export; manage projects and specialties
   radio inputs <project> [range] [--since …] [--until …]
                   the day's inputs per specialty slice (JSON, $0)
+  study new <track> --project <p> --repo <path> [--subtree <dir>] --goal "…"
+  study start|say|end|show|finish|delete <track> … | study list
+                  learn one repo a day at a time: one Opus tutor session a day
+                  (read-only, no git), End saves the memory the next day loads
+                  (per-host store .quorum/study/; Radio Studio's Study tab)
   version         print the checkout's commit
 
 The vault defaults to ~/nonvis/second-brain (QUORUM_VAULT overrides); its memory
@@ -676,6 +684,11 @@ def cmd_web(args):
     return subprocess.call([sys.executable, str(REPO / "scripts" / "web_ctl.py")] + list(args))
 
 
+def cmd_study(args):
+    """Study (QR-41…47) in its own process, like radio: the core never imports it."""
+    return subprocess.call([sys.executable, str(REPO / "scripts" / "study.py")] + list(args))
+
+
 def cmd_version(_args):
     sha = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
                          capture_output=True, text=True).stdout.strip() or "unknown"
@@ -714,6 +727,8 @@ def main(argv):
         return cmd_radio(rest)
     if sub == "web":
         return cmd_web(rest)
+    if sub == "study":
+        return cmd_study(rest)
     if sub in RETIRED:
         print("ERROR: `quorum %s` was retired with the C++ daemon on 2026-10-16 "
               "(vault Quorum Decision Log #98)." % sub, file=sys.stderr)

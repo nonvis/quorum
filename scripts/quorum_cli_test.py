@@ -89,6 +89,14 @@ class QuorumCliCase(unittest.TestCase):
         self.assertIn("quorum", p.stdout)
         self.assertIn("python", p.stdout)
 
+    def test_study_runs_its_own_script(self):
+        store = self.home / "study"
+        p = self.run_cli(["study", "list"], extra_env={"QUORUM_STUDY_STORE": str(store)})
+        self.assertEqual((p.returncode, p.stdout), (0, ""), p.stderr)
+        p = self.run_cli(["study", "show", "nope"], extra_env={"QUORUM_STUDY_STORE": str(store)})
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("no track", p.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

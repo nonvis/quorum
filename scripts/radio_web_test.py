@@ -286,5 +286,94 @@ class WebCase(unittest.TestCase):
             self.assertEqual(self.req("GET", p)[0], 404, p)
 
 
+class StudyWebCase(unittest.TestCase):
+    """Study (QR-41…47) over the API: a track over a work repo, a day, the close, finish + delete.
+    The same server as WebCase, without re-running its tests."""
+    req, j, events = WebCase.req, WebCase.j, WebCase.events
+    tearDownClass = classmethod(WebCase.tearDownClass.__func__)
+
+    @classmethod
+    def setUpClass(cls):
+        WebCase.setUpClass.__func__(cls)
+        cls.repo = cls.fx.home / "projects" / "work" / "sweeping-sui"
+        (cls.repo / "listener" / "src").mkdir(parents=True)
+        (cls.repo / "listener" / "src" / "main.rs").write_text("fn main() {\n    run();\n}\n")
+        git(cls.repo, "init", "-q", "-b", "main")
+        cls.app.study = radio_web.study.Store(Path(cls.tmp.name) / "study")
+        cls.app.study_roots = [cls.fx.home / "nonvis", cls.fx.home / "projects"]
+        cls.app.env["QUORUM_STUDY_STORE"] = str(cls.app.study.root)
+
+    def run_job(self, path, body):
+        s, o = self.j("POST", path, body)
+        self.assertEqual(s, 202, o)
+        return self.events(o["job"])
+
+    def test_a_track_day_close_finish_delete(self):
+        s, o = self.j("GET", "/api/study/candidates")
+        self.assertEqual(s, 200)
+        self.assertIn(str(self.repo.resolve()), [c["path"] for c in o["repos"]])
+        s, o = self.j("POST", "/api/study", {"id": "web-listener", "project": "bastion", "repo": str(self.repo),
+                                             "subtree": "listener", "goal": "own the listener"})
+        self.assertEqual(s, 200, o)
+        s, o = self.j("POST", "/api/study", {"id": "bad", "project": "bastion", "repo": "/tmp", "goal": "g"})
+        self.assertEqual(s, 400)
+
+        ev = self.run_job("/api/study/web-listener/say", {"message": "where does it start?"})
+        kinds = [e["event"] for e in ev]
+        self.assertEqual(kinds[0], "started")
+        self.assertIn("tool", kinds)
+        self.assertIn("turn", kinds)
+        self.assertEqual(kinds[-1], "exit")
+        self.assertEqual(ev[-1]["code"], 0)
+        s, h = self.j("GET", "/api/health")
+        self.assertEqual(h["running"], [])                          # a study job is never a generation
+
+        s, o = self.j("GET", "/api/study/web-listener")
+        self.assertEqual(s, 200)
+        [day] = o["days"]
+        self.assertEqual(day["status"], "open")
+        s, d = self.j("GET", "/api/study/web-listener/days/%s" % day["date"])
+        self.assertEqual([t["who"] for t in d["turns"]], ["sang", "tutor"])
+        self.assertTrue(d["turns"][1]["citations"])
+
+        s, e = self.j("GET", "/api/study/web-listener/file?path=listener/src/main.rs&line=2")
+        self.assertEqual(s, 200, e)
+        self.assertIn([2, "    run();"], e["lines"])
+        for bad in ("../../../etc/passwd", ".git/HEAD"):
+            self.assertEqual(self.j("GET", "/api/study/web-listener/file?path=%s&line=1" % bad)[0], 400)
+
+        ev = self.run_job("/api/study/web-listener/end", {})
+        self.assertIn("closed", [e["event"] for e in ev])
+        s, o = self.j("GET", "/api/study/web-listener")
+        self.assertTrue(o["track"]["state"]["left_off"])
+
+        self.assertEqual(self.j("DELETE", "/api/study/web-listener")[0], 400)   # only a finished track
+        s, o = self.j("POST", "/api/study/web-listener/finish", {})
+        self.assertEqual((s, o["status"]), (200, "finished"))
+        self.assertEqual(self.j("POST", "/api/study/web-listener/say", {"message": "x"})[0], 400)
+        self.assertEqual(self.j("DELETE", "/api/study/web-listener")[0], 200)
+        self.assertEqual(self.j("GET", "/api/study/web-listener")[0], 404)
+
+    def test_an_open_earlier_day_is_409(self):
+        self.j("POST", "/api/study", {"id": "web-open", "project": "bastion", "repo": str(self.repo), "goal": "g"})
+        self.app.study.save_day("web-open", {"v": 1, "date": "2026-10-01", "session": "x", "started": True,
+                                             "status": "open", "turns": [], "cost": 0, "close": None})
+        s, o = self.j("POST", "/api/study/web-open/say", {"message": "hi"})
+        self.assertEqual((s, o.get("open_day")), (409, "2026-10-01"))
+        s, o = self.j("POST", "/api/study/web-open/start", {})
+        self.assertEqual((s, o.get("open_day")), (409, "2026-10-01"))
+
+    def test_start_opens_today_without_a_message(self):
+        self.j("POST", "/api/study", {"id": "web-start", "project": "bastion", "repo": str(self.repo), "goal": "g"})
+        ev = self.run_job("/api/study/web-start/start", {})
+        self.assertEqual(ev[-1]["code"], 0, ev)
+        [d] = self.app.study.days("web-start")
+        self.assertEqual([t["who"] for t in d["turns"]], ["tutor"])
+
+    def test_a_bad_track_id_is_404(self):
+        for p in ("/api/study/..%2F..%2Fetc", "/api/study/nope", "/api/study/nope/days/2026-10-01"):
+            self.assertEqual(self.req("GET", p)[0], 404, p)
+
+
 if __name__ == "__main__":
     unittest.main()

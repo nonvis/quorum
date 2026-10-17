@@ -1,4 +1,4 @@
-import { Lightbulb, Moon, Radio, Sun, FolderKanban, Headphones, Users } from 'lucide-react';
+import { GraduationCap, Lightbulb, Moon, Radio, Sun, FolderKanban, Headphones, Users } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { running, useGeneration } from '@/lib/generation';
@@ -13,6 +13,7 @@ import { OnAir } from './bits';
 const NAV = [
   { view: 'listen', label: 'Listen', icon: Headphones },
   { view: 'generate', label: 'Generate', icon: Lightbulb },
+  { view: 'study', label: 'Study', icon: GraduationCap },
   { view: 'roles', label: 'Roles', icon: Users },
   { view: 'projects', label: 'Projects', icon: FolderKanban },
 ] as const;

@@ -22,16 +22,17 @@ What each command does is in `README.md`; the source is the truth.
   `radio-voice/` (its own Node package; `kokoro-js` pinned exactly) and
   `radio-web/` (Radio Studio's React app; every dependency pinned exactly, built
   by `quorum web start`, served by the stdlib `scripts/radio_web.py`).
-- **Zero model calls, except `quorum radio <project>`.** Every other command is
-  deterministic and costs $0. The core (`quorum_cli.py`, `vault_index.py`,
+- **Zero model calls, except `quorum radio` and `quorum study`.** Every other
+  command is deterministic and costs $0. The core (`quorum_cli.py`, `vault_index.py`,
   `repo_index.py`, `spend_readout.py`, `lint.py`) never imports `radio.py` or
-  anything audio: the CLI runs radio as a subprocess. Radio's tests use its fake
+  anything audio: the CLI runs radio and study as subprocesses. Radio's tests use its fake
   model and fake TTS — never a real model call in a test.
 - **Read-only toward what it reads.** `spend` reads transcripts; the indexes read
   markdown and git. The only files written are `<vault>/.quorum/index.db`,
   `<repo>/.quorum/index.db` and, if missing, `<repo>/.quorum/.gitignore` (`*`);
   `quorum radio` also writes episodes to the per-host store `.quorum/radio/`
-  and appends new ids to `radio/voices.lock`; Radio Studio writes the vault's
+  and appends new ids to `radio/voices.lock`; `quorum study` writes only its
+  per-host store `.quorum/study/`; Radio Studio writes the vault's
   `06_Metadata/quorum-projects.json` (+ the allowlist) and commits exactly those
   files, and adds brainstorm specialties to `radio/cast.json`.
 - **Radio Studio binds 127.0.0.1 only** and refuses a foreign Host or Origin;
@@ -47,7 +48,10 @@ What each command does is in `README.md`; the source is the truth.
   the slices disjoint. The Verifier's reads are read-only git/note reads run by
   the program (`run_read`), never a shell.
 - **Walls.** A repo is indexed only if it is on the vault's allowlist or has its
-  own `.quorum/`; repo content never leaves its repo.
+  own `.quorum/`; repo content never leaves its repo. A study track may READ any
+  checkout under the roots (work repos included): never indexed, allowlisted,
+  recapped or written to, no git command (HEAD is read from `.git/`), and the
+  tutor has Read/Grep/Glob only.
 - **Self-repairing index.** A query refreshes first (stat + re-parse what changed);
   never add a scheduler, daemon or watcher.
 - **Tests first.** Each change gets a test that fails on the old code, then the
