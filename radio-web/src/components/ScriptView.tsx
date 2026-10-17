@@ -2,7 +2,15 @@ import { useEffect, useRef } from 'react';
 import { CornerDownRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { speakerColor } from '@/lib/speakers';
-import type { Line, Source } from '@/lib/types';
+import type { Feedback, Line, Source } from '@/lib/types';
+import { Vote } from './Vote';
+
+export interface FeedbackCtl {
+  list: Feedback[];
+  vote: (target: 'turn' | 'line', n: number, vote: 'up' | 'down', note?: string) => void;
+  clear: (id: string) => void;
+}
+
 import { Badge } from './ui/badge';
 import { Tip } from './ui/tooltip';
 
@@ -22,9 +30,10 @@ interface Props {
   seekable?: Set<number>;
   follow?: boolean;
   compact?: boolean;
+  feedback?: FeedbackCtl;
 }
 
-export function ScriptView({ lines, active, onSeek, seekable, follow = true, compact = false }: Props) {
+export function ScriptView({ lines, active, onSeek, seekable, follow = true, compact = false, feedback }: Props) {
   const box = useRef<HTMLOListElement>(null);
   useEffect(() => {
     if (!follow || active === null || active === undefined) return;
@@ -65,6 +74,15 @@ export function ScriptView({ lines, active, onSeek, seekable, follow = true, com
                 {l.verdict === 'proven' && <Badge variant="ok">proven</Badge>}
                 {l.verdict === 'not_proven' && <Badge variant="danger">not proven</Badge>}
                 {l.withdrawn && <Badge variant="danger">withdrawn</Badge>}
+                {feedback && !host && !pass && (
+                  <span className="ml-auto">
+                    <Vote
+                      mine={feedback.list.find((f) => f.target === 'line' && f.n === l.i)}
+                      onVote={(v, note) => feedback.vote('line', l.i, v, note)}
+                      onClear={feedback.clear}
+                    />
+                  </span>
+                )}
                 {l.about !== null && l.about !== undefined && !host && (
                   <button
                     type="button"

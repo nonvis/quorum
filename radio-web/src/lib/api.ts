@@ -1,5 +1,9 @@
 import type {
   Candidate,
+  Feedback,
+  Replay,
+  Role,
+  RoleSummary,
   CastInfo,
   Derived,
   EpisodeMeta,
@@ -62,6 +66,15 @@ export const api = {
   setActive: (id: string, active: boolean) => call<SaveResult>('PATCH', `/projects/${id}`, { active }),
   editProject: (id: string, fields: Partial<Project>) => call<SaveResult>('PATCH', `/projects/${id}`, fields),
   cast: () => call<CastInfo>('GET', '/cast'),
+  feedback: (id: string) => call<{ feedback: Feedback[] }>('GET', `/episodes/${id}/feedback`).then((r) => r.feedback),
+  vote: (id: string, f: { target: 'turn' | 'line'; n: number; vote: 'up' | 'down'; note?: string }) =>
+    call<Feedback>('POST', `/episodes/${id}/feedback`, f),
+  unvote: (id: string, fid: string) => call('DELETE', `/episodes/${id}/feedback/${fid}`),
+  roles: () => call<{ roles: RoleSummary[] }>('GET', '/roles').then((r) => r.roles),
+  role: (sid: string) => call<Role>('GET', `/roles/${sid}`),
+  saveRole: (sid: string, text: string) => call<Role>('PUT', `/roles/${sid}`, { text }),
+  replay: (sid: string, episode: string, turn: number, text: string) =>
+    call<Replay>('POST', `/roles/${sid}/replay`, { episode, turn, text }),
   addSpecialty: (s: { id: string; name: string; voice: string; pan: string; angle: string }) =>
     call<CastInfo>('POST', '/cast', s),
 };

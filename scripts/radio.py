@@ -40,6 +40,7 @@ REPO = HERE.parent
 CAST_FILE = REPO / "radio" / "cast.json"
 LOCK_FILE = REPO / "radio" / "voices.lock"
 SIDECAR = REPO / "radio-voice" / "render.mjs"
+ROLES_DIR = REPO / "radio" / "roles"
 ALLOWLIST = "06_Metadata/quorum-repos.txt"
 RADIO_DIR = "01_Projects/Quorum/Radio"
 MODEL = "claude-sonnet-5-5"
@@ -165,7 +166,7 @@ def free_voices(cast_path=CAST_FILE, lock_path=LOCK_FILE):
     return [v for v in KOKORO_ENGLISH if v not in taken]
 
 
-def add_specialty(spec, cast_path=CAST_FILE, lock_path=LOCK_FILE):
+def add_specialty(spec, cast_path=CAST_FILE, lock_path=LOCK_FILE, roles_dir=None):
     """QR-27: a specialty brought in from the web is brainstorm-only, reads the
     question's general hits, and takes an unused voice for life (the lock records it)."""
     sid = str(spec.get("id") or "").strip()
@@ -196,6 +197,14 @@ def add_specialty(spec, cast_path=CAST_FILE, lock_path=LOCK_FILE):
         tmp.unlink()
         raise
     os.replace(tmp, cast_path)
+    rd = Path(roles_dir or ROLES_DIR)
+    rd.mkdir(parents=True, exist_ok=True)
+    if not (rd / ("%s.md" % sid)).exists():
+        (rd / ("%s.md" % sid)).write_text(
+            "# %s\n\nYou answer one question about Sang's question: %s\n\n## Method\n"
+            "1. Read what bears on it in the project before you speak; cite what you read.\n"
+            "2. Say plainly when something is a guess.\n\n## A good answer\nOne point from your angle, with its evidence.\n\n"
+            "## Never\nAnother specialty's job.\n\n## Room\n- Build on or push back on what the room said, by name.\n" % (name, angle))
     return load_cast(cast_path, lock_path, record=True)
 
 
@@ -320,6 +329,42 @@ ASK_CHARS = 200      # a host question line (QR4)
 SIGNOFF_CHARS = 450  # what the host is told for its sign-off; the program's cut is 480
 MAX_READS = 4        # the Verifier's evidence reads per turn (QR-10)
 READ_CHARS = 3000    # the output kept per read
+
+
+def role_text(sid, mode, roles_dir=None):
+    """A specialty's tuned role (radio/roles/<id>.md): the body before the first `## ` section, plus the
+    section named for the mode (`## Room` for a brainstorm, `## Recap` for a recap); "" without a file."""
+    p = Path(roles_dir or ROLES_DIR) / ("%s.md" % sid)
+    if not p.exists():
+        return ""
+    return role_text_from(p.read_text(), mode)
+
+
+def role_text_from(text, mode):
+    """role_text over a draft (unsaved) role: the body plus the mode's section."""
+    parts = re.split(r"(?m)^## (Room|Recap)\s*$", text or "")
+    body, sections = parts[0], dict(zip(parts[1::2], parts[2::2]))
+    want = sections.get({"room": "Room", "recap": "Recap"}[mode], "")
+    return (re.sub(r"(?m)^# .*\n", "", body).strip() + ("\n\n" + want.strip() if want.strip() else "")).strip()
+
+
+def with_role(system, sid, mode, roles_dir=None):
+    r = role_text(sid, mode, roles_dir)
+    return system + ("\n\nYour role, as Sang tuned it:\n" + r if r else "")
+
+
+def verification_rules(memory):
+    """Sang's ☠☠☠ verification rules, read from his memory at run time (never copied into the repo)."""
+    rules = []
+    for f in ("MEMORY_VERIFICATION.md", "MEMORY_VERIFICATION_2.md"):
+        q = Path(memory) / f if memory else None
+        if q and q.exists():
+            for line in q.read_text(errors="replace").splitlines():
+                if line.startswith("- ") and "☠☠☠" in line:
+                    for part in re.split(r" · (?=\[)", line[2:]):
+                        if "☠☠☠" in part:
+                            rules.append(_md_links(part).strip()[:260])
+    return rules
 
 
 def load_projects(vault):
@@ -651,15 +696,7 @@ def gather_project(pid, projects, vault, memory, since, until, repo_roots, as_of
     owed = [r for r in rows if MONEY_RE.search(r)] + [r for r in rows if not MONEY_RE.search(r)]
     aq = [{"title": x.rsplit("/", 1)[-1][:-3], "path": x} for x in sorted(all_md, reverse=True)
           if x.startswith("Action Queue/") and x.count("/") == 1 and name_rx.search(x.rsplit("/", 1)[-1])]
-    rules = []
-    for f in ("MEMORY_VERIFICATION.md", "MEMORY_VERIFICATION_2.md"):
-        q = Path(memory) / f if memory else None
-        if q and q.exists():
-            for line in q.read_text(errors="replace").splitlines():
-                if line.startswith("- ") and "☠☠☠" in line:
-                    for part in re.split(r" · (?=\[)", line[2:]):
-                        if "☠☠☠" in part:
-                            rules.append(_md_links(part).strip()[:260])
+    rules = verification_rules(memory)
     # Breaks: only lines ADDED in the window, in the briefing and the project's notes.
     texts = [(rel, added(rel, 20000)[1]) for rel in brief_paths if rel in touched]
     texts += [(n["path"], added(n["path"], 20000)[1]) for n in changed
@@ -1019,7 +1056,7 @@ def claim_kind(text):
 
 
 def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None, log=None, with_operator=False,
-                on_line=None):
+                on_line=None, roles_dir=None):
     """One project's day (QR-7…14). The host opens with what the day was; then each
     specialty in the order of the questions — what changed (Builder) → is it real
     (Verifier, about the Builder's line) → what was decided (Architect) → does a
@@ -1121,7 +1158,7 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
             "On air so far ([line] words):", "\n".join("  " + x for x in on_air_text()) or "  (nothing yet)", "",
             "Lines WITHDRAWN by their speaker (say they were withdrawn if you mention them; never state them as "
             "fact): %s" % (", ".join(map(str, view["withdrawn"])) or "none"), "", what])
-        return _json(call("host", "host", HOST_SYSTEM, user, view)) or {}
+        return _json(call("host", "host", with_role(HOST_SYSTEM, HOST, "recap", roles_dir), user, view)) or {}
 
     def passed(sid, why, **kw):
         note("answers: %s passes (%s)" % (sid, why))
@@ -1201,7 +1238,8 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
             "\n".join("  - " + x["text"] for x in own if x["kind"] == "rule")[:2500])
         rule = ("repository evidence (commit stats, a grep at HEAD, branch --contains) is enough." if kind == "change" else
                 "only a build, test or walk record in a log note proves it; repository evidence alone does not.")
-        o = _json(call("answers", "desk", VERIFY_SYSTEM.format(project=project, line=target["i"], kind=kind, rule=rule), user,
+        o = _json(call("answers", "desk", with_role(VERIFY_SYSTEM.format(project=project, line=target["i"], kind=kind, rule=rule),
+                                                     "verifier", "recap", roles_dir), user,
                        {"role": "desk", "specialty": "verifier", "sources": srcs, "about": target["i"],
                         "on_air": on_air_text(), "question": q, "on_break": False})) or {}
         e = next((x for x in srcs if x["id"].lower() == str(o.get("source") or "").strip().lower()), None)
@@ -1285,7 +1323,8 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
         elif inputs.get("range") and sid == "architect":
             extra = (" This covers several days (%s); each source carries its date: say the day or 'this week', "
                      "never 'today', and cover different decisions before a second from the same note." % inputs.get("label"))
-        return DESK_SYSTEM.format(project=project, question=r["question"], never=r["never"], extra=extra)
+        return with_role(DESK_SYSTEM.format(project=project, question=r["question"], never=r["never"], extra=extra),
+                         sid, "recap", roles_dir)
 
     def followup():
         """QR-15 R6: one optional turn before the Operator, under GR-8: only if the last answer was sourced."""
@@ -1474,7 +1513,7 @@ def gather_brainstorm(pid, projects, vault, memory, question, repo_roots, search
     return {"kind": "brainstorm", "project": pid, "name": cfg["name"], "question": question,
             "vault": str(vault), "vault_rev": head or None, "as_of": False, "folders": cfg["folders"],
             "repos": repos, "briefing": briefing, "owed": owed[:12], "concept": concept, "commits": commits[:12],
-            "hits": hits[:24], "context": list(context or []), "changed": []}
+            "hits": hits[:24], "context": list(context or []), "changed": [], "rules": verification_rules(memory)}
 
 
 def brainstorm_sources(inp):

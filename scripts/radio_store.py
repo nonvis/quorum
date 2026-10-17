@@ -104,6 +104,27 @@ class Store:
         p = self._dir(i) / "script.md"
         return p.read_text() if p.exists() else None
 
+    def feedback(self, i):
+        p = self._dir(i) / "feedback.json"
+        return json.loads(p.read_text()) if p.exists() else []
+
+    def add_feedback(self, i, f, now=None):
+        """👍/👎 + an optional note on a room turn or a broadcast line (the tuning loop)."""
+        if f.get("target") not in ("turn", "line") or not isinstance(f.get("n"), int) or f.get("vote") not in ("up", "down") \
+                or not PROJECT_RE.match(str(f.get("speaker") or "")):
+            raise ValueError("feedback needs target turn|line, an integer n, a speaker and vote up|down")
+        fb = self.feedback(i)
+        item = {"id": "f%d" % (max([int(x["id"][1:]) for x in fb] or [0]) + 1), "target": f["target"], "n": f["n"],
+                "speaker": f["speaker"], "vote": f["vote"], "note": str(f.get("note") or "").strip()[:500],
+                "at": _z(now or datetime.now(timezone.utc))}
+        fb.append(item)
+        self._write(self._dir(i) / "feedback.json", json.dumps(fb, indent=1, ensure_ascii=False))
+        return item
+
+    def remove_feedback(self, i, fid):
+        fb = [x for x in self.feedback(i) if x["id"] != fid]
+        self._write(self._dir(i) / "feedback.json", json.dumps(fb, indent=1, ensure_ascii=False))
+
     TEXTS = ("room.md",)
 
     def write_text(self, i, name, text):

@@ -182,3 +182,48 @@ export interface Derived {
   mentions: Record<string, number>;
   check: ProjectCheck;
 }
+
+export interface Feedback {
+  id: string;
+  target: 'turn' | 'line';
+  n: number;
+  speaker: string;
+  vote: 'up' | 'down';
+  note: string;
+  at: string;
+}
+
+export interface RoleSummary {
+  id: string;
+  name: string;
+  voice: string;
+  angle: string | null;
+  question: string | null;
+  has_role: boolean;
+  up: number;
+  down: number;
+}
+
+export interface RoleFeedback extends Feedback {
+  episode: string;
+  title: string;
+  kind: Kind;
+  excerpt: string;
+  replay_turn: number | null;
+}
+
+export interface Role {
+  id: string;
+  text: string;
+  path: string;
+  feedback: RoleFeedback[];
+  committed?: string | null;
+}
+
+export interface Replay {
+  speaker: string;
+  turn: number;
+  old: string;
+  new: string;
+  cost: number;
+}

@@ -1316,7 +1316,7 @@ class SpecialtyCase(unittest.TestCase):
         s = {"id": "contrarian", "name": "Contrarian", "voice": "bm_george", "pan": "far left",
              "angle": "What is the strongest case against it?"}
         s.update(kw)
-        return radio.add_specialty(s, self.cast_p, self.lock_p)
+        return radio.add_specialty(s, self.cast_p, self.lock_p, roles_dir=Path(self.tmp.name) / "roles")
 
     def test_a_new_specialty_is_brainstorm_only_and_locked(self):
         self.add()
@@ -1326,6 +1326,9 @@ class SpecialtyCase(unittest.TestCase):
         self.assertEqual(c["brainstorm"], {"angle": "What is the strongest case against it?", "sources": ["hits"]})
         self.assertEqual(json.loads(self.lock_p.read_text())["voices"]["contrarian"], "bm_george")
         self.assertNotIn("contrarian", radio.ORDER)
+        role = (Path(self.tmp.name) / "roles" / "contrarian.md").read_text()      # a starter role to tune
+        self.assertIn("What is the strongest case against it?", role)
+        self.assertIn("## Room", role)
 
     def test_a_held_or_retired_voice_is_refused(self):
         for v in ("af_heart", "af_nicole"):

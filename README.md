@@ -223,6 +223,22 @@ the owner, so there is no screen or trust gate.
   minutes, ~$1.30. A specialty added from Radio Studio is brainstorm-only
   (`recap: false`), reads the question's general hits, and takes an unused voice
   for life (the lock records it).
+- **Roles.** Each specialty (and the host) has a role file, `radio/roles/<id>.md`:
+  its method, what a good answer looks like, what it never says. The text before
+  the first `## Room` / `## Recap` heading goes to both kinds of episode; each
+  section only to its kind. It is appended to the specialty's prompt ("Your role,
+  as Sang tuned it"). The Verifier's room brief also carries the owner's ☠☠☠
+  verification rules, read from his memory directory at run time, never copied
+  into the repo. A specialty added from Radio Studio gets a starter role file.
+- **The tuning loop.** In Radio Studio, 👍 / 👎 (with a note) on any room turn or
+  broadcast line is kept with the episode (`feedback.json`). The **Roles** page
+  shows each role file beside the votes against it; Save commits the file to
+  this repo. **Replay** reruns one room turn with the draft role in a fresh
+  session (the speaker's original brief, what the room had said before that
+  turn, the host's prompt): one Opus call, before and after side by side.
+- **Timings.** Every `--events` line carries `t` (seconds since the start), and
+  the episode's meta keeps its phase times (`script`, or `room` + `edit`;
+  `voice`; `total`).
 
 The stdlib core never imports radio: `quorum radio` runs `scripts/radio.py` as a
 subprocess, and the TTS lives in the sidecar.
@@ -282,6 +298,7 @@ scripts/radio_store.py     the per-host episode store (and its tests)
 scripts/radio_projects.py  the vault's projects file: load, check, add, edit, (de)activate (and its tests)
 scripts/radio_web.py       Radio Studio's API (and its tests); scripts/web_ctl.py = quorum web
 radio/cast.json            the cast: question, angle, slice, never-says, bound voice + pan; radio/voices.lock
+radio/roles/<id>.md        each specialty's tuned role (method, a good answer, never; ## Room / ## Recap)
 radio-voice/               the Node voice sidecar (Kokoro + ffmpeg)
 radio-web/                 Radio Studio, the React app
 scripts/install.sh, doctor.sh

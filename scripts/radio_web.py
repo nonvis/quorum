@@ -31,6 +31,7 @@ REPO = HERE.parent
 sys.path.insert(0, str(HERE))
 import radio  # noqa: E402
 import radio_projects  # noqa: E402
+import radio_room  # noqa: E402
 import radio_store  # noqa: E402
 
 DIST = REPO / "radio-web" / "dist"
@@ -109,7 +110,7 @@ class Job:
 
 class App:
     def __init__(self, vault, store_root=None, roots=None, fake=False, voice=None, env=None, dist=DIST,
-                 cast_path=radio.CAST_FILE, lock_path=radio.LOCK_FILE, commit_cast=True):
+                 cast_path=radio.CAST_FILE, lock_path=radio.LOCK_FILE, commit_cast=True, roles_dir=None):
         self.vault = Path(vault)
         self.store = radio_store.Store(store_root)
         self.roots = roots or radio._roots()
@@ -120,6 +121,7 @@ class App:
         self.env.setdefault("QUORUM_VAULT", str(self.vault))
         self.dist = Path(dist)
         self.cast_path, self.lock_path, self.commit_cast = Path(cast_path), Path(lock_path), commit_cast
+        self.roles_dir = Path(roles_dir or radio.ROLES_DIR)
         self.jobs, self.lock = {}, threading.Lock()
 
     # ── projects ────────────────────────────────────────────────────────────
@@ -138,15 +140,124 @@ class App:
 
     def add_specialty(self, spec):
         try:
-            radio.add_specialty(spec, self.cast_path, self.lock_path)
+            radio.add_specialty(spec, self.cast_path, self.lock_path, roles_dir=self.roles_dir)
         except radio.CastError as e:
             raise HttpError(400, str(e), errors=[str(e)])
         if self.commit_cast:
-            rels = [str(p.relative_to(REPO)) for p in (self.cast_path, self.lock_path)]
+            rels = [str(p.relative_to(REPO)) for p in (self.cast_path, self.lock_path,
+                                                         self.roles_dir / ("%s.md" % spec.get("id")))]
+            subprocess.run(["git", "-C", str(REPO), "add", "--"] + rels, capture_output=True)
             subprocess.run(["git", "-C", str(REPO), "commit", "-q", "-m",
                             "radio: add specialty %s (%s, QR-27)" % (spec.get("id"), spec.get("voice")), "--"] + rels,
                            capture_output=True)
         return self.cast()
+
+    # ── the tuning loop: feedback, roles, replay ────────────────────────────
+    def _speaker_of(self, eid, target, n):
+        sc = self.store.script(eid) or {}
+        rows = (sc.get("room") or {}).get("turns", []) if target == "turn" else sc.get("lines", [])
+        row = next((x for x in rows if x.get("n", x.get("i")) == n), None)
+        if not row or row["speaker"] == radio.HOST and target == "turn" and row.get("kind") != "close":
+            return None, None
+        return row["speaker"], row["text"]
+
+    def add_feedback(self, eid, body):
+        try:
+            n = int(body.get("n"))
+        except (TypeError, ValueError):
+            raise HttpError(400, "n must be a turn or line number")
+        speaker, _ = self._speaker_of(eid, body.get("target"), n)
+        if not speaker:
+            raise HttpError(400, "no such %s %s in this episode" % (body.get("target"), body.get("n")))
+        try:
+            return self.store.add_feedback(eid, dict(body, n=n, speaker=speaker))
+        except ValueError as e:
+            raise HttpError(400, str(e))
+
+    def roles(self):
+        counts = {}
+        for m in self.store.list():
+            for f in self.store.feedback(m["id"]):
+                c = counts.setdefault(f["speaker"], {"up": 0, "down": 0})
+                c[f["vote"]] += 1
+        return [{"id": d["id"], "name": d["name"], "voice": d["voice"], "angle": (d.get("brainstorm") or {}).get("angle"),
+                 "question": d["reads"].get("question") or None, "has_role": (self.roles_dir / ("%s.md" % d["id"])).exists(),
+                 **counts.get(d["id"], {"up": 0, "down": 0})}
+                for d in radio.load_cast(self.cast_path, self.lock_path)]
+
+    def role(self, sid):
+        if sid not in {d["id"] for d in radio.load_cast(self.cast_path, self.lock_path)}:
+            raise HttpError(404, "no specialty %s" % sid)
+        p = self.roles_dir / ("%s.md" % sid)
+        fb = []
+        for m in self.store.list():
+            for f in self.store.feedback(m["id"]):
+                if f["speaker"] == sid:
+                    _, text = self._speaker_of(m["id"], f["target"], f["n"])
+                    turn = f["n"] if f["target"] == "turn" else None
+                    if f["target"] == "line":   # a broadcast line replays through the room turn it came from
+                        line = next((l for l in (self.store.script(m["id"]) or {}).get("lines", []) if l["i"] == f["n"]), {})
+                        mm = re.match(r"room turn (\d+)$", ((line.get("source") or {}).get("ref") or ""))
+                        turn = int(mm.group(1)) if mm else None
+                    fb.append(dict(f, episode=m["id"], title=m.get("title"), kind=m["kind"], excerpt=(text or "")[:600],
+                                   replay_turn=turn))
+        fb.sort(key=lambda x: x["at"], reverse=True)
+        return {"id": sid, "text": p.read_text() if p.exists() else "", "path": str(p), "feedback": fb}
+
+    def save_role(self, sid, text):
+        self.role(sid)
+        text = (text or "").strip()
+        if len(text) < 20:
+            raise HttpError(400, "a role needs some text")
+        p = self.roles_dir / ("%s.md" % sid)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text + "\n")
+        committed = None
+        if self.commit_cast:
+            rel = str(p.relative_to(REPO))
+            subprocess.run(["git", "-C", str(REPO), "add", "--", rel], capture_output=True)
+            c = subprocess.run(["git", "-C", str(REPO), "commit", "-q", "-m", "radio: tune the %s role" % sid, "--", rel],
+                               capture_output=True, text=True)
+            if c.returncode == 0:
+                committed = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
+                                           capture_output=True, text=True).stdout.strip()
+        return dict(self.role(sid), committed=committed)
+
+    def project_dirs(self, pid):
+        """A project's readable dirs: its repos (by path) and its vault folders."""
+        cfg = radio_projects.load(self.vault).get(pid)
+        if not cfg:
+            return []
+        repos = [str(Path(r) / n) for n in cfg.get("repos", []) for r in self.roots if (Path(r) / n / ".git").exists()]
+        return repos + [str(self.vault / f) for f in cfg.get("folders", [])]
+
+    def replay(self, sid, body):
+        eid = body.get("episode")
+        try:
+            sc = self.store.script(eid)
+        except KeyError:
+            raise HttpError(404, "no episode %s" % eid)
+        room = (sc or {}).get("room")
+        if not room:
+            raise HttpError(400, "only a brainstorm's room turns replay")
+        try:
+            n = int(body.get("turn"))
+        except (TypeError, ValueError):
+            raise HttpError(400, "turn must be a number")
+        if not (0 <= n < len(room["turns"])) or room["turns"][n]["speaker"] != sid or room["turns"][n]["kind"] != "answer":
+            raise HttpError(400, "turn %s is not %s's answer" % (n, sid))
+        dirs = room.get("dirs") or self.project_dirs(room.get("project"))   # rooms made before 10-17 19:00 kept none
+        model = radio_room.FakeRoomModel() if self.fake else radio_room.RoomModel(
+            Path(os.path.expanduser("~/.cache/quorum/radio/session")), dirs)
+        cast = radio.load_cast(self.cast_path, self.lock_path)
+        text = body.get("text")
+        if text is None:
+            text = radio.role_text(sid, "room", self.roles_dir)
+        try:
+            r = radio_room.replay_turn(room, cast, n, radio.role_text_from(text, "room"), model)
+        except radio.ModelError as e:
+            raise HttpError(502, "replay failed: %s" % e)
+        return dict(r, cost=getattr(model, "cost", 0.0))
 
     # ── generation ──────────────────────────────────────────────────────────
     def generate(self, body):
@@ -265,7 +376,7 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 pass
 
-    do_GET = do_POST = do_PATCH = do_DELETE = do_HEAD = _dispatch
+    do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = _dispatch
 
     # ── static ──────────────────────────────────────────────────────────────
     def _static(self, path):
@@ -303,8 +414,35 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, a.cast())
             if m == "POST":
                 return self._send(200, a.add_specialty(self._json_body()))
+        if parts[:1] == ["episodes"] and len(parts) >= 3 and parts[2] == "feedback":
+            if len(parts) == 3 and m == "GET":
+                try:
+                    return self._send(200, {"feedback": a.store.feedback(parts[1])})
+                except KeyError:
+                    raise HttpError(404, "no episode %s" % parts[1])
+            if len(parts) == 3 and m == "POST":
+                try:
+                    return self._send(200, a.add_feedback(parts[1], self._json_body()))
+                except KeyError:
+                    raise HttpError(404, "no episode %s" % parts[1])
+            if len(parts) == 4 and m == "DELETE":
+                try:
+                    a.store.remove_feedback(parts[1], parts[3])
+                except KeyError:
+                    raise HttpError(404, "no episode %s" % parts[1])
+                return self._send(200, {"deleted": parts[3]})
         if parts[:1] == ["episodes"]:
             return self._episodes(parts[1:], m, q)
+        if parts == ["roles"] and m == "GET":
+            return self._send(200, {"roles": a.roles()})
+        if len(parts) == 2 and parts[0] == "roles":
+            if m == "GET":
+                return self._send(200, a.role(parts[1]))
+            if m == "PUT":
+                return self._send(200, a.save_role(parts[1], self._json_body().get("text")))
+        if len(parts) == 3 and parts[0] == "roles" and parts[2] == "replay" and m == "POST":
+            a.role(parts[1])
+            return self._send(200, a.replay(parts[1], self._json_body()))
         if parts == ["generate"] and m == "POST":
             job = a.generate(self._json_body())
             return self._send(202, {"job": job.id})

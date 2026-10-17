@@ -17,7 +17,7 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogClose, DialogContent, DialogHeader } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown';
 import { KindIcon, OnAir, SpeakerDot } from '@/components/bits';
-import { ScriptView } from '@/components/ScriptView';
+import { ScriptView, type FeedbackCtl } from '@/components/ScriptView';
 import { RoomView } from '@/components/RoomView';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
@@ -56,6 +56,20 @@ export function EpisodeDetail({ id }: { id: string }) {
     },
   });
 
+  const fbq = useQuery({ queryKey: ['feedback', id], queryFn: () => api.feedback(id) });
+  const fbDone = () => {
+    void qc.invalidateQueries({ queryKey: ['feedback', id] });
+    void qc.invalidateQueries({ queryKey: ['roles'] });
+  };
+  const feedback: FeedbackCtl = {
+    list: fbq.data ?? [],
+    vote: (target, n, vote, note) =>
+      api.vote(id, { target, n, vote, note }).then(() => {
+        fbDone();
+        if (vote === 'down') toast('Noted', { description: 'It shows on that specialty’s Roles page, where you can tune and replay.' });
+      }).catch((e) => toast.error('Not saved', { description: String(e) })),
+    clear: (fid) => api.unvote(id, fid).then(fbDone),
+  };
   const data = q.data;
   const script = data?.script ?? null;
   const meta = data?.meta;
@@ -243,7 +257,7 @@ export function EpisodeDetail({ id }: { id: string }) {
       )}
       {script?.room && tab === 'room' ? (
         <Card className="p-3 sm:p-4">
-          <RoomView turns={script.room.turns} names={Object.fromEntries(script.lines.map((l) => [l.speaker, l.name ?? l.speaker]))} />
+          <RoomView turns={script.room.turns} names={Object.fromEntries(script.lines.map((l) => [l.speaker, l.name ?? l.speaker]))} feedback={feedback} />
         </Card>
       ) : (
       <Card className="p-3 sm:p-4">
@@ -254,6 +268,7 @@ export function EpisodeDetail({ id }: { id: string }) {
             onSeek={playable ? seekTo : undefined}
             seekable={new Set(starts.keys())}
             follow={isCurrent && p.playing}
+            feedback={feedback}
           />
         ) : (
           <p className="p-6 text-center text-sm text-muted-fg">The script appears when the room has finished.</p>

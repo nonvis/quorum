@@ -172,6 +172,92 @@ class RoomCase(unittest.TestCase):
         self.assertIn("## Open threads", md)
 
 
+class RoleCase(unittest.TestCase):
+    """Each specialty's tuned role (radio/roles/<id>.md): a shared body, then ## Room / ## Recap sections."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        (self.dir / "builder.md").write_text("# Builder\n\nRead the code before you describe it.\n\n"
+                                             "## Room\nCost a change in files and lines.\n\n## Recap\nName the repo.\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_the_body_and_the_modes_section(self):
+        room_text = radio.role_text("builder", "room", self.dir)
+        self.assertIn("Read the code before you describe it.", room_text)
+        self.assertIn("Cost a change in files and lines.", room_text)
+        self.assertNotIn("Name the repo.", room_text)
+        self.assertIn("Name the repo.", radio.role_text("builder", "recap", self.dir))
+        self.assertEqual(radio.role_text("nobody", "room", self.dir), "")
+
+    def test_the_tracked_roles_cover_the_cast(self):
+        cast = radio.load_cast(CAST, LOCK)
+        for d in cast:
+            self.assertTrue((radio.ROLES_DIR / ("%s.md" % d["id"])).exists(), d["id"])
+            self.assertGreater(len(radio.role_text(d["id"], "room")), 200, d["id"])
+
+    def test_a_room_desk_and_a_recap_desk_carry_the_role(self):
+        fx = Fixture(self.dir / "fx")
+        cast = radio.load_cast(CAST, LOCK)
+        inp = radio.gather_brainstorm("sidebar", radio.load_projects(fx.vault), fx.vault, fx.memory, QUESTION,
+                                      [fx.home / "nonvis"], search=fake_search)
+        m = Scripted()
+        room.run_room(inp, cast, m, ["builder", "verifier"], roles_dir=self.dir)
+        b = next(c for c in m.calls if c["speaker"] == "builder")
+        self.assertIn("Cost a change in files and lines.", b["system"])
+        v = next(c for c in m.calls if c["speaker"] == "verifier")
+        self.assertIn("TESTED ≠ CALLED", v["user"])                     # Sang's verification rules, from memory
+        rec = radio_test_recorder()
+        radio.run_episode(fx.inputs(), cast, rec, vault=fx.vault, memory=fx.memory, roles_dir=self.dir)
+        sysb = next(s for (k, v2), s in zip(rec.calls, rec.systems) if k == ("desk", "builder"))
+        self.assertIn("Name the repo.", sysb)
+
+
+def radio_test_recorder():
+    import radio_test
+
+    class Rec(radio_test.Recorder):
+        def __init__(self):
+            super().__init__()
+            self.systems = []
+
+        def __call__(self, role, system, user, view):
+            self.systems.append(system)
+            return super().__call__(role, system, user, view)
+    return Rec()
+
+
+class ReplayCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(Path(self.tmp.name))
+        self.cast = radio.load_cast(CAST, LOCK)
+        inp = radio.gather_brainstorm("sidebar", radio.load_projects(self.fx.vault), self.fx.vault, self.fx.memory,
+                                      QUESTION, [self.fx.home / "nonvis"], search=fake_search)
+        self.room = room.run_room(inp, self.cast, Scripted(), ["builder", "product"])
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_a_turn_replays_in_a_fresh_session_with_the_draft_role(self):
+        n = next(t["n"] for t in self.room["turns"] if t["speaker"] == "product" and t["kind"] == "answer")
+        m = Scripted({"product": ["A new answer.\nVERDICT: better."]})
+        r = room.replay_turn(self.room, self.cast, n, "Always name the user first.", m)
+        self.assertEqual((r["old"], r["new"]), (self.room["turns"][n]["text"], "A new answer.\nVERDICT: better."))
+        c = m.calls[0]
+        self.assertFalse(c["started"])
+        self.assertNotEqual(c["session"], self.room["sessions"]["product"])
+        self.assertIn("Always name the user first.", c["system"])
+        self.assertIn(self.room["turns"][n - 1]["prompt"], c["user"])      # the host's prompt for that turn
+        self.assertIn(QUESTION, c["user"])
+
+    def test_only_an_answer_turn_replays(self):
+        with self.assertRaises(ValueError):
+            room.replay_turn(self.room, self.cast, 0, "x", Scripted())
+
+
 class EditorCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

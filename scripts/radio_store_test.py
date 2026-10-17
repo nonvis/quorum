@@ -114,6 +114,27 @@ class StoreCase(unittest.TestCase):
         (self.root / i / "audio.mp3").write_bytes(b"ID3")
         self.assertEqual(self.s.audio(i), self.root / i / "audio.mp3")
 
+    def test_feedback_on_a_turn_or_a_line(self):
+        """The tuning loop: 👍/👎 + a note on a room turn or a broadcast line, kept with the episode."""
+        i = self.new()
+        a = self.s.add_feedback(i, {"target": "turn", "n": 3, "speaker": "builder", "vote": "down",
+                                    "note": "didn't read the code"}, NOW)
+        self.s.add_feedback(i, {"target": "line", "n": 2, "speaker": "product", "vote": "up"}, NOW)
+        fb = self.s.feedback(i)
+        self.assertEqual([(f["target"], f["n"], f["vote"]) for f in fb], [("turn", 3, "down"), ("line", 2, "up")])
+        self.assertEqual(fb[0]["at"], "2026-10-17T05:00:00Z")
+        self.s.remove_feedback(i, a["id"])
+        self.assertEqual(len(self.s.feedback(i)), 1)
+
+    def test_feedback_is_checked(self):
+        i = self.new()
+        for bad in ({"target": "page", "n": 1, "speaker": "builder", "vote": "up"},
+                    {"target": "turn", "n": "x", "speaker": "builder", "vote": "up"},
+                    {"target": "turn", "n": 1, "speaker": "builder", "vote": "meh"},
+                    {"target": "turn", "n": 1, "speaker": "", "vote": "up"}):
+            with self.assertRaises(ValueError):
+                self.s.add_feedback(i, bad, NOW)
+
     def test_the_default_root_is_the_checkouts_dot_quorum(self):
         self.assertEqual(radio_store.default_root({}), radio_store.REPO / ".quorum" / "radio")
         self.assertEqual(radio_store.default_root({"QUORUM_RADIO_STORE": "/x/y"}), Path("/x/y"))

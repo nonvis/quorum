@@ -37,6 +37,9 @@ What each command does is in `README.md`; the source is the truth.
 - **Radio Studio binds 127.0.0.1 only** and refuses a foreign Host or Origin;
   it is started and stopped by the owner (`quorum web start|stop`), never a
   login item or a self-restarting service.
+- **Roles are the owner's tuning surface.** `radio/roles/<id>.md` is edited from Radio
+  Studio's Roles page (each save is a commit); keep them free of vault paths and private
+  facts — the Verifier's owner rules are read from memory at run time, never copied in.
 - **Radio voices are bound for life.** `radio/cast.json` gives each specialty
   one Kokoro voice and one pan; never reassign a voice (the lock refuses it),
   never reuse a retired specialty's voice, never change the pinned weights.

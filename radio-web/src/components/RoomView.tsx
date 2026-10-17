@@ -3,10 +3,14 @@ import { ArrowRight, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { speakerColor } from '@/lib/speakers';
 import type { RoomTurn } from '@/lib/types';
+import type { FeedbackCtl } from './ScriptView';
+import { Vote } from './Vote';
 import { Badge } from './ui/badge';
 
 /** A brainstorm's room (QR-31): the host's routing, each specialist's full answer, the close. */
-export function RoomView({ turns, names, live = false }: { turns: RoomTurn[]; names: Record<string, string>; live?: boolean }) {
+export function RoomView({
+  turns, names, live = false, feedback,
+}: { turns: RoomTurn[]; names: Record<string, string>; live?: boolean; feedback?: FeedbackCtl }) {
   return (
     <ol className="space-y-2">
       {turns.map((t) =>
@@ -25,18 +29,18 @@ export function RoomView({ turns, names, live = false }: { turns: RoomTurn[]; na
             <p className="whitespace-pre-wrap leading-relaxed">{t.text}</p>
           </li>
         ) : (
-          <Answer key={t.n} t={t} defaultOpen={!live} />
+          <Answer key={t.n} t={t} defaultOpen={!live} feedback={feedback} />
         ),
       )}
     </ol>
   );
 }
 
-function Answer({ t, defaultOpen }: { t: RoomTurn; defaultOpen: boolean }) {
+function Answer({ t, defaultOpen, feedback }: { t: RoomTurn; defaultOpen: boolean; feedback?: FeedbackCtl }) {
   const [open, setOpen] = useState(defaultOpen);
   const pass = t.kind === 'pass';
   return (
-    <li className={cn('rounded-lg border-l-[3px] bg-card px-3 py-2', pass && 'opacity-55')} style={{ borderLeftColor: speakerColor(t.speaker) }}>
+    <li className={cn('group rounded-lg border-l-[3px] bg-card px-3 py-2', pass && 'opacity-55')} style={{ borderLeftColor: speakerColor(t.speaker) }}>
       <button type="button" onClick={() => setOpen(!open)} className="flex w-full items-start gap-2 text-left">
         <span className="font-mono text-[10px] text-muted-fg/60">{t.n}</span>
         <span className="shrink-0 text-xs font-semibold" style={{ color: speakerColor(t.speaker) }}>
@@ -46,6 +50,13 @@ function Answer({ t, defaultOpen }: { t: RoomTurn; defaultOpen: boolean }) {
           <Badge>pass</Badge>
         ) : (
           <span className="min-w-0 flex-1 text-sm font-medium leading-snug">{t.verdict}</span>
+        )}
+        {feedback && !pass && (
+          <Vote
+            mine={feedback.list.find((f) => f.target === 'turn' && f.n === t.n)}
+            onVote={(v, note) => feedback.vote('turn', t.n, v, note)}
+            onClear={feedback.clear}
+          />
         )}
         {!pass && <ChevronDown className={cn('mt-0.5 size-4 shrink-0 text-muted-fg transition-transform', open && 'rotate-180')} />}
       </button>

@@ -155,7 +155,13 @@ class FakeRoomModel:
         return "From my angle, %s. I read %s.\nVERDICT: %s." % (view["angle"].rstrip("?").lower(), title, radio.fit(title, 120).rstrip("."))
 
 
-def run_room(inp, cast, model, chosen, cap=ROOM_CALL_CAP, log=None, on_turn=None):
+def desk_system(cast, sid, project, question, roles_dir=None):
+    names = {d["id"]: d for d in cast}
+    return radio.with_role(ROOM_DESK_SYSTEM.format(name=names[sid]["name"], project=project, question=question,
+                                                   angle=names[sid]["brainstorm"]["angle"]), sid, "room", roles_dir)
+
+
+def run_room(inp, cast, model, chosen, cap=ROOM_CALL_CAP, log=None, on_turn=None, roles_dir=None):
     names = {d["id"]: d for d in cast}
     chosen = [c for c in chosen if c in names and c != HOST and names[c].get("brainstorm")]
     if not chosen:
@@ -212,7 +218,10 @@ def run_room(inp, cast, model, chosen, cap=ROOM_CALL_CAP, log=None, on_turn=None
 
     def desk_brief(sid):
         ps = "\n".join("  - %s (%s): %s" % (p["ref"], p["kind"], p["text"].splitlines()[0][:160]) for p in pointers[sid][:12])
-        return "%s\nIn the room:\n%s\n\nYour starting points (read further as you need):\n%s\n" % (brief, roster, ps or "  (none: search the paths)")
+        rules = ("\nSang's verification rules (hold every claim to them):\n%s\n" % "\n".join("  - " + r for r in inp.get("rules", [])[:12])
+                 if sid == "verifier" and inp.get("rules") else "")
+        return "%s\nIn the room:\n%s\n\nYour starting points (read further as you need):\n%s\n%s" % (
+            brief, roster, ps or "  (none: search the paths)", rules)
 
     def since(sid):
         rows = ["[%d] %s: %s" % (t["n"], t["name"], t["text"][:2500]) for t in turns[seen[sid]:]
@@ -227,7 +236,7 @@ def run_room(inp, cast, model, chosen, cap=ROOM_CALL_CAP, log=None, on_turn=None
         return cap - st["calls"]
 
     note("room: %s; in the room: %s; cap %d calls" % (project, ", ".join(chosen), cap))
-    host_sys = ROOM_HOST_SYSTEM.format(project=project)
+    host_sys = radio.with_role(ROOM_HOST_SYSTEM.format(project=project), HOST, "room", roles_dir)
     host_user = "%s\nIn the room (id (name): its angle):\n%s\n\nOpen the room: hand the question to the specialist who should speak first." % (brief, roster)
     while True:
         if st["passes"] >= 2:
@@ -259,8 +268,7 @@ def run_room(inp, cast, model, chosen, cap=ROOM_CALL_CAP, log=None, on_turn=None
         first = not sessions[to]["started"]
         user = (desk_brief(to) if first else "") + since(to) + "The host asks you: %s" % (prompt or angle(to))
         view = {"role": "desk", "speaker": to, "angle": angle(to), "pointers": pointers[to], "first": first}
-        a = call(to, ROOM_DESK_SYSTEM.format(name=names[to]["name"], project=project, question=question, angle=angle(to)),
-                 user, view)
+        a = call(to, desk_system(cast, to, project, question, roles_dir), user, view)
         asked.append(to)
         seen[to] = len(turns)
         text = (a or "").strip()[:TURN_CHARS]
@@ -283,7 +291,8 @@ def run_room(inp, cast, model, chosen, cap=ROOM_CALL_CAP, log=None, on_turn=None
             "context": [c["id"] for c in inp.get("context", [])], "vault_rev": inp.get("vault_rev"),
             "sessions": {k: v["id"] for k, v in sessions.items()}, "turns": turns, "threads": threads,
             "calls": st["calls"], "cap": cap, "host_calls": st["host"], "answer_calls": st["answers"],
-            "spoke": sorted({t["speaker"] for t in turns if t["kind"] == "answer"}), "log": logs}
+            "spoke": sorted({t["speaker"] for t in turns if t["kind"] == "answer"}), "log": logs,
+            "briefs": {sid: desk_brief(sid) for sid in chosen}, "dirs": paths}
 
 
 def room_md(r, cast):
@@ -390,3 +399,26 @@ def broadcast(r, cast, model, log=None, on_line=None):
             "calls": {"total": r["calls"] + 1, "cap": r["cap"] + 1, "host": r["host_calls"], "answers": r["answer_calls"],
                       "reads": 0, "confirms": 0},
             "log": logs, "room": r}
+
+
+def replay_turn(r, cast, n, role, model):
+    """One room turn again, with a draft role, in a fresh session (the tuning loop): the speaker's brief, what the
+    room had said before that turn, the host's prompt for it. Returns {speaker, turn, old, new}."""
+    turns = r["turns"]
+    if not (0 <= n < len(turns)) or turns[n]["kind"] != "answer":
+        raise ValueError("turn %s is not a specialty's answer" % n)
+    sid = turns[n]["speaker"]
+    route = next((t for t in reversed(turns[:n]) if t["kind"] == "route"), None)
+    before = ["[%d] %s: %s" % (t["n"], t["name"], t["text"][:2500]) for t in turns[:n] if t["kind"] == "answer"]
+    names = {d["id"]: d for d in cast}
+    system = ROOM_DESK_SYSTEM.format(name=names[sid]["name"], project=r["project_name"], question=r["question"],
+                                     angle=names[sid]["brainstorm"]["angle"])
+    system += ("\n\nYour role, as Sang tuned it:\n" + role.strip()) if role and role.strip() else ""
+    user = "%s\n%sThe host asks you: %s" % (
+        (r.get("briefs") or {}).get(sid, "Sang's question: %s\n" % r["question"]),
+        ("The room so far:\n%s\n\n" % "\n\n".join(before)) if before else "",
+        (route or {}).get("prompt") or names[sid]["brainstorm"]["angle"])
+    new = model(sid, {"id": str(uuid.uuid4()), "started": False}, system, user,
+                {"role": "desk", "speaker": sid, "angle": names[sid]["brainstorm"]["angle"], "pointers": [], "first": True,
+                 "replay": True})
+    return {"speaker": sid, "turn": n, "old": turns[n]["text"], "new": (new or "").strip()}

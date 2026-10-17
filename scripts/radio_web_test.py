@@ -34,9 +34,11 @@ class WebCase(unittest.TestCase):
         (dist / "assets").mkdir(parents=True)
         (dist / "index.html").write_text("<!doctype html><title>Radio</title>")
         (dist / "assets" / "app.js").write_text("console.log(1)")
+        cls.roles = root / "roles"
+        shutil.copytree(radio_web.radio.ROLES_DIR, cls.roles)
         cls.app = radio_web.App(vault=cls.fx.vault, store_root=cls.fx.store_root, roots=[cls.fx.home / "nonvis"],
                                 fake=True, voice=False, env=cls.fx.env(), dist=dist, cast_path=cls.cast_p,
-                                lock_path=cls.lock_p, commit_cast=False)
+                                lock_path=cls.lock_p, commit_cast=False, roles_dir=cls.roles)
         cls.server = radio_web.make_server(cls.app, "127.0.0.1", 0)
         cls.port = cls.server.server_address[1]
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
@@ -208,6 +210,50 @@ class WebCase(unittest.TestCase):
         self.assertEqual(s, 200)
         self.assertIn(b"# Room: Should the gate run first?", b)
         self.assertIn("-room.md", h["Content-Disposition"])
+
+    def brainstorm(self):
+        job, ev = self.generate({"kind": "brainstorm", "project": "sidebar", "question": "Gate first?",
+                                 "specialties": ["builder", "product"]})
+        return ev[0]["id"]
+
+    def test_feedback_roles_and_replay(self):
+        """The tuning loop: vote on a room turn, read it on the specialty's role page, edit the role, replay the turn."""
+        eid = self.brainstorm()
+        sc = self.j("GET", "/api/episodes/%s" % eid)[1]["script"]
+        turn = next(t for t in sc["room"]["turns"] if t["speaker"] == "builder" and t["kind"] == "answer")
+        s, f = self.j("POST", "/api/episodes/%s/feedback" % eid,
+                      {"target": "turn", "n": turn["n"], "vote": "down", "note": "didn't read the code"})
+        self.assertEqual((s, f["speaker"]), (200, "builder"))                           # the speaker comes from the episode
+        line = next(l for l in sc["lines"] if l["speaker"] == "product")
+        self.assertEqual(self.j("POST", "/api/episodes/%s/feedback" % eid, {"target": "line", "n": line["i"], "vote": "up"})[0], 200)
+        self.assertEqual(self.j("POST", "/api/episodes/%s/feedback" % eid, {"target": "turn", "n": 999, "vote": "up"})[0], 400)
+        self.assertEqual(len(self.j("GET", "/api/episodes/%s/feedback" % eid)[1]["feedback"]), 2)
+
+        s, roles = self.j("GET", "/api/roles")
+        b = next(r for r in roles["roles"] if r["id"] == "builder")
+        self.assertGreaterEqual(b["down"], 1)
+        s, role = self.j("GET", "/api/roles/builder")
+        self.assertIn("## Method", role["text"])
+        fb = next(x for x in role["feedback"] if x["episode"] == eid)
+        self.assertEqual((fb["note"], fb["excerpt"][:20]), ("didn't read the code", turn["text"][:20]))
+
+        s, r = self.j("POST", "/api/roles/builder/replay", {"episode": eid, "turn": turn["n"], "text": "Read first, always."})
+        self.assertEqual(s, 200, r)
+        self.assertEqual(r["old"], turn["text"])
+        self.assertTrue(r["new"])
+        self.assertEqual(self.j("POST", "/api/roles/product/replay", {"episode": eid, "turn": turn["n"], "text": "x"})[0], 400)
+        # A room kept before its dirs were recorded reads the project's dirs from the vault (real replay 10-17).
+        self.assertEqual(self.app.project_dirs("sidebar"),
+                         [str(self.fx.home / "nonvis" / "sidebar"), str(self.fx.home / "nonvis" / "sidebar-screen"),
+                          str(self.fx.vault / "01_Projects/Sidebar")])
+
+        s, r = self.j("PUT", "/api/roles/builder", {"text": "# Builder\n\nRead first, always.\n"})
+        self.assertEqual(s, 200, r)
+        self.assertEqual((self.roles / "builder.md").read_text(), "# Builder\n\nRead first, always.\n")
+        self.assertEqual(self.j("PUT", "/api/roles/nobody", {"text": "x"})[0], 404)
+        self.assertEqual(self.j("PUT", "/api/roles/builder", {"text": ""})[0], 400)
+        fid = self.j("GET", "/api/episodes/%s/feedback" % eid)[1]["feedback"][0]["id"]
+        self.assertEqual(self.j("DELETE", "/api/episodes/%s/feedback/%s" % (eid, fid))[0], 200)
 
     def test_generate_refusals(self):
         self.assertEqual(self.j("POST", "/api/generate", {"kind": "recap", "project": "nope"})[0], 400)
