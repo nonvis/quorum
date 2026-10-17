@@ -62,6 +62,7 @@ CAST_FIELDS = {"id", "name", "voice", "pan", "reads", "brainstorm", "recap"}
 # specialty added from the web reads the question's general hits.
 BRAIN_KINDS = {"code", "decision", "surface", "evidence", "owed", "hits"}
 BRAIN_CALL_CAP = 20
+BRAIN_ASK_CHARS = 280   # a framed brainstorm question (a recap's host question is ASK_CHARS)
 OWN_ECHO = 0.5   # a brainstorm specialty repeating its own earlier line (real run 10-17: 0.61)
 
 # Pauses (seconds) from the script's structure, never from the model; the night
@@ -856,8 +857,12 @@ ECHOES = re.compile(r"\b(not (yet )?on air|on air yet|already on air|already sai
                     r"source id|my sources?|the host asks|as instructed|at most \d+ characters)\b", re.I)
 
 
+SPOKEN_ID = re.compile(r"\s*\((?:[A-Z]{1,2}\d{1,2})(?:\s*,\s*[A-Z]{1,2}\d{1,2})*\)")
+
+
 def strip_echoes(text):
-    """QR-15 R2: a sentence that echoes the prompt never reaches the air."""
+    """QR-15 R2: a sentence that echoes the prompt never reaches the air; nor does a cited source id ("(C2)")."""
+    text = SPOKEN_ID.sub("", text)
     parts = re.split(r"(?<=[.!?])\s+", text.strip())
     return " ".join(x for x in parts if x and not ECHOES.search(x)).strip()
 
@@ -1564,9 +1569,9 @@ def run_brainstorm(inp, cast, model, chosen, cap=BRAIN_CALL_CAP, log=None, on_li
 
     def question_ok(q):
         """A brainstorm host builds on what was said: at most one short framing sentence (e.g. "Product says a stall
-        feels worse."), then ONE question; at most 240 characters. (A recap's host asks a question only, QR7-1.)"""
+        feels worse."), then ONE question; at most BRAIN_ASK_CHARS. (A recap's host asks a question only, QR7-1.)"""
         q = (q or "").strip()
-        if not q.endswith("?") or len(q) > 240:
+        if not q.endswith("?") or len(q) > BRAIN_ASK_CHARS:
             return False
         parts = [x for x in re.split(r"(?<=[.!?])\s+", q) if x]
         return len(parts) == 1 or (len(parts) == 2 and not parts[0].endswith("?"))
@@ -1689,7 +1694,7 @@ def run_brainstorm(inp, cast, model, chosen, cap=BRAIN_CALL_CAP, log=None, on_li
     q = _clean(o.get("question"), 300)
     if not question_ok(q):
         q = template(to)
-    host_line("ask", q, "first up")
+    host_line("ask", q, "first up", n=BRAIN_ASK_CHARS)
     turn(to, q)
     while True:
         if st["passes"] >= 2:
@@ -1724,13 +1729,15 @@ def run_brainstorm(inp, cast, model, chosen, cap=BRAIN_CALL_CAP, log=None, on_li
                 fallback = unasked[0] if unasked else next((s for s in chosen if not lines or lines[-1]["speaker"] != s), chosen[0])
                 note("the host picked %r, not in the room; %s instead" % (to, fallback))
                 to = fallback
-            q = _clean(o.get("question"), 300)
+            q = _clean(o.get("question"), 600)
             if not question_ok(q) and left() >= cost(to) + 3:
                 note("host question refused (not one short question): %s; re-asked once" % q[:100])
-                o2 = host("next", "Step: next (retry). Your question was refused: say at most one short sentence that "
-                                  "points at a line on air, then ONE question, 240 characters in all, ending with '?'. "
-                                  "Same JSON as before, to %s." % to, {"retry": "not one short question"})
-                q = _clean(o2.get("question"), 300)
+                o2 = host("next", "Step: next (retry). Your question was refused (%d characters): %s\nSay it again "
+                                  "shorter: at most one short sentence that points at a line on air, then ONE question, "
+                                  "%d characters in all, ending with '?'.\nJSON: {\"action\": \"ask\", \"to\": \"%s\", "
+                                  "\"question\": \"...\"}" % (len(q), q, BRAIN_ASK_CHARS, to),
+                          {"retry": "not one short question", "refused": q})
+                q = _clean(o2.get("question"), 600)
                 if o2.get("action") == "reply" and line_ok(o2.get("about")) is not None:
                     action, o = "reply", o2
             if not question_ok(q):
@@ -1740,7 +1747,7 @@ def run_brainstorm(inp, cast, model, chosen, cap=BRAIN_CALL_CAP, log=None, on_li
         if left() < cost(to) + 1:
             note("wrap: %s does not fit the calls left" % to)
             break
-        host_line("ask", q, reason, about=about)
+        host_line("ask", q, reason, n=BRAIN_ASK_CHARS, about=about)
         turn(to, q, about)
     o = host("signoff", "Step: signoff. In at most %d characters, a calm spoken close: where the room landed and what "
                         "stayed open; no answer of your own beyond what was said. Then the open threads: at most 5, each "

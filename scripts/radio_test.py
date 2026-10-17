@@ -1280,6 +1280,20 @@ class BrainstormCase(unittest.TestCase):
         asks = [l["text"] for l in on_air(ep) if l["speaker"] == "host" and l["kind"] == "ask"]
         self.assertIn(q, asks)
 
+    def test_a_long_framed_question_airs_whole(self):
+        """Real run 10-17: host lines were cut at 200 characters, which would drop the question after a framing."""
+        q = ("Builder wants a pure per-line queue with no handoff to the full MP3, kept only for replay and export. "
+             "What would you test to be sure the queue has no audible seams or stalls, and is that test in the first slice?")
+        self.assertGreater(len(q), 200)
+        ep, m = self.run_bs({("bhost", "next"): [J({"action": "ask", "to": "verifier", "question": q})]})
+        self.assertIn(q, [l["text"] for l in on_air(ep) if l["kind"] == "ask"])
+
+    def test_the_retry_shows_the_host_its_refused_question(self):
+        long_q = "Architect, " + "the line files and the queue " * 12 + "what then?"
+        ep, m = self.run_bs({("bhost", "next"): [J({"action": "ask", "to": "architect", "question": long_q})]})
+        retry = [v for k, v in m.calls if k == ("bhost", "next") and v.get("retry")]
+        self.assertEqual(retry[0]["refused"], long_q)
+
     def test_a_host_line_that_is_not_one_short_question_is_re_asked_then_templated(self):
         bad = [J({"action": "ask", "to": "product", "question": "The gate is slow. Users hate it. Fix it now."}),
                J({"action": "ask", "to": "product", "question": "Still not a question."})]
@@ -1357,6 +1371,14 @@ class BrainstormCase(unittest.TestCase):
         self.assertIn("## Question", t)
         self.assertIn(QUESTION, t)
         self.assertIn("## Open threads", t)
+
+
+class SpokenIdCase(unittest.TestCase):
+    def test_a_cited_source_id_is_never_read_aloud(self):
+        """Real brainstorm 10-17, line 2: "... serves audio with Range (C2). So the smallest slice ..."."""
+        s = radio.strip_echoes("I know the API serves audio with Range (C2). So the smallest slice is one file (R1, E3).")
+        self.assertEqual(s, "I know the API serves audio with Range. So the smallest slice is one file.")
+        self.assertEqual(radio.strip_echoes("Line one (the opener) stays."), "Line one (the opener) stays.")
 
 
 class SpecialtyCase(unittest.TestCase):
