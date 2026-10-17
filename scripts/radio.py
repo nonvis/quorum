@@ -885,6 +885,46 @@ ORDER = ("builder", "verifier", "architect", "product", "operator")
 WORKS = re.compile(r"\b(works?|working|pass(es|ed|ing)?|green|live|deployed|running|runs|serves?|serving|healthy|refuses?)\b", re.I)
 
 
+INTERROGATIVE = {"what", "why", "how", "which", "who", "whom", "whose", "when", "where", "was", "were", "is",
+                 "are", "am", "do", "does", "did", "can", "could", "has", "have", "had", "will", "would",
+                 "should", "shall", "may", "might", "must", "any", "anything", "isn't", "aren't", "wasn't",
+                 "doesn't", "didn't", "hasn't", "haven't", "won't", "wouldn't", "can't", "couldn't"}
+ADDRESS = re.compile(r"^(and\s+)?(the\s+)?(builder|verifier|architect|product|operator|sang)\s*,\s*", re.I)
+
+
+def host_question_ok(q):
+    """QR7-1 (GR-5/GR-7): a host question is a question only — an optional short
+    address ("Product," / "And Product,") and one interrogative sentence; nothing
+    declarative before it, so the host never restates or paraphrases a claim."""
+    q = (q or "").strip()
+    if not q.endswith("?"):
+        return False
+    body = ADDRESS.sub("", q[:-1].strip(), count=1)
+    if re.search(r"[.!;:?—–]", body):
+        return False
+    first = (re.findall(r"[A-Za-z']+", body) or [""])[0].lower()
+    return first in INTERROGATIVE or first.split("'")[0] in INTERROGATIVE  # "What's …?"
+
+
+CONTRA = re.compile(r"\b(unmerged|not (yet )?merged|isn't merged|hasn't (been )?merged|candidate only|only a candidate|"
+                    r"branch only|only on a branch|still on a branch)\b", re.I)
+_MSTOP = {"merge", "merged", "branch", "into", "with", "from", "that", "this", "stays", "default", "wired", "the"}
+
+
+def merge_contradiction(text, merges):
+    """QR7-2: the merge subject a sentence contradicts (it calls something unmerged
+    that a merge in the window names), else None."""
+    for sent in re.split(r"(?<=[.!?])\s+", text):
+        if not CONTRA.search(sent):
+            continue
+        words = set(re.findall(r"[a-z][a-z0-9]{3,}", sent.lower()))
+        for m in merges:
+            names = {w for w in re.findall(r"[a-z][a-z0-9]{3,}", m["subject"].lower()) if w not in _MSTOP}
+            if words & names:
+                return m["subject"]
+    return None
+
+
 def claim_kind(text):
     """R2 (QR6): 'works' (it works / passes / is live) needs a run record; anything else is a
     'change' (added / removed / renamed / merged), which repository evidence settles."""
@@ -975,10 +1015,11 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
             d["episodes"] = [{"title": e["title"], "transcript": e["transcript"]} for e in inputs["episodes"]]
         return d
 
-    def host(mode, what):
+    def host(mode, what, extra=None):
         view = {"role": "host", "mode": mode, "project": project, "day": day(),
                 "withdrawn": sorted(withdrawn), "calls_left": left(),
                 "limit": SIGNOFF_CHARS if mode == "signoff" else 300}
+        view.update(extra or {})
         d = view["day"]
         user = "\n".join([
             "Project: %s, %s. The shape (%s):" % (project, inputs.get("label", ""), d["why"]),
@@ -1007,16 +1048,26 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
         if merges is not None:
             user += ("\n\nWhat landed in the window (merge commits; context only, not a source to cite; never say "
                      "anything merged is unmerged, or the reverse):\n%s" % ("\n".join("  " + m for m in merges) or "  (no merges)"))
-        o = _json(call("answers", "desk", system, user, view))
-        if not o or o.get("pass") is True:
-            return passed(sid, "passes")
-        text = strip_echoes(_clean(o.get("answer")))
-        sref = str(o.get("source") or "").strip().strip("<>")
-        s = next((x for x in srcs if x["id"].lower() == sref.lower()), None)
-        if not text or not s:
-            return passed(sid, "no source resolves")
-        label = "inferred" if str(o.get("label")).lower() == "inferred" else "grounded"
-        spoken = fit(with_label(text, label, None, cast))
+        for attempt in (1, 2):
+            o = _json(call("answers", "desk", system, user, view))
+            if not o or o.get("pass") is True:
+                return passed(sid, "passes")
+            text = strip_echoes(_clean(o.get("answer")))
+            sref = str(o.get("source") or "").strip().strip("<>")
+            s = next((x for x in srcs if x["id"].lower() == sref.lower()), None)
+            if not text or not s:
+                return passed(sid, "no source resolves")
+            label = "inferred" if str(o.get("label")).lower() == "inferred" else "grounded"
+            spoken = fit(with_label(text, label, None, cast))
+            bad = merge_contradiction(spoken, inputs.get("merges", []))
+            if not bad:
+                break
+            if attempt == 2 or left() < 2:
+                return passed(sid, "contradicts a merge in the window (%s)" % bad[:80])
+            note("answers: %s contradicts a merge (%s); re-asked once" % (sid, bad[:80]))
+            view = dict(view, retry="your line called something unmerged, but this merge landed in the window: %s" % bad)
+            user += ("\n\nYour last answer was refused: it called something unmerged, but this merge landed in the "
+                     "window: %s. Say it again correctly, or pass." % bad)
         key = "%s:%s" % (s["kind"], s["ref"])
         if not fresh(key, spoken):
             return passed(sid, "nothing new")
@@ -1167,6 +1218,24 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
         if to not in choices or not q:
             note("follow-up: the host declined")
             return
+        if not host_question_ok(q):
+            why = "it restated or claimed something before the question"
+            if left() >= 3 + reserve:
+                note("follow-up: refused (%s); re-asking the host once" % why)
+                o = host("followup", "Step: follow-up (retry). Your question was refused: it must not restate or "
+                                     "paraphrase what was said. Ask a question only; you may name the specialty "
+                                     "(\"Product, …?\").\nJSON: {\"action\": \"ask\", \"to\": \"id\", \"question\": "
+                                     "\"...\"} or {\"action\": \"none\"}", {"retry": "you restated a claim; ask only"})
+                to2, q2 = (o.get("to") if o.get("action") == "ask" else None), _clean(o.get("question"), 300)
+                if o.get("action") != "ask":
+                    note("follow-up: the host declined on the retry")
+                    return
+                if to2 in choices:
+                    to = to2
+                q = q2
+            if not host_question_ok(q):
+                q = "%s, can you say more about that?" % names[to]["name"]
+                note("follow-up: still not a question only; the template was used")
         host_line("followup", q, o.get("reason"))
         note("follow-up: %s: %s" % (to, q[:120]))
         asked.append(to)

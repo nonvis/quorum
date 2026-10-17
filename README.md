@@ -143,7 +143,12 @@ the owner, so there is no screen or trust gate.
   not asked, and any may pass ("No opinion here"). An answer cites one source
   id from its slice, says its kind aloud ("I know…", "My guess is…") and is at
   most 300 characters; host questions at most 200; the sign-off is told its
-  limit. A sentence that echoes the prompt is dropped before air. The host's
+  limit. A sentence that echoes the prompt is dropped before air. A host
+  question is a question only (an optional short address like "Product," and one
+  interrogative sentence): a follow-up that restates a claim is re-asked once,
+  then replaced by "<Specialty>, can you say more about that?". A line that calls
+  something unmerged when a merge in the window names it is refused and re-asked
+  once, then dropped. The host's
   opening gives the day's shape (counts + themes), never the news. One optional
   follow-up before the Operator: the host may ask one specialty one more
   question, only if the last answer was a sourced one (GR-8). 14 calls at most,

@@ -870,6 +870,58 @@ class RoundCase(unittest.TestCase):
         self.assertEqual(pv["merges"], ["sidebar: Merge screen-v0.6-wire: the violence gate wired in"])
         self.assertFalse([x for x in pv["sources"] if "Merge screen" in x["text"]])
 
+    # ── QR7-1: the host asks; it never restates ──
+
+    def test_a_host_question_is_a_question_only(self):
+        ok = radio.host_question_ok
+        for q in ("Is that actually proven?", "Product, does a user notice any of it?",
+                  "And Product, which part was hardest?", "What did we decide today, and what did it cost?"):
+            self.assertTrue(ok(q), q)
+        for q in ("The README says Roundtable is built. Was that walk done today?",
+                  "The README says Roundtable is built, was that walk done today?",
+                  "So the gate merged?", "You said Radio moves to Quorum. Has that landed?",
+                  "Product: the docs changed. Anything else?", "Good."):
+            self.assertFalse(ok(q), q)
+        for d in self.cast:
+            if d["id"] != "host":
+                self.assertTrue(ok(d["reads"]["question"]), d["id"])
+
+    def test_a_restating_follow_up_is_re_asked_once(self):
+        bad = J({"action": "ask", "to": "product", "question": "The README says it is walked. Was that today?"})
+        good = J({"action": "ask", "to": "product", "question": "Product, when was that walk done?"})
+        ep, m = self.run_ep({("host", "followup"): [bad, good]})
+        fus = [v for k, v in m.calls if k == ("host", "followup")]
+        self.assertEqual(len(fus), 2)
+        self.assertIn("restate", fus[1]["retry"])
+        self.assertEqual([l["text"] for l in on_air(ep) if l["kind"] == "followup"], ["Product, when was that walk done?"])
+
+    def test_a_follow_up_that_still_restates_falls_back_to_the_template(self):
+        bad = J({"action": "ask", "to": "product", "question": "The README says it is walked. Was that today?"})
+        ep, m = self.run_ep({("host", "followup"): [bad, bad]})
+        self.assertEqual([l["text"] for l in on_air(ep) if l["kind"] == "followup"], ["Product, can you say more about that?"])
+        self.assertIn("template", " ".join(ep["log"]))
+
+    # ── QR7-2: no merge state contradicting the window's merges ──
+
+    def test_an_unmerged_claim_about_a_merged_thing_is_refused_and_re_asked_once(self):
+        wrong = J({"answer": "I know the violence gate is only a candidate release, unmerged.", "label": "grounded", "source": "U1"})
+        right = J({"answer": "I know the violence gate is now part of the screen.", "label": "grounded", "source": "U1"})
+        ep, m = self.run_ep({("desk", "product"): [wrong, right]})
+        calls = [v for k, v in m.calls if k == ("desk", "product")]
+        self.assertEqual(len(calls), 2)
+        self.assertIn("Merge screen-v0.6-wire", calls[1]["retry"])
+        p = [l for l in on_air(ep) if l["speaker"] == "product"]
+        self.assertEqual([l["text"] for l in p], ["I know the violence gate is now part of the screen."])
+        ep, m = self.run_ep({("desk", "product"): [wrong, wrong]})
+        self.assertEqual([l["kind"] for l in ep["lines"] if l["speaker"] == "product"], ["pass"])
+        self.assertIn("contradicts a merge", " ".join(ep["log"]))
+
+    def test_an_unmerged_claim_about_something_not_merged_stands(self):
+        line = J({"answer": "I know the dark theme is still unmerged.", "label": "grounded", "source": "U1"})
+        ep, m = self.run_ep({("desk", "product"): line})
+        self.assertEqual(len([k for k, _ in m.calls if k == ("desk", "product")]), 1)
+        self.assertIn("dark theme is still unmerged", " ".join(l["text"] for l in on_air(ep)))
+
     def test_a_not_proven_line_keeps_its_sentences_capitalised(self):
         ep, m = self.run_ep({("desk", "verifier"): J({"verdict": "not_proven", "answer": "The docs part is shown.",
                                                        "check": "grep for room", "source": "E1"})})
