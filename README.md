@@ -25,8 +25,8 @@ quorum lint [--fix-safe] [--json] [--show N]
 quorum hook                      # Claude Code UserPromptSubmit hook (stdin JSON)
 quorum hook on|off|status
 quorum hook --report [--json]
-quorum radio inputs [--since <ISO8601>]
-quorum radio tonight [--fake] [--topic <words>] [--since <ISO8601>] [--no-voice]
+quorum radio inputs [--since <ISO8601>] [--until <ISO8601>]
+quorum radio tonight [--fake] [--topic <words>] [--since <ISO8601>] [--until <ISO8601>] [--no-voice]
 quorum version
 ```
 
@@ -111,25 +111,41 @@ answer a host. The listener is the owner, so there is no screen or trust gate.
   duplicate voice, a voice outside Kokoro's English presets, a changed voice for
   a locked id, and a retired id's voice for a new one.
 - **`radio inputs`** ($0) prints JSON: per desk, the briefing note(s) it reads
-  (with mtime and section headings), the commit subjects in its repos (only those
-  on the vault allowlist; others are listed as skipped), the `spend:` close lines
+  (an excerpt of the State / Owed / Next sections, and the vault commits that
+  touched each in the window), the commit subjects in its repos (only those on
+  the vault allowlist; others are listed as skipped), the `spend:` close lines
   whose window ends inside the window, and the Action Queue items whose title
   names it. The Skeptic reads the top-severity verification rules from the
-  memory dir; the Accountant reads every desk's spend lines and the briefings'
-  Owed rows. The window defaults to the last 24 h. A desk with no activity
-  (commits, spend lines, a note updated) is off the cast; the Skeptic and the
-  Accountant always sit.
-- **`radio tonight`** runs the episode, a text round: the host asks (the cast,
-  or one desk), each desk asked answers in writing citing one of its own sources
-  by id (a note section, a commit, a spend line, an Action Queue item, a rule,
-  or another desk's line on air) or passes; an answer whose source does not
-  resolve is a pass. The host picks one answer, names the desk and logs a
-  one-line reason; the written answer is the on-air line, with its kind said
-  aloud ("I know…", "My guess is…", "The Meridian desk says…"). A repeat-back is
-  put to the desk in the next call (confirm, correct, or withdraw — a withdrawn
-  claim leaves the audio). Another question only while the last question to the
-  cast drew ≥ 2 sourced answers with new material; 14 calls at most, the last
-  one the host's sign-off. The model is `claude -p --model claude-sonnet-5-5`
+  memory dir; the Accountant reads every briefing's Owed rows (money rows first)
+  and every desk's spend lines. The window defaults to the last 24 h. A desk is
+  on the cast only on **git evidence**: a vault commit touching its notes, or a
+  commit in its repos (a file's mtime or a spend line alone does not count); the
+  Skeptic and the Accountant always sit. `--until` replays an older window: the
+  notes, the Action Queue and the allowlist are read as the vault's git held
+  them at `--until`, so an episode can be re-made with the news it had then.
+- **`radio tonight`** runs the episode, a text round in a fixed running order.
+  Every answer is written by the desk citing one of its own sources by id (a
+  note section, a commit, an Owed row, a spend line, an Action Queue item, a
+  rule, or another desk's line on air); an answer whose source does not
+  resolve is a pass, and an on-air answer is at most 300 characters (cut at a
+  sentence) with its kind said aloud ("I know…", "My guess is…", "The Meridian
+  desk says…").
+  1. The host opens and asks the **project desks** one question.
+  2. **One** host call orders all their answers for air, each with a short
+     bridge that names the desk and a logged one-line reason (an answer left
+     out stays off air), and writes the Skeptic's question.
+  3. The **Skeptic** is asked what it doubts in what is on air; it must cite
+     the line (`L<n>`), which makes that line *contested*.
+  4. One **cross-desk** question: one project desk about another desk's claim
+     on air, by line number.
+  5. The **Accountant**, who must lead with an Owed row when there is one.
+  6. Further questions to one desk only while the opening question drew ≥ 2
+     sourced answers with new material, and only within the 14-call cap; the
+     last call is always the host's sign-off.
+
+  A repeat-back is allowed only of a contested or unverified (`my guess`)
+  line; the desk confirms, corrects or withdraws (a withdrawn claim and its
+  bridge leave the audio). The model is `claude -p --model claude-sonnet-5-5`
   (no tools, safe mode) run from `~/.cache/quorum/radio/session`, so
   `quorum spend --project ~/.cache/quorum/radio/session` meters it; `--fake`
   uses a deterministic stand-in. If the first call fails nothing is written.

@@ -88,10 +88,11 @@ USAGE = """usage: quorum <command> [options]
                   how often the hook injected, how many hits were then Read,
                   how many sessions ran quorum lookups themselves, and per mode
                   (on/off): sessions, prompts, main-session context per turn
-  radio inputs [--since <ISO8601>]
+  radio inputs [--since <ISO8601>] [--until <ISO8601>]
                   per desk, what tonight's episode reads: briefings, commit
-                  subjects, spend lines, Action Queue items (JSON, $0)
-  radio tonight [--fake] [--topic <words>] [--since <ISO8601>] [--no-voice]
+                  subjects, spend lines, Action Queue items (JSON, $0);
+                  --until replays a window as the vault's git held it
+  radio tonight [--fake] [--topic <words>] [--since …] [--until …] [--no-voice]
                   the one model-calling verb: a host-run round over `claude -p`
                   among the desks, a vault note + an MP3 in the bound voices
   version         print the checkout's commit
