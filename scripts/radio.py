@@ -73,6 +73,30 @@ class ModelError(Exception):
 
 # ── the cast ────────────────────────────────────────────────────────────────
 
+RULING_ID = re.compile(r"^QR-\d+$")
+
+
+def effective_voices(lock):
+    """Each id's voice now: its original binding, then each owner override in order.
+    An override must name the ruling that made it and the voice it replaces."""
+    eff = dict(lock.get("voices", {}))
+    for o in lock.get("overrides", []):
+        i = o.get("id")
+        if not RULING_ID.match(str(o.get("ruling") or "")):
+            raise CastError("override of %s has no ruling id: only the owner's ruling (QR-n) overrides QR-6" % i)
+        if i not in eff or o.get("from") != eff[i]:
+            raise CastError("override of %s says from %r, but %s holds %r" % (i, o.get("from"), i, eff.get(i)))
+        if o.get("to") not in KOKORO_ENGLISH:
+            raise CastError("override of %s: %r is not a Kokoro English preset" % (i, o.get("to")))
+        eff[i] = o["to"]
+    return eff
+
+
+def reserved_voices(lock):
+    """Every voice ever held: a retired id's voice, and a voice an override replaced."""
+    return set(lock.get("voices", {}).values()) | {o.get("from") for o in lock.get("overrides", [])}
+
+
 def load_cast(cast_path=CAST_FILE, lock_path=LOCK_FILE, record=False):
     """The cast file, checked against the presets, itself and the voice lock.
     record=True appends ids the lock has not seen (never rewrites one)."""
@@ -80,7 +104,9 @@ def load_cast(cast_path=CAST_FILE, lock_path=LOCK_FILE, record=False):
     cast = data.get("cast") or []
     lock_p = Path(lock_path)
     lock = json.loads(lock_p.read_text()) if lock_p.exists() else {"v": 1, "voices": {}}
-    held = lock.setdefault("voices", {})
+    lock.setdefault("voices", {})
+    held = effective_voices(lock)
+    ever = reserved_voices(lock)
     ids, voices, out = set(), {}, []
     for d in cast:
         keys = set(d)
@@ -103,14 +129,14 @@ def load_cast(cast_path=CAST_FILE, lock_path=LOCK_FILE, record=False):
             raise CastError("%s held %s and now names %s: a voice is never reassigned (QR-6)"
                             % (i, held[i], v))
         owner = [k for k, hv in held.items() if hv == v and k != i]
-        if owner:
-            raise CastError("%s: %s is reserved for %s (a retired specialty's voice retires with it)"
-                            % (i, v, owner[0]))
+        if owner or (v in ever and held.get(i) != v):
+            raise CastError("%s: %s is reserved (%s; a voice once held is never reassigned)"
+                            % (i, v, "held by " + owner[0] if owner else "retired"))
         out.append(dict(d, pan_value=PANS[d["pan"]]))
     if record:
         new = {d["id"]: d["voice"] for d in out if d["id"] not in held}
         if new:
-            held.update(new)
+            lock["voices"].update(new)
             lock_p.write_text(json.dumps(lock, indent=2, ensure_ascii=False) + "\n")
     return out
 
@@ -262,45 +288,102 @@ SURFACE_NOTE = re.compile(r"Pitch|Concept|Story|Deck|Product|Guide|Runbook|\bUX\
 SURFACE_PATH = re.compile(r"(^|/)(docs?|ui|web|app|frontend|components|pages|public|cli)/|(^|/)README|"
                           r"\.(tsx|jsx|css|html|svelte|vue)$", re.I)
 
-# QR-14: what counts as "something broke in the window", read mechanically.
+# QR-14/QR-15 R5: what counts as "something broke", read from the lines added in
+# the window. Case-insensitive keywords are the net; a `BROKEN:` marker on a
+# note line is the reliable path.
 BREAKS = (
-    ("a red gate or walk", re.compile(r"\b(gate|walk|ctest|suite|CI|e2e|health)\b[^.\n]{0,40}?"
-                                      r"(\bwent RED\b|\bis RED\b|\bturned RED\b|\bRED\b(?![- ]team)|\bFAILED\b|\bFAILING\b|\bfailed\b)")),
-    ("a service down", re.compile(r"\b(is|went|was|are|been)\s+DOWN\b|\boutage\b|\bcrash-?looping\b|\bcrashed\b")),
+    ("a red gate or walk", re.compile(r"\b(gate|walk|ctest|suite|CI|e2e|health(?:\s+check)?)\b[^.\n]{0,40}?"
+                                      r"\b(went red|is red|turned red|red(?![- ]team)|failed|failing)\b", re.I)),
+    ("a service down", re.compile(r"\b(is|went|was|are|been)\s+down\b(?!\s+to\b)|\boutage\b|\bcrash-?looping\b|\bcrashed\b", re.I)),
     ("a deploy rolled back", re.compile(r"\brolled\s+back\b|\brollback\b", re.I)),
 )
+MARKER = re.compile(r"\bBROKEN:")
 AMOUNT = re.compile(r"(\d+(?:\.\d+)?)\s*\**\s*(SUI|USDC|USDT|ETH)\b")
-FLOOR = re.compile(r"(?:FAILs?\s+below|fails?\s+below|below|floor(?:\s+of)?|<)\s*\**\s*(\d+(?:\.\d+)?)")
+FLOOR = re.compile(r"(?:fails?\s+below|below|floor(?:\s+of)?|<)\s*\**\s*(\d+(?:\.\d+)?)", re.I)
 
 
 def find_breaks(texts):
-    """[(signal, text)] for each text that reads as a break."""
-    out = []
+    """[{signal, text, where}] for each added line that reads as a break."""
+    out, seen = [], set()
     for where, text in texts:
         for line in [x.strip() for x in re.split(r"(?<=[.!?])\s+|\n", text) if x.strip()]:
-            for signal, rx in BREAKS:
-                if rx.search(line):
-                    out.append({"signal": signal, "text": line[:300], "where": where})
+            hits = []
+            if MARKER.search(line):
+                hits.append("marked BROKEN")
+            hits += [signal for signal, rx in BREAKS if rx.search(line)]
             a, f = AMOUNT.search(line), FLOOR.search(line)
-            if a and f and re.search(r"FAIL", line) and float(a.group(1)) < float(f.group(1)):
-                out.append({"signal": "balance below its FAIL floor", "text": line[:300], "where": where})
-    seen, uniq = set(), []
-    for b in out:
-        if (b["signal"], b["text"]) not in seen:
-            seen.add((b["signal"], b["text"]))
-            uniq.append(b)
-    return uniq
+            if a and f and re.search(r"fail", line, re.I) and float(a.group(1)) < float(f.group(1)):
+                hits.append("balance below its FAIL floor")
+            for h in hits:
+                if (h, line) not in seen:
+                    seen.add((h, line))
+                    out.append({"signal": h, "text": line[:300], "where": where})
+    return out
 
 
-def gather_project(pid, projects, vault, memory, since, until, repo_roots, as_of=False):
-    """One project's inputs for [since, until] (QR-8, QR-13), all $0, cut into the
-    specialties' exclusive slices: commits (+ diffstat) for the Builder; evidence
-    notes (build logs, walks, gates, tests) for the Verifier; design/ruling notes
-    and, when the briefing changed, its §Rulings for the Architect; the
-    user-visible files touched, surface notes and the concept note for Product;
-    the briefing's Owed + Next rows, the Action Queue items naming the project and
-    the window's spend lines for the Operator. Also the breaks (QR-14).
-    as_of=True reads the vault as its git held it at `until`."""
+STOP = {"the", "a", "an", "and", "of", "to", "in", "on", "for", "with", "is", "at", "by", "from", "now", "merge", "branch"}
+
+
+def theme_of(subject):
+    """A commit's theme, mechanically: the first meaningful word of its subject's
+    head (before ':' when that comes early), branch names folded into words."""
+    s = re.sub(r"^Merge\s+(branch\s+)?['\"]?", "", subject.strip(), flags=re.I)
+    head = s.split(":", 1)[0] if ":" in s[:50] else s
+    words = [w for w in re.split(r"[\s_/().,;'\"-]+", head.lower()) if w and not re.search(r"\d", w) and w not in STOP]
+    return words[0] if words else "misc"
+
+
+def themes(commits):
+    by = {}
+    for c in commits:
+        by.setdefault(theme_of(c["subject"]), []).append(c)
+    return [{"theme": k, "count": len(v), "subjects": [c["subject"][:140] for c in v[:8]],
+             "repos": sorted({c["repo"] for c in v})}
+            for k, v in sorted(by.items(), key=lambda kv: (-len(kv[1]), kv[0]))]
+
+
+def parse_range(arg, now):
+    """QR-17: today | yesterday | week | YYYY-MM-DD | YYYY-MM-DD..YYYY-MM-DD, in KST.
+    Returns (since, until, label); until never passes `now`."""
+    today = today_kst(now)
+    def day(s):
+        try:
+            d = datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=KST).astimezone(timezone.utc)
+        except ValueError:
+            raise ValueError("not a date: %r" % s)
+        if d > now:
+            raise ValueError("%s is in the future" % s)
+        return d
+    lab = lambda d: d.astimezone(KST).date().isoformat()
+    a = (arg or "today").strip()
+    if a == "today":
+        return today, now, lab(today)
+    if a == "yesterday":
+        return today - timedelta(days=1), today, lab(today - timedelta(days=1))
+    if a == "week":
+        s = today - timedelta(days=6)
+        return s, now, "%s..%s" % (lab(s), lab(today))
+    if ".." in a:
+        x, y = a.split("..", 1)
+        s, e = day(x), day(y)
+        if e < s:
+            raise ValueError("%s ends before it starts" % a)
+        return s, min(e + timedelta(days=1), now), "%s..%s" % (x, y)
+    s = day(a)
+    return s, min(s + timedelta(days=1), now), a
+
+
+def gather_project(pid, projects, vault, memory, since, until, repo_roots, as_of=False, label=None):
+    """One project's inputs for [since, until] (QR-8, QR-13, QR-15, QR-17), all $0, cut
+    into the specialties' exclusive slices: commits with their code files for the
+    Builder (a range: at most 3 themes + commits per day); evidence notes for the
+    Verifier; decision notes' lines added in the window, cross-project decision
+    notes naming the project, and the briefing's §Rulings when it changed for the
+    Architect; the diffs of user-facing files, surface notes and the concept note
+    for Product; the briefing's Owed + Next rows, Action Queue items naming the
+    project and the window's spend lines for the Operator. Also the breaks
+    (QR-14/R5), the day's themes (the host's shape) and, for a range, the daily
+    episodes recorded in it. as_of=True reads the vault as its git held it at `until`."""
     cfg = projects[pid]
     vault = Path(vault)
     is_git = (vault / ".git").exists()
@@ -308,6 +391,8 @@ def gather_project(pid, projects, vault, memory, since, until, repo_roots, as_of
     if as_of and not rev:
         raise SystemExit("ERROR: --until needs the vault's git history at that time (no commit before %s)" % until.isoformat())
     head = _vgit(vault, "rev-parse", "HEAD").strip() if is_git else ""
+    label = label or since.astimezone(KST).date().isoformat()
+    is_range = ".." in label
     cache = {}
 
     def read(rel):
@@ -318,6 +403,18 @@ def gather_project(pid, projects, vault, memory, since, until, repo_roots, as_of
                 p = vault / rel
                 cache[rel] = p.read_text(errors="replace") if p.exists() else ""
         return cache[rel]
+
+    def added(rel, limit=2000):
+        """The lines this note gained in the window (its diff, not its text)."""
+        out = _vgit(vault, "log", "--since=" + (since - timedelta(days=30)).isoformat(), "-p",
+                    "--format=@@@%cI", "--", rel)
+        lines, keep = [], False
+        for l in out.splitlines():
+            if l.startswith("@@@"):
+                keep = since <= parse_when(l[3:]) <= until
+            elif keep and l.startswith("+") and not l.startswith("+++"):
+                lines.append(l[1:].strip())
+        return [l for l in lines if l and l != "---"][:200], "\n".join(l for l in lines if l)[:limit]
 
     if rev:
         all_md = sorted(x for x in _vgit(vault, "ls-tree", "-r", "--name-only", rev).splitlines() if x.endswith(".md"))
@@ -344,24 +441,36 @@ def gather_project(pid, projects, vault, memory, since, until, repo_roots, as_of
     folders = [f.rstrip("/") + "/" for f in cfg["folders"]]
     briefing = []
     for rel in brief_paths:
-        text = read(rel)
-        secs = sections(text)
+        secs = sections(read(rel))
         briefing.append({"path": rel, "in_window": rel in touched,
                          "state": "\n\n".join("## %s\n%s" % (h, b) for h, b in secs if re.search(r"state|status", h, re.I))[:2500],
                          "rulings": "\n\n".join("## %s\n%s" % (h, b) for h, b in secs if re.search(r"ruling", h, re.I))[:2500]})
-    changed = []
+    changed, cross = [], []
+    name_rx = re.compile(r"\b%s\b" % re.escape(cfg["name"]), re.I)
     for rel, shas in touched.items():
-        if (rel.endswith(".md") and rel in present and rel not in brief_paths and rel not in concept_paths
-                and any(rel.startswith(f) for f in folders) and not rel.startswith(RADIO_DIR + "/")):
+        if not (rel.endswith(".md") and rel in present) or rel in brief_paths or rel in concept_paths \
+                or rel.startswith(RADIO_DIR + "/"):
+            continue
+        title = rel.rsplit("/", 1)[-1][:-3]
+        if any(rel.startswith(f) for f in folders):
             text = read(rel)
-            title = rel.rsplit("/", 1)[-1][:-3]
             cls = (None if re.search(r"Run Prompt|Run Brief", title, re.I)  # a plan, not evidence
                    else "evidence" if EVIDENCE_NOTE.search(title) else "decision" if DECISION_NOTE.search(title)
                    else "surface" if SURFACE_NOTE.search(title) else None)
-            changed.append({"path": rel, "title": title, "commits": shas, "class": cls,
-                            "summary": _frontmatter_summary(text), "excerpt": _body(text).strip()[:1200]})
+            n = {"path": rel, "title": title, "commits": shas, "class": cls, "summary": _frontmatter_summary(text),
+                 "excerpt": "" if is_range else _body(text).strip()[:1200]}
+            if cls == "decision":
+                n["added"] = added(rel)[1]
+            changed.append(n)
+        elif rel.startswith("01_Projects/") and DECISION_NOTE.search(title) \
+                and not re.search(r"Run Prompt|Run Brief", title, re.I):
+            # R1: a decision note from another project that names this one counts as its decision.
+            lines, _ = added(rel)
+            mine = [l for l in lines if name_rx.search(l)]
+            if mine:
+                cross.append({"path": rel, "title": title, "lines": "\n".join(mine)[:2000]})
     changed.sort(key=lambda n: n["title"], reverse=True)
-    changed = changed[:16]
+    changed = changed[:40 if is_range else 16]
     concept = [{"path": p, "summary": _frontmatter_summary(read(p)), "excerpt": _body(read(p)).strip()[:1200]}
                for p in concept_paths[:1]]
     repos, commits, surface = [], [], []
@@ -372,17 +481,40 @@ def gather_project(pid, projects, vault, memory, since, until, repo_roots, as_of
                 repos.append({"name": name, "path": str(p), "shown": "~/%s/%s" % (Path(root).name, name)})
                 cs = _commits(p, since, until)
                 for c in cs[:15]:
-                    st = subprocess.run(["git", "-C", str(p), "show", "--stat=100", "--format=", c["sha"]],
-                                        capture_output=True, text=True).stdout.strip().splitlines()
-                    c["stat"] = st[-1].strip() if st else ""
+                    ns = subprocess.run(["git", "-C", str(p), "show", "--numstat", "--format=", c["sha"]],
+                                        capture_output=True, text=True).stdout.splitlines()
+                    files = [x.split("\t")[2] for x in ns if x.count("\t") >= 2]
+                    code = [f for f in files if not SURFACE_PATH.search(f)]
+                    c["code"] = code[:8] + (["+%d more" % (len(code) - 8)] if len(code) > 8 else [])
                 commits += cs
                 lg = subprocess.run(["git", "-C", str(p), "log", "--branches", "--since=" + since.isoformat(),
                                      "--until=" + until.isoformat(), "--name-only", "--format="],
                                     capture_output=True, text=True).stdout.splitlines()
                 paths = sorted({x.strip() for x in lg if x.strip() and SURFACE_PATH.search(x.strip())})
                 if paths:
-                    surface.append({"repo": name, "paths": paths[:25], "more": max(0, len(paths) - 25)})
+                    diff = subprocess.run(["git", "-C", str(p), "log", "--branches", "--since=" + since.isoformat(),
+                                           "--until=" + until.isoformat(), "-p", "--format=== %h %s", "--"]
+                                          + paths[:25], capture_output=True, text=True).stdout
+                    surface.append({"repo": name, "paths": paths[:25], "more": max(0, len(paths) - 25),
+                                    "diff": diff[:2500]})
                 break
+    per_day = {}
+    for c in commits:
+        d = parse_when(c["date"]).astimezone(KST).date().isoformat()
+        per_day[d] = per_day.get(d, 0) + 1
+    per_day = dict(sorted(per_day.items()))
+    episodes = []
+    if is_range:
+        for rel in all_md:
+            m = re.match(r"%s/\d{2} - %s \((\d{4}-\d{2}-\d{2})\)\.md$" % (re.escape(RADIO_DIR), re.escape(cfg["name"])), rel)
+            if m and since <= datetime.strptime(m.group(1), "%Y-%m-%d").replace(tzinfo=KST).astimezone(timezone.utc) < until:
+                rows = [r for h, b in sections(read(rel)) if h.lower().startswith("transcript") for r in b.splitlines()]
+                said = []
+                for r in rows:
+                    cells = [x.strip() for x in r.strip().strip("|").split("|")]
+                    if len(cells) >= 4 and not re.match(r"^-+$|^#$", cells[0]):
+                        said.append("%s: %s" % (cells[1], cells[3]))
+                episodes.append({"path": rel, "title": rel.rsplit("/", 1)[-1][:-3], "transcript": "\n".join(said)[:1500]})
     spend = []
     for rel in brief_paths:
         for line in read(rel).splitlines():
@@ -394,7 +526,6 @@ def gather_project(pid, projects, vault, memory, since, until, repo_roots, as_of
     rows = [r for rel in brief_paths for h, b in sections(read(rel))
             if re.search(r"owed|next", h, re.I) for r in _rows(b, limit=20)]
     owed = [r for r in rows if MONEY_RE.search(r)] + [r for r in rows if not MONEY_RE.search(r)]
-    name_rx = re.compile(r"\b%s\b" % re.escape(cfg["name"]), re.I)
     aq = [{"title": x.rsplit("/", 1)[-1][:-3], "path": x} for x in sorted(all_md, reverse=True)
           if x.startswith("Action Queue/") and x.count("/") == 1 and name_rx.search(x.rsplit("/", 1)[-1])]
     rules = []
@@ -406,16 +537,9 @@ def gather_project(pid, projects, vault, memory, since, until, repo_roots, as_of
                     for part in re.split(r" · (?=\[)", line[2:]):
                         if "☠☠☠" in part:
                             rules.append(_md_links(part).strip()[:260])
-    # QR-14: breaks — the notes changed today, the briefing's state + Owed/Next rows.
-    texts = [(n["path"], "%s\n%s" % (n["summary"], n["excerpt"])) for n in changed]
-    texts += [(b["path"], b["state"]) for b in briefing if b["in_window"]]
-    # An Owed row already in the briefing before the window is routine, not a break in it.
-    before = _vgit(vault, "rev-list", "-1", "--before=" + since.isoformat(), "HEAD").strip() if is_git else ""
-    prior = set()
-    for rel in brief_paths:
-        old = _vgit(vault, "show", "%s:%s" % (before, rel)) if before else ""
-        prior |= {r for h, b in sections(old) if re.search(r"owed|next", h, re.I) for r in _rows(b, limit=40)}
-    texts += [("Owed (new today)", r) for r in owed if r not in prior]
+    # Breaks: only lines ADDED in the window, in the briefing and the project's notes.
+    texts = [(rel, added(rel, 20000)[1]) for rel in brief_paths if rel in touched]
+    texts += [(n["path"], added(n["path"], 20000)[1]) for n in changed]
     breaks = find_breaks(texts)
     bits = []
     if commits:
@@ -424,12 +548,14 @@ def gather_project(pid, projects, vault, memory, since, until, repo_roots, as_of
         bits.append("%d note(s) changed" % len(changed))
     if any(b["in_window"] for b in briefing):
         bits.append("the briefing updated")
-    return {"project": pid, "name": cfg["name"], "since": since.isoformat(timespec="seconds"),
-            "until": until.isoformat(timespec="seconds"), "as_of": bool(rev), "vault_rev": rev or head or None,
+    return {"project": pid, "name": cfg["name"], "label": label, "range": is_range,
+            "since": since.isoformat(timespec="seconds"), "until": until.isoformat(timespec="seconds"),
+            "as_of": bool(rev), "vault_rev": rev or head or None,
             "vault": str(vault), "folders": cfg["folders"], "repos": repos, "briefing": briefing,
-            "changed": changed, "concept": concept, "commits": commits, "surface": surface, "spend": spend,
+            "changed": changed, "cross": cross, "concept": concept, "commits": commits, "themes": themes(commits),
+            "per_day": per_day, "episodes": episodes, "surface": surface, "spend": spend,
             "owed": owed[:20], "action_queue": aq[:10], "rules": rules[:30], "breaks": breaks,
-            "active": bool(bits), "why": ", ".join(bits) or "nothing in the window"}
+            "active": bool(bits or cross), "why": ", ".join(bits) or ("a cross-project decision" if cross else "nothing in the window")}
 
 
 # ── the slices (QR-13): each source belongs to exactly one specialty ───────
@@ -439,25 +565,39 @@ def project_sources(inp, memory=None):
     reads.sources): commit → Builder; evidence-note, rule → Verifier; decision →
     Architect; surface → Product; owed → Operator."""
     out = []
-    for k, c in enumerate(inp["commits"][:40], 1):
-        out.append({"id": "C%d" % k, "kind": "commit", "ref": "%s@%s" % (c["repo"], c["sha"]),
-                    "text": "%s %s %s %s%s" % (c["repo"], c["sha"], c["date"], c["subject"],
-                                               ("\n  " + c["stat"]) if c.get("stat") else ""),
-                    "subject": c["subject"], "repo": c["repo"], "sha": c["sha"]})
+    if inp.get("range"):
+        for k, t in enumerate(inp["themes"][:3], 1):  # QR-17: the Builder speaks in at most 3 themes
+            out.append({"id": "T%d" % k, "kind": "commit", "ref": "theme:" + t["theme"],
+                        "text": "theme '%s': %d commit(s) in %s\n  %s" % (t["theme"], t["count"], ", ".join(t["repos"]),
+                                                                       "\n  ".join(t["subjects"]))})
+        out.append({"id": "C0", "kind": "commit", "ref": "per-day",
+                    "text": "commits per day: " + ", ".join("%s: %d" % kv for kv in inp["per_day"].items())})
+    else:
+        for k, c in enumerate(inp["commits"][:40], 1):
+            out.append({"id": "C%d" % k, "kind": "commit", "ref": "%s@%s" % (c["repo"], c["sha"]),
+                        "text": "%s %s %s %s%s" % (c["repo"], c["sha"], c["date"], c["subject"],
+                                                   ("\n  code: " + ", ".join(c["code"])) if c.get("code") else ""),
+                        "subject": c["subject"], "repo": c["repo"], "sha": c["sha"]})
     k = 0
     for n in inp["changed"]:
         kind = {"evidence": "evidence-note", "decision": "decision", "surface": "surface"}.get(n["class"])
         if kind:
             k += 1
+            body = ("added today:\n" + n.get("added", "")) if kind == "decision" else n["excerpt"]
             out.append({"id": "D%d" % k, "kind": kind, "ref": n["path"],
-                        "text": "%s\nsummary: %s\n%s" % (n["title"], n["summary"], n["excerpt"])})
+                        "text": "%s\nsummary: %s\n%s" % (n["title"], n["summary"], body)})
+    for j, x in enumerate(inp.get("cross", []), 1):
+        out.append({"id": "X%d" % j, "kind": "decision", "ref": x["path"],
+                    "text": "%s (another project's decision note; its lines added in the window that name this project):\n%s"
+                            % (x["title"], x["lines"])})
     for j, b in enumerate(inp["briefing"], 1):
         if b["in_window"] and b["rulings"]:
             out.append({"id": "R%d" % j, "kind": "decision", "ref": b["path"] + "#rulings", "text": b["rulings"]})
     for j, sfc in enumerate(inp["surface"], 1):
         out.append({"id": "U%d" % j, "kind": "surface", "ref": "files@" + sfc["repo"],
-                    "text": "user-visible files touched today in %s: %s%s" % (
-                        sfc["repo"], ", ".join(sfc["paths"]), " (+%d more)" % sfc["more"] if sfc["more"] else "")})
+                    "text": "user-facing files changed in %s: %s%s\n%s" % (
+                        sfc["repo"], ", ".join(sfc["paths"]), " (+%d more)" % sfc["more"] if sfc["more"] else "",
+                        sfc.get("diff", ""))})
     for j, c in enumerate(inp["concept"], 1):
         out.append({"id": "P%d" % j, "kind": "surface", "ref": c["path"],
                     "text": "the concept note\nsummary: %s\n%s" % (c["summary"], c["excerpt"])})
@@ -583,6 +723,16 @@ def fit(text, n=SHORT):
     return head.rstrip(",;:—–- ") + "."
 
 
+ECHOES = re.compile(r"\b(not (yet )?on air|on air yet|already on air|already said|no opinion here|"
+                    r"source id|my sources?|the host asks|as instructed|at most \d+ characters)\b", re.I)
+
+
+def strip_echoes(text):
+    """QR-15 R2: a sentence that echoes the prompt never reaches the air."""
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    return " ".join(x for x in parts if x and not ECHOES.search(x)).strip()
+
+
 def _words(s):
     return {w for w in re.findall(r"[a-z0-9]{4,}", s.lower())}
 
@@ -630,7 +780,7 @@ HOST_SYSTEM = """You host a short spoken recap of ONE project's day for its owne
 DESK_SYSTEM = """You answer ONE question on Sang's spoken recap of the {project} project's day: "{question}"
 You read only the sources below; nobody else on the show reads them. You never say: {never}.
 Speak only if your sources answer the question; otherwise pass, which is free and normal: {{"pass": true}}. Cite exactly one source id. Say what kind of claim it is: "I know ..." for what a source says, "My guess is ..." for an inference.
-Say ONE thing in at most 300 characters (one or two short spoken sentences): plain English for the ear, no markdown, no emoji, no file paths, no long hashes. Do not say a name or a role; only what is not on air yet.
+Say ONE thing in at most 300 characters (one or two short spoken sentences): plain English for the ear, no markdown, no emoji, no file paths, no long hashes. Do not say a name or a role, and add something new.{extra}
 Answer with JSON only: {{"pass": true}} or {{"answer": "...", "label": "grounded|inferred", "source": "<one source id>"}}"""
 
 BREAK_SYSTEM = """Something broke on the {project} project today, and you were brought on air for it alone. Say ONLY the break and the one act that fixes it, in at most 300 characters, plain spoken English. Cite the break's source id.
@@ -727,9 +877,14 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
         return names[sid]["reads"]["question"]
 
     def day():
-        return {"commits": len(inputs["commits"]),
-                "subjects": ["%s: %s" % (c["repo"], c["subject"][:120]) for c in inputs["commits"][:15]],
-                "notes": [n["title"] for n in inputs["changed"]], "why": inputs["why"]}
+        """QR-15 R3: the shape (counts + themes), never the news; a range adds the arc."""
+        d = {"commits": len(inputs["commits"]), "notes": len(inputs["changed"]),
+             "themes": [{"theme": t["theme"], "count": t["count"]} for t in inputs.get("themes", [])[:5]],
+             "why": inputs["why"]}
+        if inputs.get("range"):
+            d["per_day"] = inputs["per_day"]
+            d["episodes"] = [{"title": e["title"], "transcript": e["transcript"]} for e in inputs["episodes"]]
+        return d
 
     def host(mode, what):
         view = {"role": "host", "mode": mode, "project": project, "day": day(),
@@ -737,9 +892,13 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
                 "limit": SIGNOFF_CHARS if mode == "signoff" else 300}
         d = view["day"]
         user = "\n".join([
-            "Project: %s. The day's facts (%s):" % (project, d["why"]),
-            "  commits: %d%s" % (d["commits"], "".join("\n    " + x for x in d["subjects"])),
-            "  vault notes changed: %s" % ("; ".join(d["notes"]) or "none"), "",
+            "Project: %s, %s. The shape (%s):" % (project, inputs.get("label", ""), d["why"]),
+            "  commits: %d, in themes: %s" % (d["commits"], ", ".join("%s (%d)" % (t["theme"], t["count"])
+                                                                     for t in d["themes"]) or "none"),
+            "  notes changed: %d" % d["notes"],
+            ("  commits per day: %s" % ", ".join("%s: %d" % kv for kv in d["per_day"].items())) if "per_day" in d else "",
+            ("  daily episodes in the range:\n%s" % "\n".join("    %s:\n      %s" % (e["title"], e["transcript"].replace("\n", "\n      "))
+                                                             for e in d["episodes"])) if d.get("episodes") else "", "",
             "On air so far ([line] words):", "\n".join("  " + x for x in on_air_text()) or "  (nothing yet)", "",
             "Lines WITHDRAWN by their speaker (say they were withdrawn if you mention them; never state them as "
             "fact): %s" % (", ".join(map(str, view["withdrawn"])) or "none"), "", what])
@@ -757,7 +916,7 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
         o = _json(call("answers", "desk", system, user, view))
         if not o or o.get("pass") is True:
             return passed(sid, "passes")
-        text = _clean(o.get("answer"))
+        text = strip_echoes(_clean(o.get("answer")))
         sref = str(o.get("source") or "").strip().strip("<>")
         s = next((x for x in srcs if x["id"].lower() == sref.lower()), None)
         if not text or not s:
@@ -812,7 +971,11 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
                 or (verdict == "not_proven" and not check):
             why = "a doubt without its one check never airs" if verdict == "not_proven" and not check else "no verdict with an evidence source"
             return passed("verifier", why, evidence=evidence, about=target["i"])
-        ans = re.sub(r"^(not\s+)?proven(\s+yet)?\s*[:,.—-]*\s*", "", ans, flags=re.I)
+        ans = strip_echoes(re.sub(r"^(not\s+)?proven(\s+yet)?\s*[:,.—-]*\s*", "", ans, flags=re.I))
+        ans = re.sub(r"^(yes|no|correct|right|indeed)\s*[.,!:—-]+\s*", "", ans, flags=re.I)  # "Proven: Yes." (R2)
+        ans = ans[:1].lower() + ans[1:] if ans[:2] != "I " else ans
+        if not ans:
+            return passed("verifier", "nothing left after the echo filter", evidence=evidence, about=target["i"])
         if verdict == "proven":
             text = fit("Proven: " + ans)
             verified.add(target["i"])
@@ -863,13 +1026,50 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
     first = sitting[0] if sitting else None
     if first == "verifier":
         first = next((s for s in sitting if s != "verifier"), None)
-    o = host("open", "Step: open. In one or two short sentences (at most 300 characters) say what the day was on %s, "
-                     "from the facts above only. Do not ask a question; the program asks it.\nJSON: {\"say\": \"...\"}" % project)
+    o = host("open", ("Step: open. In one or two short sentences (at most 300 characters) give the arc of the period "
+                      "on %s: how the work moved across the days and themes (from the per-day counts and the daily "
+                      "episodes above), never the news itself. " if inputs.get("range") else
+                      "Step: open. In one or two short sentences (at most 300 characters) give the shape of the day on "
+                      "%s: the counts and the themes above, never the news itself (what changed is the next speaker's "
+                      "to say). ") % project + "Do not ask a question; the program asks it.\nJSON: {\"say\": \"...\"}")
     opening = fit(_clean(o.get("say")) or "Today on %s: %s." % (project, inputs["why"]), 300)
     if first:
         opening = "%s %s" % (opening, question(first))
     host_line("open", opening, "what the day was", n=480)
+    def system_for(sid):
+        r = names[sid]["reads"]
+        extra = (" This covers several days (%s): speak in at most three themes." % inputs.get("label")
+                 if sid == "builder" and inputs.get("range") else "")
+        return DESK_SYSTEM.format(project=project, question=r["question"], never=r["never"], extra=extra)
+
+    def followup():
+        """QR-15 R6: one optional turn before the Operator, under GR-8: only if the last answer was sourced."""
+        last = next((l for l in reversed(lines) if l["on_air"] and l["speaker"] != HOST), None)
+        if not last or last["kind"] != "answer":
+            note("GR-8: the last answer was not a sourced one; no follow-up")
+            return
+        reserve = 1 + (1 if "operator" in sitting else 0)
+        if left() < 2 + reserve:
+            note("follow-up: the calls left do not fit it")
+            return
+        choices = [x for x in sitting if x not in ("operator", "verifier")]
+        o = host("followup", "Step: follow-up (optional). If the last answer left something sourced and unsaid, ask ONE "
+                             "of %s one more short question (at most 200 characters), as the question itself; "
+                             "otherwise decline.\nJSON: {\"action\": \"ask\", \"to\": \"id\", \"question\": \"...\", "
+                             "\"reason\": \"one line\"} or {\"action\": \"none\"}" % ", ".join(choices))
+        to = o.get("to") if o.get("action") == "ask" else None
+        q = _clean(o.get("question"), 300)
+        if to not in choices or not q:
+            note("follow-up: the host declined")
+            return
+        host_line("followup", q, o.get("reason"))
+        note("follow-up: %s: %s" % (to, q[:120]))
+        asked.append(to)
+        answer(to, slices[to], system_for(to), q)
+
     for sid in sitting:
+        if sid == "operator":
+            followup()
         if sid == "verifier":
             target = next((l for l in claims() if l["speaker"] == "builder"), None)
             if not target:
@@ -891,15 +1091,16 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
         if sid == "operator" and op_mode == "break":
             answer(sid, slices[sid], BREAK_SYSTEM.format(project=project), question(sid), on_break=True)
         else:
-            r = names[sid]["reads"]
-            answer(sid, slices[sid], DESK_SYSTEM.format(project=project, question=r["question"], never=r["never"]),
-                   question(sid))
+            answer(sid, slices[sid], system_for(sid), question(sid))
+    if "operator" not in sitting:
+        followup()
     o = host("signoff", "Step: signoff. A short, calm recap of what was said on air, at most %d characters; name a "
                         "withdrawn claim as withdrawn, never as fact; then good night.\nJSON: {\"say\": \"...\"}" % SIGNOFF_CHARS)
     host_line("signoff", _clean(o.get("say")) or "That's the day on %s. Good night." % project, None, n=480)
     note("sign-off: call %d of %d" % (calls["total"], cap))
 
-    return {"v": 4, "project": inputs["project"], "project_name": project, "topic": project,
+    return {"v": 5, "project": inputs["project"], "project_name": project, "topic": project,
+            "label": inputs.get("label"), "range": inputs.get("range", False),
             "since": inputs["since"], "until": inputs["until"], "why": inputs["why"],
             "vault_rev": inputs.get("vault_rev"), "as_of": inputs.get("as_of", False),
             "cast": [HOST] + list(ORDER), "sitting": sitting, "operator": op_mode, "breaks": breaks,
@@ -917,8 +1118,10 @@ class FakeModel:
         if role == "host":
             if view["mode"] == "open":
                 d = view["day"]
-                return json.dumps({"say": "Today on %s: %d commits and %d notes changed."
-                                          % (view["project"], d["commits"], len(d["notes"]))})
+                return json.dumps({"say": "Today on %s: %d commits in %d themes, %d notes changed."
+                                          % (view["project"], d["commits"], len(d["themes"]), d["notes"])})
+            if view["mode"] == "followup":
+                return json.dumps({"action": "none"})
             return json.dumps({"say": "That's the day on %s. Good night, Sang." % view["project"]})
         if role == "verify":
             c = next(iter(view["commits"]), None)
@@ -1018,7 +1221,7 @@ def write_note(ep, cast, vault, day, topic=None, audio=None, path=None, spend=No
     summary = ("Radio, %s, %s: %s spoke; %d lines, %d of %d calls%s." % (
         title, day, ", ".join(spoke) or "nobody", len(on), c["total"], c["cap"],
         ("; audio %.0f s" % audio["duration"]) if audio else ""))
-    out = ["---", 'title: "%s (%s)"' % (title, day), "date: %s" % day,
+    out = ["---", 'title: "%s (%s)"' % (title, day), "date: %s" % day.split("..")[-1],
            "tags: [quorum, radio, episode, %s]" % ep.get("project", "radio"),
            'summary: "%s"' % summary.replace('"', "'"), "---", "", "# %s (%s)" % (title, day), ""]
     out += ["- window: %s → %s (%s)" % (ep["since"], ep["until"], ep.get("why", "")),
@@ -1159,10 +1362,12 @@ def _roots():
     return [home / "nonvis", home / "projects"]
 
 
-USAGE = """usage: quorum radio <project> [--since <ISO8601>] [--until <ISO8601>] [--with operator] [--fake] [--no-voice]
-       quorum radio inputs <project> [--since <ISO8601>] [--until <ISO8601>]
+USAGE = """usage: quorum radio <project> [today | yesterday | week | YYYY-MM-DD | YYYY-MM-DD..YYYY-MM-DD]
+                    [--with operator] [--fake] [--no-voice] [--since <ISO8601>] [--until <ISO8601>]
+       quorum radio inputs <project> [range] [--since …] [--until …]
   projects: %s
-  The window defaults to today in KST (midnight to now); --until replays a window as the vault's git held it."""
+  The range is in KST and defaults to today (midnight to now); `week` is the last 7 days including today.
+  A range that ends before now is read as the vault's git held it then (as does --until)."""
 
 
 def _opts(args, valued, bools):
@@ -1196,6 +1401,9 @@ def main(argv):
         print("ERROR: unknown project %r\n\n%s" % (rest[0] if rest else "", usage), file=sys.stderr)
         return 2
     pid, rest = rest[0], rest[1:]
+    rng = None
+    if rest and not rest[0].startswith("--"):
+        rng, rest = rest[0], rest[1:]
     try:
         o = _opts(rest, ("--since", "--until", "--with"), ("--fake", "--no-voice"))
     except ValueError as e:
@@ -1205,21 +1413,32 @@ def main(argv):
         print("ERROR: --with takes `operator` (the only specialty that is off by default)", file=sys.stderr)
         return 2
     now = _now()
-    until = parse_when(o["--until"]) if o.get("--until") else now
-    since = parse_when(o["--since"]) if o.get("--since") else today_kst(until)
+    try:
+        since, until, label = parse_range(rng or "today", now)
+    except ValueError as e:
+        print("ERROR: %s\n\n%s" % (e, usage), file=sys.stderr)
+        return 2
+    if o.get("--until"):
+        until = parse_when(o["--until"])
+        since = today_kst(until) if not o.get("--since") else since
+        label = since.astimezone(KST).date().isoformat()
+    if o.get("--since"):
+        since = parse_when(o["--since"])
+    as_of = bool(o.get("--until")) or until < now - timedelta(minutes=1)
     vault = _vault()
     try:
         cast = load_cast(record=(sub == "episode" and not o.get("--fake")))
     except CastError as e:
         print("ERROR: cast: %s" % e, file=sys.stderr)
         return 1
-    inp = gather_project(pid, projects, vault, _memory(vault), since, until, _roots(), as_of=bool(o.get("--until")))
+    inp = gather_project(pid, projects, vault, _memory(vault), since, until, _roots(), as_of=as_of, label=label)
     if sub == "inputs":
         print(json.dumps(inp, indent=2, ensure_ascii=False))
         return 0
     if not inp["active"]:
-        print("nothing on %s today (%s → %s): no commits, no vault notes changed; no call made"
-              % (pid, inp["since"], inp["until"]), file=sys.stderr)
+        print("nothing on %s %s (%s → %s): no commits, no vault notes changed; no call made"
+              % (pid, "today" if (rng or "today") == "today" else "in " + label, inp["since"], inp["until"]),
+              file=sys.stderr)
         return 1
     session_dir = Path(os.path.expanduser("~/.cache/quorum/radio/session"))
     model = FakeModel() if o.get("--fake") else ClaudeModel(session_dir)
@@ -1231,7 +1450,7 @@ def main(argv):
     except ModelError as e:
         print("ERROR: the first model call failed; no episode written: %s" % e, file=sys.stderr)
         return 1
-    day = until.astimezone(KST).date().isoformat()
+    day = inp["label"]
     model_name = None if o.get("--fake") else "claude -p --model %s" % MODEL
     spend = None if o.get("--fake") else episode_spend(session_dir, started.isoformat().replace("+00:00", "Z"))
     path = write_note(ep, cast, vault, day, spend=spend, model_name=model_name)

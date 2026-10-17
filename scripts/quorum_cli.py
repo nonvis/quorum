@@ -88,10 +88,10 @@ USAGE = """usage: quorum <command> [options]
                   how often the hook injected, how many hits were then Read,
                   how many sessions ran quorum lookups themselves, and per mode
                   (on/off): sessions, prompts, main-session context per turn
-  radio <project> [--since …] [--until …] [--with operator] [--fake] [--no-voice]
-                  the one model-calling verb: one project's day (default: today,
-                  KST) as a spoken recap — a vault note + an MP3 in bound voices
-  radio inputs <project> [--since …] [--until …]
+  radio <project> [today|yesterday|week|YYYY-MM-DD|A..B] [--with operator] [--fake] [--no-voice]
+                  the one model-calling verb: one project's day or range (KST)
+                  as a spoken recap — a vault note + an MP3 in bound voices
+  radio inputs <project> [range] [--since …] [--until …]
                   the day's inputs per specialty slice (JSON, $0)
   version         print the checkout's commit
 

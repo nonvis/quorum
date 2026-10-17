@@ -2,17 +2,88 @@
   "v": 3,
   "note": "Radio's cast: specialties that each answer ONE question the owner asks at the end of a day, from a source no other specialty reads, with a never-says list, so two of them can't say the same thing. The same cast for every project (one project per episode). Each is bound to one Kokoro voice and one stereo position for its lifetime; radio/voices.lock records every voice ever held.",
   "cast": [
-    {"id": "host", "name": "Host", "voice": "af_heart", "pan": "centre",
-     "reads": {"question": "", "sources": [], "speaks_when": "always: what the day was, the questions, the sign-off", "never": "a claim beyond the day's facts"}},
-    {"id": "builder", "name": "Builder", "voice": "am_michael", "pan": "left",
-     "reads": {"question": "What actually changed today?", "sources": ["commit"], "speaks_when": "there are commits", "never": "whether it's proven, why it was decided, what's next"}},
-    {"id": "verifier", "name": "Verifier", "voice": "am_fenrir", "pan": "centre-left",
-     "reads": {"question": "Is that actually proven?", "sources": ["evidence-note", "rule"], "speaks_when": "a claim on air has evidence to read", "never": "what changed (it cites the Builder's line number); never an open doubt: 'proven by X' or 'not proven yet, the one check is Y'"}},
-    {"id": "architect", "name": "Architect", "voice": "bf_emma", "pan": "right",
-     "reads": {"question": "What did we decide today, and what did it cost?", "sources": ["decision"], "speaks_when": "a ruling was taken or a design note changed", "never": "code detail, what's owed"}},
-    {"id": "product", "name": "Product", "voice": "af_nicole", "pan": "far right",
-     "reads": {"question": "Does a user notice any of it?", "sources": ["surface"], "speaks_when": "something user-visible changed, or the product's story moved", "never": "internals, proof, next steps"}},
-    {"id": "operator", "name": "Operator", "voice": "am_puck", "pan": "centre-right",
-     "reads": {"question": "What's waiting on Sang?", "sources": ["owed"], "speaks_when": "invited (--with operator), or something broke in the window", "never": "anything already done; on a break, anything but the break and the one act that fixes it"}}
+    {
+      "id": "host",
+      "name": "Host",
+      "voice": "af_heart",
+      "pan": "centre",
+      "reads": {
+        "question": "",
+        "sources": [],
+        "speaks_when": "always: what the day was, the questions, the sign-off",
+        "never": "a claim beyond the day's facts"
+      }
+    },
+    {
+      "id": "builder",
+      "name": "Builder",
+      "voice": "am_michael",
+      "pan": "left",
+      "reads": {
+        "question": "What actually changed today?",
+        "sources": [
+          "commit"
+        ],
+        "speaks_when": "there are commits",
+        "never": "whether it's proven, why it was decided, what's next"
+      }
+    },
+    {
+      "id": "verifier",
+      "name": "Verifier",
+      "voice": "am_fenrir",
+      "pan": "centre-left",
+      "reads": {
+        "question": "Is that actually proven?",
+        "sources": [
+          "evidence-note",
+          "rule"
+        ],
+        "speaks_when": "a claim on air has evidence to read",
+        "never": "what changed (it cites the Builder's line number); never an open doubt: 'proven by X' or 'not proven yet, the one check is Y'"
+      }
+    },
+    {
+      "id": "architect",
+      "name": "Architect",
+      "voice": "bf_emma",
+      "pan": "right",
+      "reads": {
+        "question": "What did we decide today, and what did it cost?",
+        "sources": [
+          "decision"
+        ],
+        "speaks_when": "a ruling was taken or a design note changed",
+        "never": "code detail, what's owed"
+      }
+    },
+    {
+      "id": "product",
+      "name": "Product",
+      "voice": "af_bella",
+      "pan": "far right",
+      "reads": {
+        "question": "Does a user notice any of it?",
+        "sources": [
+          "surface"
+        ],
+        "speaks_when": "something user-visible changed, or the product's story moved",
+        "never": "internals, proof, next steps"
+      }
+    },
+    {
+      "id": "operator",
+      "name": "Operator",
+      "voice": "am_puck",
+      "pan": "centre-right",
+      "reads": {
+        "question": "What's waiting on Sang?",
+        "sources": [
+          "owed"
+        ],
+        "speaks_when": "invited (--with operator), or something broke in the window",
+        "never": "anything already done; on a break, anything but the break and the one act that fixes it"
+      }
+    }
   ]
 }

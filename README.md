@@ -25,8 +25,9 @@ quorum lint [--fix-safe] [--json] [--show N]
 quorum hook                      # Claude Code UserPromptSubmit hook (stdin JSON)
 quorum hook on|off|status
 quorum hook --report [--json]
-quorum radio <project> [--since <ISO8601>] [--until <ISO8601>] [--with operator] [--fake] [--no-voice]
-quorum radio inputs <project> [--since <ISO8601>] [--until <ISO8601>]
+quorum radio <project> [today | yesterday | week | YYYY-MM-DD | YYYY-MM-DD..YYYY-MM-DD]
+             [--with operator] [--fake] [--no-voice] [--since <ISO8601>] [--until <ISO8601>]
+quorum radio inputs <project> [range] [--since <ISO8601>] [--until <ISO8601>]
 quorum version
 ```
 
@@ -107,26 +108,34 @@ the owner, so there is no screen or trust gate.
   its vault folder(s), its concept note and its repos. Radio reads the repos on
   this list by path (under `~/nonvis` or `~/projects`), whatever the index
   allowlist says; a project may list none.
-- **The window** defaults to today in KST (midnight → now); `--since` / `--until`
-  set it, and `--until` replays a window as the vault's git held it then. With no
-  commit in the project's repos and no note changed in its vault folders, it
-  refuses at $0: `nothing on <project> today`.
+- **The range** is `today` (the default: KST midnight → now), `yesterday`, `week`
+  (the last 7 days including today), a date, or `A..B` (inclusive, KST). A range
+  that ends before now is read as the vault's git held it then (`--since` /
+  `--until` set exact stamps). With no commit in the project's repos and no note
+  changed in its vault folders, it refuses at $0: `nothing on <project> today`.
+  A range longer than a day is a **digest**: the summaries of the notes changed,
+  the decision notes' added lines, commits per day with subjects grouped by theme,
+  and the transcripts of any daily episodes recorded in it; the Builder speaks in
+  at most 3 themes and the host opens with the arc of the period.
 - **`radio/cast.json`** (tracked) is the cast: a host and five specialties, the
   same for every project. Each answers **one question**, from **a slice of the
   inputs no other specialty reads**, with a **never-says** list:
 
   | Specialty | Its question | Its slice |
   |---|---|---|
-  | Builder | What actually changed today? | the window's commits (+ diffstat) |
+  | Builder | What actually changed today? | the window's commits and the code files they touched (a range: ≤ 3 themes + commits per day) |
   | Verifier | Is that actually proven? | the evidence: build logs, walks, gates, tests changed today, the verification rules, and what it reads itself |
-  | Architect | What did we decide today, and what did it cost? | design / ruling notes changed today, the briefing's §Rulings when it changed |
-  | Product | Does a user notice any of it? | user-visible files touched (docs, UI, CLI), surface notes, the concept note |
+  | Architect | What did we decide today, and what did it cost? | the lines design / ruling notes gained in the window (another project's decision note counts when those lines name this project), the briefing's §Rulings when it changed |
+  | Product | Does a user notice any of it? | the diffs of user-facing files (docs, UI, CLI help), surface notes, the concept note |
   | Operator | What's waiting on the owner? | the briefing's Owed + Next rows, Action Queue items naming the project, spend lines |
 
   Each specialty is bound to **one Kokoro voice and one stereo position for its
   lifetime**; `radio/voices.lock` records every voice ever held, and the loader
   refuses a duplicate voice, a voice outside Kokoro's English presets, a changed
-  voice for a locked id, and a retired id's voice for a new one.
+  voice for a locked id, and a retired id's voice for a new one. Only an owner
+  override changes a voice: an entry in the lock's `overrides` naming the id, the
+  voice it replaces and the ruling that made it (`QR-n`); the replaced voice stays
+  reserved. A cast edit without one fails.
 - **The episode.** The host opens with what the day was, then asks each
   question in this order: what changed → is it real → what was decided → does
   a user notice → what's waiting on the owner; then signs off. The host asks the
@@ -134,7 +143,11 @@ the owner, so there is no screen or trust gate.
   not asked, and any may pass ("No opinion here"). An answer cites one source
   id from its slice, says its kind aloud ("I know…", "My guess is…") and is at
   most 300 characters; host questions at most 200; the sign-off is told its
-  limit. 14 calls at most, the last one the sign-off.
+  limit. A sentence that echoes the prompt is dropped before air. The host's
+  opening gives the day's shape (counts + themes), never the news. One optional
+  follow-up before the Operator: the host may ask one specialty one more
+  question, only if the last answer was a sourced one (GR-8). 14 calls at most,
+  the last one the sign-off.
 - **The Verifier** reads before it speaks: one call asks for at most 4
   read-only reads — `git show` / `log` / `grep` in the project's repos, or a
   note in its vault folders (no shell; revisions and paths validated; output
@@ -145,15 +158,15 @@ the owner, so there is no screen or trust gate.
   claim is marked withdrawn. The reads it ran are listed in the note.
 - **The Operator** is off by default. `--with operator` invites it, last before
   the sign-off. It joins uninvited only when something broke in the window,
-  read mechanically from the notes changed today, the briefing's state and the
-  Owed rows new today: a red gate or walk, a service down, a balance under its
-  FAIL floor, a deploy rolled back. Then it says only the break and the one act
+  read from the lines the project's notes gained in the window: a `BROKEN:`
+  marker on a line (the reliable path), or, case-insensitively, a red gate or
+  walk, a service down, a balance under its FAIL floor, a deploy rolled back. Then it says only the break and the one act
   that fixes it. The signal that fired is logged.
 - The model is `claude -p --model claude-sonnet-5-5` (no tools, safe mode), run
   from `~/.cache/quorum/radio/session`, so `quorum spend --project
   ~/.cache/quorum/radio/session` meters it; `--fake` uses a deterministic
   stand-in. If the first call fails nothing is written.
-- The episode is written as a note `NN - <Project> (YYYY-MM-DD).md` in the
+- The episode is written as a note `NN - <Project> (<date or range>).md` in the
   vault's radio folder (`RADIO_DIR` in `scripts/radio.py`), recording the window,
   the vault rev it read, the cast with each specialty's status, the transcript
   (speaker / voice / line / source), the Verifier's reads, the program log, the

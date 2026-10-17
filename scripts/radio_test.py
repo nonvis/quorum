@@ -66,7 +66,7 @@ class CastCase(unittest.TestCase):
             "architect": ("Architect", "bf_emma", "right"),
             "verifier": ("Verifier", "am_fenrir", "centre-left"),
             "operator": ("Operator", "am_puck", "centre-right"),
-            "product": ("Product", "af_nicole", "far right"),
+            "product": ("Product", "af_bella", "far right"),
         })
         for d in cast:
             self.assertEqual(set(d) - {"pan_value"}, {"id", "name", "voice", "pan", "reads"})
@@ -76,10 +76,49 @@ class CastCase(unittest.TestCase):
 
     def test_the_lock_holds_only_the_new_ids_and_records_the_rebinding(self):
         lock = json.loads(LOCK.read_text())
-        self.assertEqual(lock["voices"], {d["id"]: d["voice"] for d in radio.load_cast(CAST, LOCK)})
+        self.assertEqual(radio.effective_voices(lock), {d["id"]: d["voice"] for d in radio.load_cast(CAST, LOCK)})
         self.assertIn("QR-12", lock["note"])
         for gone in ("meridian", "permafrost", "sidebar", "bastion", "skeptic", "accountant"):
             self.assertNotIn(gone, lock["voices"])
+
+    def test_the_tracked_lock_records_the_qr16_owner_override(self):
+        lock = json.loads(LOCK.read_text())
+        self.assertEqual(lock["voices"]["product"], "af_nicole")    # the original binding stays recorded
+        ov = [o for o in lock["overrides"] if o["id"] == "product"]
+        self.assertEqual(ov, [dict(ov[0], id="product", **{"from": "af_nicole", "to": "af_bella", "ruling": "QR-16"})])
+        self.assertIn("af_nicole", radio.reserved_voices(lock))
+
+    def write_lock(self, cast, lock):
+        c = self.dir / "cast.json"
+        c.write_text(json.dumps({"v": 1, "cast": cast}))
+        lk = self.dir / "voices.lock"
+        lk.write_text(json.dumps(lock))
+        return c, lk
+
+    def test_an_owner_override_needs_a_ruling_id(self):
+        cast = [{"id": "p", "name": "P", "voice": "af_bella", "pan": "left", "reads": {}}]
+        c, lk = self.write_lock(cast, {"voices": {"p": "af_nicole"}})              # a silent edit
+        with self.assertRaisesRegex(radio.CastError, "never reassigned"):
+            radio.load_cast(c, lk)
+        c, lk = self.write_lock(cast, {"voices": {"p": "af_nicole"},
+                                       "overrides": [{"id": "p", "from": "af_nicole", "to": "af_bella"}]})
+        with self.assertRaisesRegex(radio.CastError, "ruling"):
+            radio.load_cast(c, lk)
+        c, lk = self.write_lock(cast, {"voices": {"p": "af_nicole"},
+                                       "overrides": [{"id": "p", "from": "af_sky", "to": "af_bella", "ruling": "QR-16"}]})
+        with self.assertRaisesRegex(radio.CastError, "from"):
+            radio.load_cast(c, lk)
+        c, lk = self.write_lock(cast, {"voices": {"p": "af_nicole"},
+                                       "overrides": [{"id": "p", "from": "af_nicole", "to": "af_bella", "ruling": "QR-16"}]})
+        self.assertEqual(radio.load_cast(c, lk)[0]["voice"], "af_bella")
+
+    def test_an_overridden_voice_stays_reserved(self):
+        cast = [{"id": "p", "name": "P", "voice": "af_bella", "pan": "left", "reads": {}},
+                {"id": "q", "name": "Q", "voice": "af_nicole", "pan": "right", "reads": {}}]
+        c, lk = self.write_lock(cast, {"voices": {"p": "af_nicole"},
+                                       "overrides": [{"id": "p", "from": "af_nicole", "to": "af_bella", "ruling": "QR-16"}]})
+        with self.assertRaisesRegex(radio.CastError, "reserved"):
+            radio.load_cast(c, lk)
 
     def test_a_duplicate_voice_is_refused(self):
         c, lk = self.write([
@@ -174,6 +213,16 @@ class Fixture:
                   "---\nsummary: \"Radio leaves Sidebar; three modes again\"\n---\n# D\n\nRuled: QR-5.\n",
                   NOW - timedelta(hours=3))
         self.note("01_Projects/Sidebar/00 - Concept.md", "---\nsummary: \"agents of different owners talk\"\n---\n# C\n", old)
+        self.note("01_Projects/Quorum/18 - Radio — the Owner's Desks on Air (Design, 2026-10-17).md",
+                  "---\nsummary: \"radio design\"\n---\n# R\n\nOld text about voices.\n", old)
+        self.note("01_Projects/Quorum/18 - Radio — the Owner's Desks on Air (Design, 2026-10-17).md",
+                  "---\nsummary: \"radio design\"\n---\n# R\n\nOld text about voices.\n"
+                  "QR-5: Sidebar Radio is removed; Radio moves to Quorum.\n", NOW - timedelta(hours=2, minutes=30))
+        self.note("01_Projects/Permafrost/77 - Desk Broker (Design, 2026-10-17).md",
+                  "---\nsummary: \"broker\"\n---\n# B\n\nNothing about the other project.\n", NOW - timedelta(hours=2))
+        self.note("01_Projects/Quorum/Radio/03 - Sidebar (2026-10-15).md",
+                  "---\nsummary: \"episode\"\n---\n# E\n\n## Transcript\n\n| # | Speaker | Voice | Line | Source |\n|---|---|---|---|---|\n"
+                  "| 1 | Builder | `am_michael` | I know the moderator gate landed. | c |\n\n## Program log\n", NOW - timedelta(days=2))
         self.note("Action Queue/90 - Sidebar — listen to Radio (2026-10-17).md", "x", NOW - timedelta(hours=1))
         self.note("Action Queue/91 - Meridian — something (2026-10-17).md", "x", NOW - timedelta(hours=1))
         self.note("01_Projects/Sidebar/40 - Old Note.md", "---\nsummary: old\n---\n# O\n", old)
@@ -183,6 +232,8 @@ class Fixture:
             "# V\n\n- [☠☠☠ TESTED ≠ CALLED](x.md) — 16 tests, 0 call sites\n- [☠ minor](y.md) — small\n")
         (self.memory / "MEMORY_VERIFICATION_2.md").write_text("")
         self.repo("sidebar", [("old sidebar work", "2026-10-10T00:00:00Z"),
+                              ("Moderator: the same words are screened once", "2026-10-13T03:00:00Z"),
+                              ("Moderator: a hold retry reuses the pass", "2026-10-13T04:00:00Z"),
                               ("Merge screen-v0.6-wire: the violence gate wired in", "2026-10-17T00:40:00Z"),
                               ("Shell: the Tune in card is gone", "2026-10-17T01:00:00Z", "ui/Shell.tsx")])
         self.repo("sidebar-screen", [("V1 violence gate candidate", "2026-10-17T00:39:00Z")])  # off the allowlist
@@ -280,6 +331,33 @@ class InputsCase(unittest.TestCase):
         self.assertEqual(radio.today_kst(datetime(2026, 10, 16, 14, 59, tzinfo=timezone.utc)),
                          datetime(2026, 10, 15, 15, 0, tzinfo=timezone.utc))
 
+    def test_qr17_ranges_in_kst(self):
+        R = radio.parse_range
+        kst = lambda y, m, d, h=0: datetime(y, m, d, h, tzinfo=radio.KST).astimezone(timezone.utc)
+        self.assertEqual(R("today", NOW), (kst(2026, 10, 17), NOW, "2026-10-17"))
+        self.assertEqual(R("yesterday", NOW), (kst(2026, 10, 16), kst(2026, 10, 17), "2026-10-16"))
+        self.assertEqual(R("week", NOW), (kst(2026, 10, 11), NOW, "2026-10-11..2026-10-17"))
+        self.assertEqual(R("2026-10-15", NOW), (kst(2026, 10, 15), kst(2026, 10, 16), "2026-10-15"))
+        self.assertEqual(R("2026-10-12..2026-10-14", NOW), (kst(2026, 10, 12), kst(2026, 10, 15), "2026-10-12..2026-10-14"))
+        self.assertEqual(R("2026-10-16..2026-10-17", NOW), (kst(2026, 10, 16), NOW, "2026-10-16..2026-10-17"))
+        for bad in ("tomorrow", "2026-13-01", "2026-10-15..2026-10-12", "2026-10-20"):
+            with self.assertRaises(ValueError):
+                R(bad, NOW)
+
+    def test_qr17_a_range_is_a_digest(self):
+        week = self.fx.inputs(since=datetime(2026, 10, 10, 15, 0, tzinfo=timezone.utc), until=NOW, label="2026-10-11..2026-10-17")
+        self.assertTrue(week["range"])
+        self.assertEqual(week["label"], "2026-10-11..2026-10-17")
+        self.assertEqual(week["per_day"], {"2026-10-13": 2, "2026-10-17": 3})
+        self.assertIn("moderator", [t["theme"] for t in week["themes"]])
+        self.assertEqual([e["title"] for e in week["episodes"]], ["03 - Sidebar (2026-10-15)"])
+        self.assertIn("I know the moderator gate landed.", week["episodes"][0]["transcript"])
+        cast = radio.load_cast(CAST, LOCK)
+        b = radio.sources_for_specialty(cast, "builder", radio.project_sources(week))
+        self.assertLessEqual(len([x for x in b if x["id"].startswith("T")]), 3)   # at most 3 themes
+        self.assertIn("2026-10-13: 2", " ".join(x["text"] for x in b))
+        self.assertFalse(self.fx.inputs()["range"])
+
     def test_spend_window_end_may_be_time_only_or_a_full_stamp(self):
         self.assertEqual(radio.spend_window_end("spend: x; window 2026-10-15T02:24Z → 09:07Z"),
                          datetime(2026, 10, 15, 9, 7, tzinfo=timezone.utc))
@@ -356,6 +434,37 @@ class InputsCase(unittest.TestCase):
                      "---\nsummary: \"walk the gate\"\n---\n# R\n", NOW - timedelta(minutes=10))
         n = [x for x in self.fx.inputs()["changed"] if x["title"].startswith("60 - Run Prompt")][0]
         self.assertIsNone(n["class"])
+
+    def test_r1_a_cross_project_decision_note_naming_the_project_counts(self):
+        cast = radio.load_cast(CAST, LOCK)
+        arch = " ".join(x["text"] for x in radio.sources_for_specialty(cast, "architect", radio.project_sources(self.fx.inputs())))
+        self.assertIn("Radio moves to Quorum", arch)
+        self.assertNotIn("Old text about voices", arch)            # today's diff, not the whole note
+        self.assertNotIn("Nothing about the other project", arch)  # a cross note that does not name Sidebar
+
+    def test_r4_product_reads_the_user_facing_diffs_and_the_builder_keeps_code(self):
+        cast = radio.load_cast(CAST, LOCK)
+        src = radio.project_sources(self.fx.inputs())
+        prod = " ".join(x["text"] for x in radio.sources_for_specialty(cast, "product", src))
+        build = " ".join(x["text"] for x in radio.sources_for_specialty(cast, "builder", src))
+        self.assertIn("ui/Shell.tsx", prod)
+        self.assertIn("+Shell: the Tune in card is gone", prod)   # the diff itself
+        self.assertNotIn("ui/Shell.tsx", build)
+        self.assertIn("src/f", build)                              # code files stay the Builder's
+
+    def test_r5_breaks_are_case_insensitive_or_marked(self):
+        for text, signal in (("the live walk went red at step 4.", "a red gate or walk"),
+                             ("the screen sidecar is down since 09:10.", "a service down"),
+                             ("BROKEN: the c1 box rejects every upload", "marked BROKEN")):
+            self.fx.note("01_Projects/Sidebar/59 - Walk (Build Log, 2026-10-17).md",
+                         "---\nsummary: \"x\"\n---\n# W\n\n%s\n" % text, NOW - timedelta(minutes=20))
+            self.assertIn(signal, [b["signal"] for b in self.fx.inputs()["breaks"]], text)
+
+    def test_r3_the_day_has_themes(self):
+        th = self.fx.inputs()["themes"]
+        self.assertEqual(sum(t["count"] for t in th), 3)
+        self.assertIn("merge", [t["theme"] for t in th] + ["merge"])
+        self.assertTrue(all(t["theme"] == t["theme"].lower() for t in th))
 
     def test_a_routine_red_word_is_no_break(self):
         self.fx.note("01_Projects/Sidebar/59 - Walk (Build Log, 2026-10-17).md",
@@ -482,12 +591,15 @@ class RoundCase(unittest.TestCase):
             self.assertIn(self.question(l["speaker"]), ask["text"])
             self.assertNotIn(next(d for d in self.cast if d["id"] == l["speaker"])["name"], ask["text"])
 
-    def test_the_host_opens_with_what_the_day_was(self):
+    def test_the_host_opens_with_the_shape_of_the_day_never_the_news(self):
+        """QR-15 R3: counts + themes; no commit subjects, no note titles."""
         ep, m = self.run_ep()
         k, view = m.calls[0]
         self.assertEqual(k, ("host", "open"))
         self.assertEqual(view["day"]["commits"], 3)
-        self.assertIn("57 - The Violence Gate Wired In (Build Log, 2026-10-17)", view["day"]["notes"])
+        self.assertEqual(view["day"]["notes"], len(self.inp["changed"]))
+        self.assertTrue(view["day"]["themes"])
+        self.assertNotIn("subjects", view["day"])
         self.assertTrue(on_air(ep)[0]["text"].endswith(self.question("builder")))
 
     def test_each_specialty_is_given_only_its_slice(self):
@@ -525,7 +637,7 @@ class RoundCase(unittest.TestCase):
     def test_a_specialty_with_an_empty_slice_is_not_asked(self):
         """Speaks only when: no design note changed and no ruling → no Architect."""
         inp = dict(self.inp, changed=[n for n in self.inp["changed"] if "Design" not in n["title"]],
-                   briefing=[dict(b, in_window=False) for b in self.inp["briefing"]])
+                   briefing=[dict(b, in_window=False) for b in self.inp["briefing"]], cross=[])
         ep, m = self.run_ep(inp=inp)
         self.assertNotIn("architect", speakers(ep))
         self.assertNotIn(("desk", "architect"), [k for k, _ in m.calls])
@@ -555,6 +667,38 @@ class RoundCase(unittest.TestCase):
         self.assertLessEqual(len(on_air(ep)[-1]["text"]), 480)
         sv = [v for k, v in m.calls if k == ("host", "signoff")][0]
         self.assertEqual(sv["limit"], radio.SIGNOFF_CHARS)
+
+    def test_r2_no_prompt_echoes_on_air(self):
+        ep, m = self.run_ep({("desk", "builder"): J({"answer": "I know the gate merged. That's not on air yet.",
+                                                     "label": "grounded", "source": "C1"}),
+                             ("desk", "verifier"): lambda v: J({"verdict": "proven", "answer": "Yes. The run is in the log.",
+                                                                "source": "E1"})})
+        b = [l for l in on_air(ep) if l["speaker"] == "builder"][0]
+        self.assertEqual(b["text"], "I know the gate merged.")
+        v = [l for l in on_air(ep) if l["speaker"] == "verifier"][0]
+        self.assertEqual(v["text"], "Proven: the run is in the log.")
+        for t in ("No opinion here, but", "Only what is not on air", "not on air yet"):
+            self.assertNotIn(t.lower(), " ".join(l["text"].lower() for l in on_air(ep) if l["kind"] != "pass"))
+
+    def test_r6_one_optional_follow_up_before_the_operator(self):
+        fu = J({"action": "ask", "to": "builder", "question": "Which part of that was hardest?", "reason": "unsaid"})
+        ep, m = self.run_ep({("host", "followup"): fu, ("desk", "builder"): [None, J({
+            "answer": "My guess is the screen wiring.", "label": "inferred", "source": "C2"})]}, with_operator=True)
+        sp = speakers(ep)
+        self.assertEqual(sp[-2:], ["builder", "operator"])
+        self.assertEqual(len([k for k, _ in m.calls if k == ("host", "followup")]), 1)
+        ask = [l for l in on_air(ep) if l["kind"] == "followup"][0]
+        self.assertEqual(ask["text"], "Which part of that was hardest?")
+
+    def test_r6_no_follow_up_after_a_pass(self):
+        ep, m = self.run_ep({("desk", "product"): J({"pass": True})})
+        self.assertNotIn(("host", "followup"), [k for k, _ in m.calls])
+        self.assertIn("GR-8", " ".join(ep["log"]))
+
+    def test_r6_the_host_may_decline_the_follow_up(self):
+        ep, m = self.run_ep()
+        self.assertEqual(len([k for k, _ in m.calls if k == ("host", "followup")]), 1)
+        self.assertFalse([l for l in ep["lines"] if l["kind"] == "followup"])
 
     def test_an_answer_without_a_resolvable_source_is_a_pass(self):
         ep, m = self.run_ep({("desk", "builder"): J({"answer": "Things.", "label": "grounded", "source": "Z9"})})
@@ -643,10 +787,10 @@ class NoteAndVoiceCase(unittest.TestCase):
 
     def test_the_note_is_named_for_the_project_and_numbered_in_the_folder(self):
         d = self.fx.vault / "01_Projects" / "Quorum" / "Radio"
-        d.mkdir(parents=True)
-        (d / "02 - Night Recap (2026-10-17).md").write_text("x")
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "02 - Night Recap (2026-10-17).md").write_text("x")   # the fixture also holds 03 - Sidebar (2026-10-15)
         p = radio.write_note(self.ep, self.cast, self.fx.vault, day="2026-10-17")
-        self.assertEqual(p, d / "03 - Sidebar (2026-10-17).md")
+        self.assertEqual(p, d / "04 - Sidebar (2026-10-17).md")
         t = p.read_text()
         fm = t.split("---")[1]
         for k in ("title:", "date: 2026-10-17", "tags:", "summary:"):
@@ -723,13 +867,13 @@ class CliCase(unittest.TestCase):
 
     def notes(self):
         d = self.fx.vault / "01_Projects" / "Quorum" / "Radio"
-        return sorted(d.glob("*.md")) if d.is_dir() else []
+        return sorted(x for x in d.glob("*.md") if x.name != "03 - Sidebar (2026-10-15).md") if d.is_dir() else []
 
     def test_radio_project_fake_no_voice_writes_the_note(self):
         p = self.cli("sidebar", "--fake", "--no-voice")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual([n.name for n in self.notes()], ["00 - Sidebar (2026-10-17).md"])
-        self.assertIn("00 - Sidebar (2026-10-17).md", p.stdout)
+        self.assertEqual([n.name for n in self.notes()], ["04 - Sidebar (2026-10-17).md"])
+        self.assertIn("04 - Sidebar (2026-10-17).md", p.stdout)
 
     def test_nothing_today_refuses_at_zero_cost(self):
         p = self.cli("meridian", "--no-voice")  # not --fake: a model call would fail the test env
@@ -750,6 +894,19 @@ class CliCase(unittest.TestCase):
         self.assertIn("| Operator | `am_puck` |", self.notes()[0].read_text().split("## Transcript")[1])
         p = self.cli("sidebar", "--fake", "--no-voice", "--with", "builder")
         self.assertEqual(p.returncode, 2)
+
+    def test_a_week_episode_is_named_for_its_range(self):
+        p = self.cli("sidebar", "week", "--fake", "--no-voice")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual([n.name for n in self.notes()], ["04 - Sidebar (2026-10-11..2026-10-17).md"])
+        fm = self.notes()[0].read_text().split("---")[1]
+        self.assertIn("\ndate: 2026-10-17\n", fm)          # a range's note is dated by its last day
+        self.assertIn('title: "Sidebar (2026-10-11..2026-10-17)"', fm)
+
+    def test_a_bad_range(self):
+        p = self.cli("sidebar", "tomorrow", "--fake", "--no-voice")
+        self.assertEqual(p.returncode, 2)
+        self.assertIn("today | yesterday | week", p.stderr)
 
     def test_tonight_is_retired(self):
         p = self.cli("tonight")
