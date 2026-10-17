@@ -882,6 +882,13 @@ class RoundCase(unittest.TestCase):
         nxt = [l for l in on_air(ep) if l["i"] > i][0]
         self.assertEqual(nxt["speaker"], "builder")
 
+    def test_a_follow_up_naming_someone_not_on_air_is_readdressed(self):
+        """Real recap 10-17 21:11: "Product, …?" with Product not invited reached the Architect, who passed."""
+        fu = J({"action": "ask", "to": "architect", "question": "Product, what one measurement would settle it?", "reason": "x"})
+        ep, m = self.run_ep({("host", "followup"): fu}, invite=())
+        ask = next(l for l in on_air(ep) if l["kind"] == "followup")
+        self.assertEqual(ask["text"], "Architect, what one measurement would settle it?")
+
     def test_r6_no_follow_up_after_a_pass(self):
         ep, m = self.run_ep({("desk", "product"): J({"pass": True})})
         self.assertNotIn(("host", "followup"), [k for k, _ in m.calls])
@@ -982,7 +989,8 @@ class RoundCase(unittest.TestCase):
 
     def test_a_host_question_is_a_question_only(self):
         ok = radio.host_question_ok
-        for q in ("Is that actually proven?", "Product, does a user notice any of it?",
+        for q in ("Is that actually proven?", "Product, does a user notice any of it?", "Historian, when was that tried?",
+                  "Chronicler, where was it left?",
                   "And Product, which part was hardest?", "What did we decide today, and what did it cost?"):
             self.assertTrue(ok(q), q)
         for q in ("The README says Roundtable is built. Was that walk done today?",

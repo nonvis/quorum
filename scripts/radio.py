@@ -1053,7 +1053,7 @@ INTERROGATIVE = {"what", "why", "how", "which", "who", "whom", "whose", "when", 
                  "are", "am", "do", "does", "did", "can", "could", "has", "have", "had", "will", "would",
                  "should", "shall", "may", "might", "must", "any", "anything", "isn't", "aren't", "wasn't",
                  "doesn't", "didn't", "hasn't", "haven't", "won't", "wouldn't", "can't", "couldn't"}
-ADDRESS = re.compile(r"^(and\s+)?(the\s+)?(builder|verifier|architect|product|operator|sang)\s*,\s*", re.I)
+ADDRESS = re.compile(r"^(and\s+)?(the\s+)?(builder|verifier|architect|product|operator|chronicler|historian|cartographer|sang)\s*,\s*", re.I)
 
 
 def host_question_ok(q):
@@ -1412,6 +1412,10 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
         if named and named.group(3).lower() in choices and named.group(3).lower() != to:
             note("follow-up: the question names %s, not %s; %s answers" % (named.group(3).lower(), to, named.group(3).lower()))
             to = named.group(3).lower()
+        elif named and named.group(3).lower() not in choices:
+            # It names someone not on air: the line is re-addressed to who answers (real recap 10-17 21:11).
+            note("follow-up: the question names %s, who is not on air; re-addressed to %s" % (named.group(3).lower(), to))
+            q = "%s, %s" % (names[to]["name"], q[named.end():])
         host_line("followup", q, o.get("reason"))
         note("follow-up: %s: %s" % (to, q[:120]))
         asked.append(to)
