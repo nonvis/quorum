@@ -358,7 +358,6 @@ class StudyWebCase(unittest.TestCase):
         s, o = self.j("GET", "/api/study/web-listener")
         self.assertTrue(o["track"]["state"]["left_off"])
 
-        self.assertEqual(self.j("DELETE", "/api/study/web-listener")[0], 400)   # only a finished track
         s, o = self.j("POST", "/api/study/web-listener/finish", {})
         self.assertEqual((s, o["status"]), (200, "finished"))
         self.assertEqual(self.j("POST", "/api/study/web-listener/say", {"message": "x"})[0], 400)
@@ -380,6 +379,12 @@ class StudyWebCase(unittest.TestCase):
         self.assertEqual(ev[-1]["code"], 0, ev)
         [d] = self.app.study.days("web-start")
         self.assertEqual([t["who"] for t in d["turns"]], ["tutor"])
+
+    def test_an_active_track_with_an_open_day_is_deleted(self):
+        self.j("POST", "/api/study", {"id": "web-del", "project": "bastion", "repo": str(self.repo), "goal": "g"})
+        self.run_job("/api/study/web-del/say", {"message": "hi"})
+        self.assertEqual(self.j("DELETE", "/api/study/web-del")[0], 200)
+        self.assertEqual(self.j("GET", "/api/study/web-del")[0], 404)
 
     def test_a_bad_track_id_is_404(self):
         for p in ("/api/study/..%2F..%2Fetc", "/api/study/nope", "/api/study/nope/days/2026-10-01"):

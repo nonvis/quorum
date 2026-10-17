@@ -215,15 +215,14 @@ function TrackPage({ id }: { id: string }) {
               <Square /> End session
             </Button>
           )}
-          {isActive ? (
+          {isActive && (
             <Button variant="ghost" disabled={busy} onClick={() => (v.open_day && days.find((d) => d.date === v.open_day) ? toast.info('End the session first', { description: 'Its close is the memory.' }) : setFinishing('confirm'))}>
               <CheckCircle2 /> Finish track
             </Button>
-          ) : (
-            <Button variant="ghost" onClick={() => setFinishing('delete')}>
-              <Trash2 /> Delete track
-            </Button>
           )}
+          <Button variant="ghost" disabled={busy} onClick={() => setFinishing('delete')} className="text-muted-fg hover:text-danger">
+            <Trash2 /> Delete
+          </Button>
         </div>
       </header>
 
@@ -310,7 +309,7 @@ function TrackPage({ id }: { id: string }) {
         </Card>
       </div>
 
-      <FinishDialog id={id} step={finishing} setStep={setFinishing} days={days.length} onDone={refresh} />
+      <FinishDialog id={id} step={finishing} setStep={setFinishing} days={days.length} openDay={isActive ? v.open_day : null} onDone={refresh} />
     </div>
   );
 }
@@ -499,8 +498,15 @@ function Excerpt({ track, cite }: { track: string; cite: Cite }) {
 }
 
 function FinishDialog({
-  id, step, setStep, days, onDone,
-}: { id: string; step: 'confirm' | 'delete' | null; setStep: (s: 'confirm' | 'delete' | null) => void; days: number; onDone: () => void }) {
+  id, step, setStep, days, openDay, onDone,
+}: {
+  id: string;
+  step: 'confirm' | 'delete' | null;
+  setStep: (s: 'confirm' | 'delete' | null) => void;
+  days: number;
+  openDay: string | null;
+  onDone: () => void;
+}) {
   const qc = useQueryClient();
   const finish = useMutation({
     mutationFn: () => api.studyFinish(id),
@@ -536,7 +542,7 @@ function FinishDialog({
           <>
             <DialogHeader
               title="Delete the whole track?"
-              description={`Every day's transcript (${days}), the summary and the track itself are removed from this machine. Nothing in the repo is touched.`}
+              description={`Every day's transcript (${days}), the summary and the track itself are removed from this machine.${openDay ? ` The open session of ${openDay} goes too, unsaved.` : ''} Nothing in the repo is touched.`}
             />
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setStep(null)}>Keep it</Button>
@@ -577,9 +583,7 @@ function NewTrackDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
 
   const all = cands.data ?? [];
   const q = query.trim().toLowerCase();
-  const shown = q
-    ? all.filter((c) => label(c).toLowerCase().includes(q)).slice(0, 30)
-    : all.filter((c) => !c.subtree).slice(0, 15);
+  const shown = q ? all.filter((c) => label(c).toLowerCase().includes(q)).slice(0, 8) : [];
   const folders = pick ? all.filter((c) => c.path === pick.path && c.subtree) : [];
 
   const create = useMutation({
@@ -599,28 +603,29 @@ function NewTrackDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         {!pick ? (
           <div className="space-y-2">
             <Input autoFocus placeholder="Search repos and folders — e.g. listener" value={query} onChange={(e) => setQuery(e.target.value)} />
-            <div className="max-h-80 overflow-y-auto rounded-lg border">
-              {cands.isLoading && <div className="p-3 text-sm text-muted-fg">Looking for checkouts…</div>}
-              {!cands.isLoading && shown.length === 0 && <div className="p-3 text-sm text-muted-fg">Nothing matches “{query}”.</div>}
-              {shown.map((c) => (
-                <button
-                  key={c.path + (c.subtree ?? '')}
-                  type="button"
-                  onClick={() => setPick(c)}
-                  className="block w-full border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted"
-                >
-                  <div className="flex items-baseline gap-2 text-sm">
-                    <span className="font-medium">{c.name}</span>
-                    {c.subtree && <span className="font-medium text-accent">› {c.subtree}</span>}
-                    <span className="ml-auto shrink-0 text-[11px] text-muted-fg">
-                      {c.head?.ref ? `${c.head.ref} · ` : ''}{ago(c.touched)}
-                    </span>
-                  </div>
-                  {c.summary && <div className="mt-0.5 line-clamp-1 text-xs text-muted-fg">{c.summary}</div>}
-                </button>
-              ))}
-            </div>
-            {!q && <p className="text-xs text-muted-fg">Most recently touched first. Type to find a folder inside a repo.</p>}
+            {q && (
+              <div className="max-h-80 overflow-y-auto rounded-lg border">
+                {cands.isLoading && <div className="p-3 text-sm text-muted-fg">Looking for checkouts…</div>}
+                {!cands.isLoading && shown.length === 0 && <div className="p-3 text-sm text-muted-fg">Nothing matches “{query}”.</div>}
+                {shown.map((c) => (
+                  <button
+                    key={c.path + (c.subtree ?? '')}
+                    type="button"
+                    onClick={() => setPick(c)}
+                    className="block w-full border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted"
+                  >
+                    <div className="flex items-baseline gap-2 text-sm">
+                      <span className="font-medium">{c.name}</span>
+                      {c.subtree && <span className="font-medium text-accent">› {c.subtree}</span>}
+                      <span className="ml-auto shrink-0 text-[11px] text-muted-fg">
+                        {c.head?.ref ? `${c.head.ref} · ` : ''}{ago(c.touched)}
+                      </span>
+                    </div>
+                    {c.summary && <div className="mt-0.5 line-clamp-1 text-xs text-muted-fg">{c.summary}</div>}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-4">

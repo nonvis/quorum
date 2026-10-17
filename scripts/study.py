@@ -17,7 +17,7 @@ by the program and covered files are hashed to notice change, with no git comman
   quorum study new <track> --project <p> --repo <path> [--subtree <dir>] --goal "<goal>"
   quorum study list | show <track>
   quorum study start <track> ["<first message>"] | say <track> "<message>" | end <track>
-  quorum study finish <track> [--delete] | delete <track>
+  quorum study finish <track> [--delete] | delete <track> [--yes: an active track too]
   flags: --fake (the fake tutor, no calls) · --events (JSON lines for the web)
 """
 import hashlib
@@ -398,10 +398,12 @@ class Store:
         actives.sort(key=lambda x: x["last"] or x["created"][:10], reverse=True)
         return actives + [x for x in out if x["status"] != "active"]
 
-    def delete(self, tid):
+    def delete(self, tid, active_ok=False):
+        """Remove a track whole. A finished one always; an active one only when asked outright (open days are
+        dropped with it, unclosed)."""
         t = self.track(tid)
-        if t["status"] != "finished":
-            raise StudyError("only a finished track is deleted: finish %s first" % tid)
+        if t["status"] != "finished" and not active_ok:
+            raise StudyError("%s is still active: finish it first, or delete it outright (--yes)" % tid)
         shutil.rmtree(self._tdir(tid))
 
 
@@ -828,7 +830,7 @@ def main(argv):
                 print("track %s finished; `quorum study delete %s` removes it" % (tid, tid))
             return 0
         if sub == "delete":
-            store.delete(tid)
+            store.delete(tid, active_ok=bool(opts.get("--yes")))
             print("track %s deleted" % tid)
             return 0
         raise StudyError("unknown study command %r" % sub)

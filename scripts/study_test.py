@@ -278,6 +278,13 @@ class FinishTest(Case):
         self.store.delete("listener")
         self.assertEqual(self.store.tracks(), [])
 
+    def test_an_active_track_is_deleted_when_asked_outright(self):
+        self.new()
+        study.start(self.store, "listener", self.model, DAY1, message="a")      # an open day, never closed
+        self.store.delete("listener", active_ok=True)
+        self.assertEqual(self.store.tracks(), [])
+        self.assertFalse(self.repo.joinpath(".quorum").exists())
+
     def test_tracks_list(self):
         self.new()
         study.start(self.store, "listener", self.model, DAY1, message="a")
@@ -339,6 +346,13 @@ class CliTest(Case):
         self.assertEqual(r.returncode, 0, r.stderr)
         r = self.run_cli("list")
         self.assertIn("listener", r.stdout)
+
+    def test_cli_delete_an_active_track_needs_yes(self):
+        self.run_cli("new", "listener", "--project", "bastion", "--repo", str(self.repo), "--goal", "g")
+        self.assertEqual(self.run_cli("delete", "listener").returncode, 1)
+        r = self.run_cli("delete", "listener", "--yes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.store.tracks(), [])
 
     def test_cli_open_day_is_refused_with_its_date(self):
         self.run_cli("new", "listener", "--project", "bastion", "--repo", str(self.repo), "--goal", "g")

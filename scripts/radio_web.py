@@ -630,7 +630,9 @@ class Handler(BaseHTTPRequestHandler):
             if len(rest) == 1 and m == "GET":
                 return self._send(200, a.study_track(tid))
             if len(rest) == 1 and m == "DELETE":
-                a.study.delete(tid)
+                if a.study_running(tid):
+                    raise HttpError(409, "the tutor is still answering; delete after it finishes")
+                a.study.delete(tid, active_ok=True)
                 return self._send(200, {"deleted": tid})
             if len(rest) == 3 and rest[1] == "days" and m == "GET":
                 return self._send(200, a.study_day(tid, rest[2]))
