@@ -1,6 +1,6 @@
 {
-  "v": 3,
-  "note": "Radio's cast: specialties that each answer ONE question the owner asks at the end of a day, from a source no other specialty reads, with a never-says list, so two of them can't say the same thing. The same cast for every project (one project per episode). Each is bound to one Kokoro voice and one stereo position for its lifetime; radio/voices.lock records every voice ever held.",
+  "v": 4,
+  "note": "Radio's cast: specialties that each answer ONE question the owner asks at the end of a day, from a source no other specialty reads, with a never-says list, so two of them can't say the same thing. The same cast for every project (one project per episode). Each is bound to one Kokoro voice and one stereo position for its lifetime; radio/voices.lock records every voice ever held. Brainstorm (QR-26): each specialty also has a brainstorm angle (the one question it answers about the owner's question) and its own source kinds; a specialty added from the web (QR-27) is brainstorm-only (`recap: false`) and reads the question's general hits.",
   "cast": [
     {
       "id": "host",
@@ -26,6 +26,12 @@
         ],
         "speaks_when": "there are commits",
         "never": "whether it's proven, why it was decided, what's next"
+      },
+      "brainstorm": {
+        "angle": "What would it take to build, and what already exists?",
+        "sources": [
+          "code"
+        ]
       }
     },
     {
@@ -41,6 +47,12 @@
         ],
         "speaks_when": "a claim on air has evidence to read",
         "never": "what changed (it cites the Builder's line number); never an open doubt: 'proven by X' or 'not proven yet, the one check is Y'"
+      },
+      "brainstorm": {
+        "angle": "What is true today, and what would prove the idea works?",
+        "sources": [
+          "evidence"
+        ]
       }
     },
     {
@@ -55,6 +67,12 @@
         ],
         "speaks_when": "a ruling was taken or a design note changed",
         "never": "code detail, what's owed"
+      },
+      "brainstorm": {
+        "angle": "Does it fit what we decided, or break it?",
+        "sources": [
+          "decision"
+        ]
       }
     },
     {
@@ -69,6 +87,12 @@
         ],
         "speaks_when": "something user-visible changed, or the product's story moved",
         "never": "internals, proof, next steps"
+      },
+      "brainstorm": {
+        "angle": "Would a user want it, and what would they notice?",
+        "sources": [
+          "surface"
+        ]
       }
     },
     {
@@ -83,6 +107,12 @@
         ],
         "speaks_when": "invited (--with operator), or something broke in the window",
         "never": "anything already done; on a break, anything but the break and the one act that fixes it"
+      },
+      "brainstorm": {
+        "angle": "What would it cost to run, and what would wait on Sang?",
+        "sources": [
+          "owed"
+        ]
       }
     }
   ]

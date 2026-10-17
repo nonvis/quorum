@@ -23,7 +23,38 @@ import radio  # noqa: E402
 
 CAST = REPO / "radio" / "cast.json"
 LOCK = REPO / "radio" / "voices.lock"
-PROJECTS = REPO / "radio" / "projects.json"
+import radio_store  # noqa: E402
+
+# The projects file lives in the vault (QR-24); the fixture vault gets this copy.
+PROJECTS_JSON = {'v': 1,
+                 'note': "Radio's projects (QR-8, QR-24): briefing notes, vault folders, repos, concept note; `active` defaults to "
+                         'true.',
+                 'projects': {'meridian': {'name': 'Meridian',
+                                           'notes': ['01_Projects/Meridian/08 - *.md'],
+                                           'folders': ['01_Projects/Meridian'],
+                                           'repos': ['meridian'],
+                                           'concept': ['01_Projects/Meridian/00 - *.md']},
+                              'permafrost': {'name': 'Permafrost',
+                                             'notes': ['01_Projects/Permafrost/28 - *.md', '01_Projects/Loqua/MVP/00 - *.md'],
+                                             'folders': ['01_Projects/Permafrost', '01_Projects/Loqua'],
+                                             'repos': ['permafrost', 'loqua-passkey'],
+                                             'concept': ['01_Projects/Permafrost/00 - *.md']},
+                              'sidebar': {'name': 'Sidebar',
+                                          'notes': ['01_Projects/Sidebar/13 - *.md'],
+                                          'folders': ['01_Projects/Sidebar'],
+                                          'repos': ['sidebar', 'sidebar-screen'],
+                                          'concept': ['01_Projects/Sidebar/00 - *.md']},
+                              'bastion': {'name': 'Bastion',
+                                          'notes': ['01_Projects/Partners/Samsung/Bastion/21 - *.md',
+                                                    '01_Projects/Partners/Samsung/Linear/00 - *.md'],
+                                          'folders': ['01_Projects/Partners/Samsung'],
+                                          'repos': [],
+                                          'concept': ['01_Projects/Partners/Samsung/Bastion/00 - *.md']},
+                              'quorum': {'name': 'Quorum',
+                                         'notes': ['01_Projects/Quorum/15 - *.md'],
+                                         'folders': ['01_Projects/Quorum'],
+                                         'repos': ['quorum'],
+                                         'concept': ['01_Projects/Quorum/00 - *.md']}}}
 
 
 def git(cwd, *args, env=None):
@@ -59,7 +90,8 @@ class CastCase(unittest.TestCase):
     def test_the_tracked_cast_is_the_perspective_table(self):
         """QR-9/QR-12: the perspective specialties, re-bound once."""
         cast = radio.load_cast(CAST, LOCK)
-        got = {d["id"]: (d["name"], d["voice"], d["pan"]) for d in cast}
+        got = {d["id"]: (d["name"], d["voice"], d["pan"]) for d in cast if d["recap"]}
+        # Specialties added from the web later are brainstorm-only (QR-27): they never join this table.
         self.assertEqual(got, {
             "host": ("Host", "af_heart", "centre"),
             "builder": ("Builder", "am_michael", "left"),
@@ -69,7 +101,10 @@ class CastCase(unittest.TestCase):
             "product": ("Product", "af_bella", "far right"),
         })
         for d in cast:
-            self.assertEqual(set(d) - {"pan_value"}, {"id", "name", "voice", "pan", "reads"})
+            if not d["recap"]:
+                continue
+            self.assertEqual(set(d) - {"pan_value", "recap"},
+                             {"id", "name", "voice", "pan", "reads"} | ({"brainstorm"} if d["id"] != "host" else set()))
             if d["id"] != "host":
                 self.assertTrue(d["reads"]["question"].endswith("?"))
                 self.assertTrue(d["reads"]["never"])
@@ -169,15 +204,23 @@ class CastCase(unittest.TestCase):
 
 
 class ProjectsCase(unittest.TestCase):
-    def test_the_projects_file_maps_each_project(self):
-        """QR-8."""
-        pr = radio.load_projects(PROJECTS)
-        self.assertEqual(sorted(pr), ["bastion", "meridian", "permafrost", "quorum", "sidebar"])
-        self.assertEqual(pr["sidebar"]["repos"], ["sidebar", "sidebar-screen"])
-        self.assertEqual(pr["permafrost"]["repos"], ["permafrost", "loqua-passkey"])
-        self.assertEqual(pr["bastion"]["repos"], [])
-        for p in pr.values():
-            self.assertTrue(p["notes"] and p["folders"] and p["name"] and p["concept"])
+    def test_the_projects_file_is_read_from_the_vault(self):
+        """QR-8, QR-24: the file is in the vault's 06_Metadata, each project active unless it says not."""
+        with tempfile.TemporaryDirectory() as td:
+            v = Path(td)
+            (v / "06_Metadata").mkdir()
+            d = json.loads(json.dumps(PROJECTS_JSON))
+            d["projects"]["bastion"]["active"] = False
+            (v / "06_Metadata" / "quorum-projects.json").write_text(json.dumps(d))
+            pr = radio.load_projects(v)
+            self.assertEqual(sorted(pr), ["bastion", "meridian", "permafrost", "quorum", "sidebar"])
+            self.assertEqual(pr["sidebar"]["repos"], ["sidebar", "sidebar-screen"])
+            self.assertTrue(pr["sidebar"]["active"])
+            self.assertFalse(pr["bastion"]["active"])
+
+    def test_the_repo_no_longer_tracks_a_projects_file(self):
+        """QR-24: vault paths stay out of the public repo."""
+        self.assertFalse((REPO / "radio" / "projects.json").exists())
 
 
 # ── a fixture: a git vault + repos, "now" = 14:00 KST ──────────────────────
@@ -192,9 +235,18 @@ class Fixture:
         self.home = root / "home"
         self.vault = self.home / "vault"
         self.memory = root / "memory"
+        self.store_root = root / "store"
+        self.store = radio_store.Store(self.store_root)
         for p in (self.vault / "06_Metadata", self.memory, self.home / "nonvis"):
             p.mkdir(parents=True)
         (self.vault / "06_Metadata" / "quorum-repos.txt").write_text("# allowlist\nsidebar\nmeridian\n")
+        (self.vault / "06_Metadata" / "quorum-projects.json").write_text(json.dumps(PROJECTS_JSON, indent=2))
+        # A daily Sidebar recap recorded earlier in the week, in the store (QR-19).
+        e = self.store.new("recap", "sidebar", NOW - timedelta(days=2), {"title": "Sidebar (2026-10-15)",
+                                                                         "label": "2026-10-15", "status": "ready"})
+        self.store.write_script(e, {"lines": [{"i": 1, "speaker": "builder", "name": "Builder", "on_air": True,
+                                               "text": "I know the moderator gate landed."}]}, "# x\n")
+        self.store.keep(e, True)
         git(self.vault, "init", "-q", "-b", "main")
         self.commit("2026-09-01T00:00:00Z")
         old = NOW - timedelta(days=3)
@@ -277,11 +329,11 @@ class Fixture:
 
     def env(self):
         return {"HOME": str(self.home), "QUORUM_VAULT": str(self.vault), "QUORUM_MEMORY": str(self.memory),
-                "QUORUM_RADIO_NOW": NOW.isoformat()}
+                "QUORUM_RADIO_NOW": NOW.isoformat(), "QUORUM_RADIO_STORE": str(self.store_root)}
 
     def inputs(self, project="sidebar", since=TODAY, until=NOW, **kw):
-        return radio.gather_project(project, radio.load_projects(PROJECTS), self.vault, self.memory,
-                                    since, until, [self.home / "nonvis"], **kw)
+        return radio.gather_project(project, radio.load_projects(self.vault), self.vault, self.memory,
+                                    since, until, [self.home / "nonvis"], store=self.store, **kw)
 
 
 class InputsCase(unittest.TestCase):
@@ -358,7 +410,7 @@ class InputsCase(unittest.TestCase):
         self.assertEqual(week["label"], "2026-10-11..2026-10-17")
         self.assertEqual(week["per_day"], {"2026-10-13": 2, "2026-10-17": 3})
         self.assertIn("moderator", [t["theme"] for t in week["themes"]])
-        self.assertEqual([e["title"] for e in week["episodes"]], ["03 - Sidebar (2026-10-15)"])
+        self.assertEqual([e["title"] for e in week["episodes"]], ["Sidebar (2026-10-15)"])   # from the store (QR-19)
         self.assertIn("I know the moderator gate landed.", week["episodes"][0]["transcript"])
         cast = radio.load_cast(CAST, LOCK)
         b = radio.sources_for_specialty(cast, "builder", radio.project_sources(week))
@@ -618,7 +670,7 @@ class Recorder(radio.FakeModel):
         self.calls = []
 
     def __call__(self, role, system, user, view):
-        key = (role, view.get("mode") if role == "host" else view.get("specialty"))
+        key = (role, view.get("mode") if role in ("host", "bhost") else view.get("specialty"))
         self.calls.append((key, view))
         o = self.overrides.get(key)
         if isinstance(o, list):
@@ -966,23 +1018,28 @@ class NoteAndVoiceCase(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_the_note_is_named_for_the_project_and_numbered_in_the_folder(self):
-        d = self.fx.vault / "01_Projects" / "Quorum" / "Radio"
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "02 - Night Recap (2026-10-17).md").write_text("x")   # the fixture also holds 03 - Sidebar (2026-10-15)
-        p = radio.write_note(self.ep, self.cast, self.fx.vault, day="2026-10-17")
-        self.assertEqual(p, d / "04 - Sidebar (2026-10-17).md")
-        t = p.read_text()
+    def test_the_script_is_markdown_ready_to_paste(self):
+        """QR-19: script.md is the export: frontmatter, the cast, one line per speaker turn with its source."""
+        t = radio.script_md(self.ep, self.cast, {"kind": "recap", "title": "Sidebar (2026-10-17)",
+                                                 "created": "2026-10-17T05:00:00Z"})
         fm = t.split("---")[1]
-        for k in ("title:", "date: 2026-10-17", "tags:", "summary:"):
+        for k in ('title: "Sidebar (2026-10-17)"', "date: 2026-10-17", "tags:", "summary:"):
             self.assertIn(k, fm)
         self.assertIn("calls: %d of 14" % self.ep["calls"]["total"], t)
         self.assertIn("vault: rev `%s`" % self.inp["vault_rev"], t)
+        self.assertIn("## Script", t)
         self.assertIn("## Verifier reads", t)
         self.assertIn("git -C ~/nonvis/sidebar", t)
         for l in self.ep["lines"]:
             if l["on_air"]:
+                self.assertIn(l["text"], t)
                 self.assertIn(radio.voice_of(self.cast, l["speaker"]), t)
+
+    def test_an_on_line_callback_sees_each_line_as_it_lands(self):
+        seen = []
+        ep = radio.run_episode(self.inp, self.cast, radio.FakeModel(), vault=self.fx.vault, memory=self.fx.memory,
+                               on_line=seen.append)
+        self.assertEqual([l["i"] for l in seen], [l["i"] for l in ep["lines"]])
 
     def test_the_voice_job_binds_each_line_to_its_speakers_voice_and_pan(self):
         job = radio.voice_job(self.ep, self.cast)
@@ -1046,21 +1103,48 @@ class CliCase(unittest.TestCase):
         return subprocess.run([sys.executable, str(HERE / "quorum_cli.py"), "radio"] + list(args),
                               env=env, capture_output=True, text=True)
 
-    def notes(self):
-        d = self.fx.vault / "01_Projects" / "Quorum" / "Radio"
-        return sorted(x for x in d.glob("*.md") if x.name != "03 - Sidebar (2026-10-15).md") if d.is_dir() else []
+    def episodes(self):
+        return [m for m in self.fx.store.list(NOW) if m["title"] != "Sidebar (2026-10-15)"]
 
-    def test_radio_project_fake_no_voice_writes_the_note(self):
+    def test_radio_project_fake_no_voice_writes_to_the_store_not_the_vault(self):
+        """QR-19: the episode goes to the per-host store, unkept; nothing new in the vault."""
         p = self.cli("sidebar", "--fake", "--no-voice")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual([n.name for n in self.notes()], ["04 - Sidebar (2026-10-17).md"])
-        self.assertIn("04 - Sidebar (2026-10-17).md", p.stdout)
+        [m] = self.episodes()
+        self.assertEqual((m["kind"], m["project"], m["title"], m["status"], m["kept"]),
+                         ("recap", "sidebar", "Sidebar (2026-10-17)", "unvoiced", False))
+        self.assertIn(m["id"], p.stdout)
+        self.assertIn("Builder", self.fx.store.script_md(m["id"]))
+        self.assertTrue(self.fx.store.script(m["id"])["lines"])
+        self.assertEqual([x.name for x in (self.fx.vault / "01_Projects" / "Quorum" / "Radio").iterdir()],
+                         ["03 - Sidebar (2026-10-15).md"])   # only the fixture's old episode note
+
+    def test_events_stream_each_line_then_done(self):
+        p = self.cli("sidebar", "--fake", "--no-voice", "--events")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        ev = [json.loads(x) for x in p.stdout.splitlines()]
+        self.assertEqual(ev[0]["event"], "started")
+        self.assertEqual(ev[-1]["event"], "done")
+        self.assertEqual(ev[-1]["id"], ev[0]["id"])
+        lines = [e for e in ev if e["event"] == "line"]
+        self.assertTrue(lines)
+        self.assertEqual(lines[0]["line"]["speaker"], "host")
+        self.assertIn("name", lines[0]["line"])
 
     def test_nothing_today_refuses_at_zero_cost(self):
         p = self.cli("meridian", "--no-voice")  # not --fake: a model call would fail the test env
         self.assertEqual(p.returncode, 1)
         self.assertIn("nothing on meridian today", p.stderr)
-        self.assertEqual(self.notes(), [])
+        self.assertEqual(self.episodes(), [])
+
+    def test_an_inactive_project_is_refused(self):
+        f = self.fx.vault / "06_Metadata" / "quorum-projects.json"
+        d = json.loads(f.read_text())
+        d["projects"]["sidebar"]["active"] = False
+        f.write_text(json.dumps(d))
+        p = self.cli("sidebar", "--fake", "--no-voice")
+        self.assertEqual(p.returncode, 2)
+        self.assertIn("inactive", p.stderr)
 
     def test_inputs_prints_the_project_json_for_today(self):
         p = self.cli("inputs", "sidebar")
@@ -1072,17 +1156,17 @@ class CliCase(unittest.TestCase):
     def test_with_operator_and_an_unknown_with(self):
         p = self.cli("sidebar", "--fake", "--no-voice", "--with", "operator")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertIn("| Operator | `am_puck` |", self.notes()[0].read_text().split("## Transcript")[1])
+        self.assertIn("| Operator | `am_puck` |", self.fx.store.script_md(self.episodes()[0]["id"]).split("## Script")[0])
         p = self.cli("sidebar", "--fake", "--no-voice", "--with", "builder")
         self.assertEqual(p.returncode, 2)
 
-    def test_a_week_episode_is_named_for_its_range(self):
+    def test_a_week_episode_is_titled_for_its_range(self):
         p = self.cli("sidebar", "week", "--fake", "--no-voice")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual([n.name for n in self.notes()], ["04 - Sidebar (2026-10-11..2026-10-17).md"])
-        fm = self.notes()[0].read_text().split("---")[1]
-        self.assertIn("\ndate: 2026-10-17\n", fm)          # a range's note is dated by its last day
-        self.assertIn('title: "Sidebar (2026-10-11..2026-10-17)"', fm)
+        [m] = self.episodes()
+        self.assertEqual((m["title"], m["label"]), ("Sidebar (2026-10-11..2026-10-17)", "2026-10-11..2026-10-17"))
+        fm = self.fx.store.script_md(m["id"]).split("---")[1]
+        self.assertIn("\ndate: 2026-10-17\n", fm)          # a range's script is dated by its last day
 
     def test_a_bad_range(self):
         p = self.cli("sidebar", "tomorrow", "--fake", "--no-voice")
@@ -1098,6 +1182,217 @@ class CliCase(unittest.TestCase):
         p = self.cli("dance")
         self.assertEqual(p.returncode, 2)
         self.assertIn("sidebar", p.stderr)
+
+
+# ── brainstorm (QR-26, QR-27) ────────────────────────────────────────────────
+
+QUESTION = "Should the moderator gate run before the screen or after it?"
+
+
+def fake_search(q):
+    return [{"path": "vault:01_Projects/Sidebar/58 - Radio Moves to Quorum (Design, 2026-10-17).md",
+             "title": "Radio Moves to Quorum (Design, 2026-10-17)", "summary": "Radio leaves Sidebar", "snippet": "QR-5"},
+            {"path": "vault:01_Projects/Sidebar/57 - The Violence Gate Wired In (Build Log, 2026-10-17).md",
+             "title": "The Violence Gate Wired In (Build Log, 2026-10-17)", "summary": "31 tests green", "snippet": ""},
+            {"path": "vault:01_Projects/Sidebar/00 - Concept.md", "title": "Concept", "summary": "agents talk", "snippet": ""},
+            {"path": "vault:01_Projects/Sidebar/40 - Old Note.md", "title": "Old Note", "summary": "old", "snippet": ""},
+            {"path": "memory:feedback_x.md", "title": "x", "summary": "a memory", "snippet": ""},
+            {"path": "repo:sidebar:docs/moderator.md", "title": "moderator", "summary": "", "snippet": "the gate runs first"}]
+
+
+class BrainstormCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(Path(self.tmp.name))
+        self.cast = radio.load_cast(CAST, LOCK)
+        self.inp = self.inputs()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def inputs(self, **kw):
+        return radio.gather_brainstorm("sidebar", radio.load_projects(self.fx.vault), self.fx.vault, self.fx.memory,
+                                       QUESTION, [self.fx.home / "nonvis"], search=fake_search, **kw)
+
+    def run_bs(self, overrides=None, chosen=("builder", "verifier", "architect", "product"), **kw):
+        m = Recorder(overrides)
+        return radio.run_brainstorm(self.inp, self.cast, m, list(chosen), **kw), m
+
+    def test_the_tracked_cast_gives_each_specialty_a_brainstorm_angle(self):
+        for d in self.cast:
+            if d["id"] != "host":
+                self.assertTrue(d["brainstorm"]["angle"].endswith("?"), d["id"])
+                self.assertTrue(d["brainstorm"]["sources"], d["id"])
+
+    def test_the_sources_are_cut_into_disjoint_slices(self):
+        src = radio.brainstorm_sources(self.inp)
+        kinds = {s["kind"] for s in src}
+        self.assertTrue({"code", "decision", "surface", "evidence", "hits"} <= kinds, kinds)
+        by = lambda sid: {s["kind"] for s in radio.brainstorm_slice(self.cast, sid, src)}
+        self.assertIn("code", by("builder"))
+        self.assertIn("decision", by("architect"))
+        self.assertIn("surface", by("product"))
+        self.assertIn("evidence", by("verifier"))
+        seen = {}
+        for sid in ("builder", "verifier", "architect", "product", "operator"):
+            for k in {d["id"]: d for d in self.cast}[sid]["brainstorm"]["sources"]:
+                self.assertNotIn(k, seen, "%s and %s both read %s" % (seen.get(k), sid, k))
+                seen[k] = sid
+
+    def test_hits_are_classed_by_their_note(self):
+        src = {s["ref"]: s["kind"] for s in radio.brainstorm_sources(self.inp)}
+        self.assertEqual(src["01_Projects/Sidebar/58 - Radio Moves to Quorum (Design, 2026-10-17).md"], "decision")
+        self.assertEqual(src["01_Projects/Sidebar/57 - The Violence Gate Wired In (Build Log, 2026-10-17).md"], "evidence")
+        self.assertEqual(src["sidebar:docs/moderator.md"], "code")
+        self.assertEqual(src["01_Projects/Sidebar/40 - Old Note.md"], "hits")
+        self.assertEqual(src["memory:feedback_x.md"], "hits")
+
+    def test_the_inputs_carry_the_question_the_repos_and_recent_commits(self):
+        self.assertEqual(self.inp["question"], QUESTION)
+        self.assertEqual([r["name"] for r in self.inp["repos"]], ["sidebar", "sidebar-screen"])
+        self.assertTrue(any("violence gate" in c["subject"] for c in self.inp["commits"]))
+
+    def test_a_session_opens_asks_everyone_chosen_and_signs_off_with_threads(self):
+        ep, m = self.run_bs()
+        on = on_air(ep)
+        self.assertEqual((on[0]["speaker"], on[0]["kind"]), ("host", "open"))
+        self.assertEqual((on[-1]["speaker"], on[-1]["kind"]), ("host", "signoff"))
+        spoke = {l["speaker"] for l in on if l["speaker"] != "host"}
+        self.assertEqual(spoke, {"builder", "verifier", "architect", "product"})
+        self.assertTrue(ep["threads"])
+        self.assertLessEqual(ep["calls"]["total"], 20)
+        self.assertEqual(ep["kind"], "brainstorm")
+        self.assertEqual(ep["question"], QUESTION)
+
+    def test_only_the_chosen_specialties_sit(self):
+        ep, m = self.run_bs(chosen=("builder", "product"))
+        self.assertEqual({l["speaker"] for l in on_air(ep)} - {"host"}, {"builder", "product"})
+
+    def test_a_host_pick_outside_the_room_goes_to_someone_unasked(self):
+        ep, m = self.run_bs({("bhost", "next"): [J({"action": "ask", "to": "operator", "question": "What would it cost?"})]},
+                            chosen=("builder", "product"))
+        self.assertNotIn("operator", {l["speaker"] for l in on_air(ep)})
+
+    def test_a_host_question_that_claims_something_is_replaced_by_the_angle(self):
+        ep, m = self.run_bs({("bhost", "next"): [J({"action": "ask", "to": "product",
+                                                     "question": "The gate is slow. Would users notice?"})]})
+        asks = [l["text"] for l in on_air(ep) if l["speaker"] == "host" and l["kind"] == "ask"]
+        self.assertNotIn("The gate is slow. Would users notice?", asks)
+        self.assertTrue(any(a.startswith("Product, ") for a in asks), asks)
+
+    def test_a_reply_names_the_line_it_answers(self):
+        ep, m = self.run_bs({("bhost", "next"): [J({"action": "reply", "to": "architect", "about": 2,
+                                                     "question": "Architect, does that fit what we ruled?"})]})
+        a = next(l for l in on_air(ep) if l["speaker"] == "architect")
+        self.assertEqual(a["about"], 2)
+
+    def test_a_claim_without_a_source_is_said_as_a_guess(self):
+        ep, m = self.run_bs({("bdesk", "product"): [J({"answer": "Users would feel the delay.", "label": "grounded",
+                                                        "source": "none"})]})
+        p = next(l for l in on_air(ep) if l["speaker"] == "product")
+        self.assertTrue(p["text"].startswith("My guess is"), p["text"])
+        self.assertEqual(p["label"], "inferred")
+
+    def test_the_cap_holds_and_the_signoff_is_reserved(self):
+        never = lambda v: J({"action": "ask", "to": "builder", "question": "What else would it take?"})
+        ep, m = self.run_bs({("bhost", "next"): never}, cap=9)
+        self.assertLessEqual(ep["calls"]["total"], 9)
+        self.assertEqual(on_air(ep)[-1]["kind"], "signoff")
+
+    def test_two_passes_in_a_row_wrap_the_session(self):
+        pas = lambda v: J({"pass": True})
+        ep, m = self.run_bs({("bdesk", s): pas for s in ("builder", "architect", "product", "verifier")}
+                            | {("verify", "verifier"): J({"reads": []})})
+        self.assertLess(ep["calls"]["total"], 12)
+        self.assertIn("wrap", " ".join(ep["log"]))
+
+    def test_earlier_scripts_are_context_for_everyone(self):
+        ctx = [{"id": "x", "title": "Earlier", "question": "Before?", "transcript": "Builder: the gate exists."}]
+        self.inp = self.inputs(context=ctx)
+        ep, m = self.run_bs()
+        for key, view in m.calls:
+            if key[0] in ("bhost", "bdesk"):
+                self.assertEqual(view.get("context"), ["x"], key)
+
+    def test_the_verifier_reads_before_it_speaks(self):
+        ep, m = self.run_bs()
+        v = next(l for l in on_air(ep) if l["speaker"] == "verifier")
+        self.assertTrue(v.get("evidence"))
+
+    def test_the_script_lists_the_question_and_the_open_threads(self):
+        ep, m = self.run_bs()
+        t = radio.script_md(ep, self.cast, {"kind": "brainstorm", "title": QUESTION, "created": "2026-10-17T05:00:00Z"})
+        self.assertIn("## Question", t)
+        self.assertIn(QUESTION, t)
+        self.assertIn("## Open threads", t)
+
+
+class SpecialtyCase(unittest.TestCase):
+    """QR-27: a specialty brought in from the web takes an unused voice for life."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        d = Path(self.tmp.name)
+        self.cast_p, self.lock_p = d / "cast.json", d / "voices.lock"
+        shutil.copy(CAST, self.cast_p)
+        shutil.copy(LOCK, self.lock_p)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def add(self, **kw):
+        s = {"id": "contrarian", "name": "Contrarian", "voice": "bm_george", "pan": "far left",
+             "angle": "What is the strongest case against it?"}
+        s.update(kw)
+        return radio.add_specialty(s, self.cast_p, self.lock_p)
+
+    def test_a_new_specialty_is_brainstorm_only_and_locked(self):
+        self.add()
+        cast = radio.load_cast(self.cast_p, self.lock_p)
+        c = next(d for d in cast if d["id"] == "contrarian")
+        self.assertFalse(c["recap"])
+        self.assertEqual(c["brainstorm"], {"angle": "What is the strongest case against it?", "sources": ["hits"]})
+        self.assertEqual(json.loads(self.lock_p.read_text())["voices"]["contrarian"], "bm_george")
+        self.assertNotIn("contrarian", radio.ORDER)
+
+    def test_a_held_or_retired_voice_is_refused(self):
+        for v in ("af_heart", "af_nicole"):
+            with self.assertRaises(radio.CastError):
+                self.add(voice=v)
+
+    def test_a_bad_id_an_existing_id_or_a_non_question_is_refused(self):
+        for kw in ({"id": "Contra rian"}, {"id": "builder"}, {"angle": "be contrary"}, {"pan": "up"}):
+            with self.assertRaises(radio.CastError):
+                self.add(**kw)
+
+    def test_free_voices_exclude_held_and_retired(self):
+        free = radio.free_voices(self.cast_p, self.lock_p)
+        self.assertNotIn("af_heart", free)
+        self.assertNotIn("af_nicole", free)
+        self.assertIn("bm_george", free)
+
+
+class BrainstormCliCase(unittest.TestCase):
+    setUp, tearDown, cli, episodes = CliCase.setUp, CliCase.tearDown, CliCase.cli, CliCase.episodes
+
+    def test_brainstorm_writes_a_brainstorm_episode(self):
+        p = self.cli("brainstorm", "sidebar", QUESTION, "--fake", "--no-voice", "--with", "builder,product")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        [m] = self.episodes()
+        self.assertEqual((m["kind"], m["question"], m["specialties"]), ("brainstorm", QUESTION, ["builder", "product"]))
+        self.assertIn("## Open threads", self.fx.store.script_md(m["id"]))
+
+    def test_brainstorm_refusals(self):
+        self.assertEqual(self.cli("brainstorm", "sidebar", "", "--fake").returncode, 2)
+        self.assertEqual(self.cli("brainstorm", "sidebar", QUESTION, "--fake", "--with", "dancer").returncode, 2)
+        self.assertEqual(self.cli("brainstorm", "sidebar", QUESTION, "--fake", "--context", "nope").returncode, 2)
+
+    def test_brainstorm_takes_an_earlier_script_as_context(self):
+        first = self.fx.store.list(NOW)[0]["id"]
+        p = self.cli("brainstorm", "sidebar", QUESTION, "--fake", "--no-voice", "--context", first)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        m = next(x for x in self.episodes() if x["kind"] == "brainstorm")
+        self.assertEqual(m["context"], [first])
 
 
 class SpendCase(unittest.TestCase):
