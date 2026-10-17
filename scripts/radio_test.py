@@ -335,6 +335,12 @@ class InputsCase(unittest.TestCase):
                          "---\nsummary: \"%s\"\n---\n# W\n" % text, NOW - timedelta(minutes=20))
             self.assertIn(signal, [b["signal"] for b in self.fx.inputs()["breaks"]], text)
 
+    def test_daemon_code_is_not_the_user_visible_surface(self):
+        for p, want in (("apps/daemon/src/index.ts", False), ("apps/web/src/Shell.tsx", True),
+                        ("docs/runbook.md", True), ("README.md", True), ("src/cli/main.py", True),
+                        ("packages/core/src/radio.ts", False)):
+            self.assertEqual(bool(radio.SURFACE_PATH.search(p)), want, p)
+
     def test_a_fail_floor_row_already_there_before_the_window_is_no_break(self):
         """QR-14 'broke in the window': an Owed row carried over from before today is routine."""
         self.fx.note("01_Projects/Sidebar/13 - Briefing — Where Sidebar Is (rolling).md",
@@ -579,7 +585,8 @@ class RoundCase(unittest.TestCase):
         self.assertTrue(v["text"].startswith("Proven"), v["text"])
         self.assertEqual(v["verdict"], "proven")
         ask = on_air(ep)[on_air(ep).index(v) - 1]
-        self.assertIn("line %d" % b["i"], ask["text"])
+        self.assertEqual(ask["text"], self.question("verifier"))   # spoken: the question only
+        self.assertEqual(ask["about"], b["i"])                      # the line # is in the transcript
 
     def test_not_proven_names_the_one_check_or_is_not_aired(self):
         ep, m = self.run_ep({("desk", "verifier"): J({"verdict": "not_proven", "answer": "the merge shows no test run.",

@@ -259,7 +259,7 @@ def _frontmatter_summary(text):
 EVIDENCE_NOTE = re.compile(r"Build Log|\bWalk\b|\bGate\b|\bTests?\b|Results?\b|Census|Probe|Measure|Benchmark|Audit|Verification", re.I)
 DECISION_NOTE = re.compile(r"Design|Decision|Ruling|\bSpec\b|Architecture|\bPlan\b", re.I)
 SURFACE_NOTE = re.compile(r"Pitch|Concept|Story|Deck|Product|Guide|Runbook|\bUX\b|Onboarding|README", re.I)
-SURFACE_PATH = re.compile(r"(^|/)(docs?|ui|web|app|apps|frontend|components|pages|public|cli)/|(^|/)README|"
+SURFACE_PATH = re.compile(r"(^|/)(docs?|ui|web|app|frontend|components|pages|public|cli)/|(^|/)README|"
                           r"\.(tsx|jsx|css|html|svelte|vue)$", re.I)
 
 # QR-14: what counts as "something broke in the window", read mechanically.
@@ -772,7 +772,7 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
         return add(speaker=sid, kind="answer", text=spoken, label=label, source=s, reason="asked: " + q)
 
     def verify(target):
-        q = "%s The Builder's line %d." % (question("verifier"), target["i"])
+        q = question("verifier")  # spoken as the question; the line it checks is in `about`
         host_line("ask", q, "the Verifier reads the evidence for line %d" % target["i"], about=target["i"])
         asked.append("verifier")
         rv = {"role": "verify", "specialty": "verifier", "target": target["i"], "claim": target["text"],
