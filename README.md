@@ -149,8 +149,9 @@ answer a host. The listener is the owner, so there is no screen or trust gate.
   (no tools, safe mode) run from `~/.cache/quorum/radio/session`, so
   `quorum spend --project ~/.cache/quorum/radio/session` meters it; `--fake`
   uses a deterministic stand-in. If the first call fails nothing is written.
-- The episode is written to `<vault>/01_Projects/Quorum/Radio/NN - <Topic>
-  (YYYY-MM-DD).md` (cast, transcript with speaker / voice / line / source /
+- The episode is written as a note `NN - <Topic> (YYYY-MM-DD).md` in the
+  vault's radio folder (`RADIO_DIR` in `scripts/radio.py`), recording the vault
+  rev it read (cast, transcript with speaker / voice / line / source /
   the host's pick reason, the program log, the call count, the spend line) and
   voiced to an MP3 beside it (`--no-voice` skips it). Play it with `afplay`.
 - **`radio-voice/`** is the voice sidecar, a separate Node package

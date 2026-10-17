@@ -254,6 +254,7 @@ def gather_inputs(cast, vault, memory, since, until, repo_roots, as_of=False):
     else:
         all_md = sorted(str(q.relative_to(vault)) for q in vault.rglob("*.md")
                         if ".quorum" not in q.parts and ".git" not in q.parts)
+    head = _vgit(vault, "rev-parse", "HEAD").strip() if is_git else ""
     allow = _allowlist(vault) if not rev else {
         l.strip() for l in _vgit(vault, "show", "%s:%s" % (rev, ALLOWLIST)).splitlines()
         if l.strip() and not l.startswith("#")}
@@ -326,6 +327,16 @@ def gather_inputs(cast, vault, memory, since, until, repo_roots, as_of=False):
     # The Skeptic: the top-severity verification rules. The Accountant: every
     # briefing's Owed rows (money first) and every window spend line.
     project_notes = [n["path"] for e in desks for n in e["notes"]]
+    note_desk = {n["path"]: e["name"] for e in desks for n in e["notes"]}
+    desk_pats = [(c["name"], [re.compile(r"\b%s\b" % re.escape(x), re.I) for x in c["reads"].get("names", [])])
+                 for c in cast]
+
+    def project_of(row, rel):
+        """QR3-4: the desk a row names, else the desk whose note holds it."""
+        for name, pats in desk_pats:
+            if name != note_desk.get(rel) and any(q.search(row) for q in pats):
+                return name
+        return note_desk.get(rel)
     for e in desks:
         d = next(c for c in cast if c["id"] == e["id"])
         r = d["reads"]
@@ -350,7 +361,8 @@ def gather_inputs(cast, vault, memory, since, until, repo_roots, as_of=False):
                     if "owed" in h.lower():
                         rows = _rows(body, limit=20)
                         if rows:
-                            owed.append({"note": rel, "heading": h, "rows": rows})
+                            owed.append({"note": rel, "heading": h, "rows": rows, "desk": note_desk.get(rel),
+                                         "projects": [project_of(x, rel) for x in rows]})
             e["owed"] = owed
 
     for e in desks:
@@ -369,7 +381,7 @@ def gather_inputs(cast, vault, memory, since, until, repo_roots, as_of=False):
             e["on_air"] = bool(bits)
             e["why"] = ", ".join(bits) if bits else "no git activity in the window"
     return {"since": since.isoformat(timespec="seconds"), "until": until.isoformat(timespec="seconds"),
-            "as_of": bool(rev), "vault_rev": rev or None, "vault": str(vault), "desks": desks}
+            "as_of": bool(rev), "vault_rev": rev or head or None, "vault": str(vault), "desks": desks}
 
 
 # ── the sources a desk may cite ─────────────────────────────────────────────
@@ -393,12 +405,13 @@ def desk_sources(desk, vault=None):
     for k, c in enumerate(desk["commits"][:30], 1):
         out.append({"id": "C%d" % k, "kind": "commit", "ref": "%s@%s" % (c["repo"], c["sha"]),
                     "text": "%s %s %s" % (c["repo"], c["sha"], c["subject"]), "subject": c["subject"]})
-    rows = [(o["note"], o["heading"], r) for o in desk.get("owed", []) for r in o["rows"]]
+    rows = [(o["note"], o["heading"], r, (o.get("projects") or [None] * len(o["rows"]))[j] or o.get("desk"))
+            for o in desk.get("owed", []) for j, r in enumerate(o["rows"])]
     rows = [x for x in rows if MONEY_RE.search(x[2])] + [x for x in rows if not MONEY_RE.search(x[2])]
-    for k, (note, h, row) in enumerate(rows[:30], 1):
+    for k, (note, h, row, proj) in enumerate(rows[:30], 1):
         stem = note.rsplit("/", 1)[-1][:-3]
-        out.append({"id": "O%d" % k, "kind": "owed", "ref": note,
-                    "text": "%s (%s §%s)" % (row, stem.split(" — ")[0], h)})
+        out.append({"id": "O%d" % k, "kind": "owed", "ref": note, "project": proj,
+                    "text": "%s (project: %s; %s §%s)" % (row, proj or "unknown", stem.split(" — ")[0], h)})
     for k, s in enumerate(desk.get("spend", [])[:20], 1):
         out.append({"id": "S%d" % k, "kind": "spend", "ref": s["note"], "text": s["line"][:400]})
     for k, a in enumerate(desk.get("action_queue", [])[:15], 1):
@@ -429,7 +442,7 @@ ROLES = {
     "accountant": "You watch money and what is owed. Lead with the Owed rows (O): money due, balances near a floor, a decision that costs money. Cite an O row when there is one; spend lines (S) come second, only if no Owed row says anything about money.",
 }
 
-CONFIRM_SYSTEM = """You are the {name} desk on Sang's night radio recap. The host repeats your claim back because it is contested or unverified. Confirm it if your source shows it, correct it if it is off, or withdraw it ("Not sure, actually") at no cost.
+CONFIRM_SYSTEM = """You are the {name} desk on Sang's night radio recap. The host repeats your claim back because it is contested or unverified. Confirm it if your source shows it, correct it if it is off, or withdraw it at no cost ("I can't source that, I withdraw it"). A withdrawal is said on air.
 Answer with JSON only: {{"verdict": "confirm|correct|withdraw", "say": "one short spoken sentence"}}"""
 
 
@@ -546,7 +559,7 @@ def run_episode(inputs, cast, model, topic="daily night recap", cap=NIGHT_CALL_C
     lines, logs = [], []
     calls = {"host": 0, "answers": 0, "confirms": 0, "total": 0, "cap": cap}
     st = {"first_done": False, "drew": 0, "signed": False}
-    contested, repeated, on_keys = set(), set(), set()
+    contested, repeated, on_keys, withdrawn = set(), set(), set(), set()
 
     def note(x):
         logs.append(x)
@@ -582,10 +595,14 @@ def run_episode(inputs, cast, model, topic="daily night recap", cap=NIGHT_CALL_C
         return n[0].upper() + n[1:]
 
     def on_air_text():
-        return ["[%d] %s: %s" % (l["i"], spoken_name(l["speaker"], cast), l["text"]) for l in lines if l["on_air"]]
+        return ["[%d] %s: %s%s" % (l["i"], spoken_name(l["speaker"], cast), l["text"],
+                                   " [WITHDRAWN by its desk]" if l["i"] in withdrawn else "")
+                for l in lines if l["on_air"]]
 
     def claim_lines():
-        return [l for l in lines if l["on_air"] and l["speaker"] != HOST and l["kind"] in ("answer", "confirm", "correct")]
+        """The claims still standing: on air and not withdrawn."""
+        return [l for l in lines if l["on_air"] and l["speaker"] != HOST and l["i"] not in withdrawn
+                and l["kind"] in ("answer", "confirm", "correct")]
 
     def line_view():
         return [{"line": l["i"], "desk": l["speaker"], "text": l["text"], "label": l["label"]} for l in claim_lines()]
@@ -678,7 +695,8 @@ def run_episode(inputs, cast, model, topic="daily night recap", cap=NIGHT_CALL_C
     def host(mode, what, extra=None):
         view = {"role": "host", "mode": mode, "topic": topic, "on_air": on_air_text(), "lines": line_view(),
                 "contested": sorted(contested & {l["i"] for l in claim_lines()}), "unverified": unverified(),
-                "repeatable": repeatable(), "projects": project_ids, "cast": [e["id"] for e in desks],
+                "repeatable": repeatable(), "withdrawn": sorted(withdrawn),
+                "projects": project_ids, "cast": [e["id"] for e in desks],
                 "calls_left": left()}
         view.update(extra or {})
         user = "\n".join([
@@ -688,6 +706,9 @@ def run_episode(inputs, cast, model, topic="daily night recap", cap=NIGHT_CALL_C
             "Calls left in the episode: %d" % left(), "", "On air so far ([line] speaker: words):",
             "\n".join("  " + l for l in view["on_air"]) or "  (nothing yet)", "",
             "Lines you may repeat back (contested or unverified): %s" % (", ".join(map(str, view["repeatable"])) or "none"),
+            "Lines WITHDRAWN by their desk (you may say they were withdrawn; never state them as fact; never ask "
+            "about them): %s" % (", ".join(map(str, view["withdrawn"])) or "none"),
+            ("Your last reply was %s. Choose again." % view["retry"]) if view.get("retry") else "",
             "", what])
         o = _json(call("host", "host", HOST_SYSTEM, user, view)) or {}
         return o
@@ -721,13 +742,14 @@ def run_episode(inputs, cast, model, topic="daily night recap", cap=NIGHT_CALL_C
         verdict = c.get("verdict") if c.get("verdict") in ("confirm", "correct", "withdraw") else "withdraw"
         words = fit(_clean(c.get("say"))) or ("Not sure, actually." if verdict == "withdraw" else "Yes, that's right.")
         if verdict == "withdraw":
-            for l in (orig, rep):
-                l["on_air"], l["dropped"] = False, "withdrawn"
-            if orig.get("intro") is not None and lines[orig["intro"]]["kind"] == "pick":
-                lines[orig["intro"]]["on_air"] = False
-                lines[orig["intro"]]["dropped"] = "with its answer: withdrawn"
-            add(speaker=did, kind="withdraw", text=words, on_air=False, dropped="withdrawn")
-            note("confirm: %s withdraws line %d" % (did, ln))
+            # QR3-1: owner-only show — the claim, the doubt, the repeat-back and the
+            # withdrawal are all heard; the claim is marked withdrawn.
+            if not _clean(c.get("say")):
+                words = "I can't source that, I withdraw it."
+            orig["withdrawn"] = True
+            withdrawn.add(ln)
+            add(speaker=did, kind="withdraw", text=words, label=None, source=orig["source"])
+            note("confirm: %s withdraws line %d (stays on air, marked withdrawn)" % (did, ln))
         else:
             text = words if verdict == "confirm" else fit(with_label(words, orig["label"], orig.get("other"), cast))
             add(speaker=did, kind=verdict, text=text, label=orig["label"], source=orig["source"])
@@ -806,35 +828,42 @@ def run_episode(inputs, cast, model, topic="daily night recap", cap=NIGHT_CALL_C
             ask_desk("skeptic", {"n": 2, "to": "skeptic", "text": sq, "why": "the Skeptic's turn"}, must="line")
     # One cross-desk question: one desk about another desk's claim on air.
     if len(projects) >= 2 and any(l["speaker"] in project_ids for l in claim_lines()) and left() >= 3:
-        o = host("cross", "Step: cross. Ask ONE project desk about ANOTHER desk's claim on air, by line number: "
-                          "does it touch your project, does it contradict or depend on yours? You may first repeat "
-                          "back one contested or unverified line (listed above).\nJSON: {\"repeat_back\": {\"line\": n, "
-                          "\"claim\": \"...\"} (optional), \"ask\": {\"to\": \"project desk id\", \"about_line\": n, "
-                          "\"question\": \"...\"}, \"say\": \"the question as you say it, naming the desk\", "
-                          "\"reason\": \"one line\"}")
-        maybe_repeat(o, need_after=2)
-        ask = o.get("ask") if isinstance(o.get("ask"), dict) else {}
-        to = desk_named(ask.get("to"))
-        try:
-            about = int(ask.get("about_line"))
-        except (TypeError, ValueError):
-            about = None
-        target = lines[about] if about is not None and 0 <= about < len(lines) else None
-        why = None
-        if to not in project_ids:
-            why = "%r is not a project desk" % ask.get("to")
-        elif not target or not target["on_air"] or target["speaker"] in (HOST, to) \
-                or target["kind"] not in ("answer", "confirm", "correct"):
-            why = "line %s is not another desk's claim on air" % ask.get("about_line")
-        elif left() < 2:
-            why = "the calls left do not fit it"
-        if why:
-            note("cross: refused (%s)" % why)
-        else:
-            qtext = _clean(ask.get("question"), 300) or "does that touch you?"
-            host_line("cross", name_in(_clean(o.get("say")) or qtext, to), o.get("reason"))
-            note("cross: %s about line %d (%s)" % (to, about, target["speaker"]))
-            ask_desk(to, {"n": 3, "to": to, "text": qtext, "why": _clean(o.get("reason"), 200)}, about=target)
+        retry = None
+        for attempt in (1, 2):
+            o = host("cross", "Step: cross. Ask ONE project desk about ANOTHER desk's claim that is still standing "
+                              "on air, by line number: does it touch your project, does it contradict or depend on "
+                              "yours? You may first repeat back one contested or unverified line (listed above); if "
+                              "you do, aim the question at a different line.\nJSON: {\"repeat_back\": {\"line\": n, "
+                              "\"claim\": \"...\"} (optional), \"ask\": {\"to\": \"project desk id\", \"about_line\": n, "
+                              "\"question\": \"...\"}, \"say\": \"the question as you say it, naming the desk\", "
+                              "\"reason\": \"one line\"}", {"retry": retry} if retry else None)
+            if attempt == 1:
+                maybe_repeat(o, need_after=2)
+            ask = o.get("ask") if isinstance(o.get("ask"), dict) else {}
+            to = desk_named(ask.get("to"))
+            try:
+                about = int(ask.get("about_line"))
+            except (TypeError, ValueError):
+                about = None
+            target = lines[about] if about is not None and 0 <= about < len(lines) else None
+            why = None
+            if to not in project_ids:
+                why = "%r is not a project desk" % ask.get("to")
+            elif not target or target not in claim_lines() or target["speaker"] == to:
+                why = "line %s is not another desk's claim still standing on air" % ask.get("about_line")
+            elif left() < 2:
+                why = "the calls left do not fit it"
+            if not why:
+                qtext = _clean(ask.get("question"), 300) or "does that touch you?"
+                host_line("cross", name_in(_clean(o.get("say")) or qtext, to), o.get("reason"))
+                note("cross: %s about line %d (%s)" % (to, about, target["speaker"]))
+                ask_desk(to, {"n": 3, "to": to, "text": qtext, "why": _clean(o.get("reason"), 200)}, about=target)
+                break
+            note("cross: refused (%s)%s" % (why, "; re-asking the host once" if attempt == 1 and left() >= 3 else ""))
+            if attempt == 1 and left() >= 3:
+                retry = "refused: " + why
+                continue
+            break
     # The Accountant: Owed first, spend second (QR2-4).
     if accountant and left() >= 3:
         o = host("accountant", "Step: accountant. Bring in the Accountant: ask what is owed, money due first. You may "
@@ -894,7 +923,9 @@ def run_episode(inputs, cast, model, topic="daily night recap", cap=NIGHT_CALL_C
             "cast": [HOST] + [e["id"] for e in desks],
             "off_air": [{"id": e["id"], "why": e["why"]} for e in inputs["desks"] if not e["on_air"]],
             "why": {e["id"]: e["why"] for e in inputs["desks"]},
-            "contested": sorted(contested), "lines": lines, "calls": calls, "log": logs}
+            "contested": sorted(contested), "withdrawn": sorted(withdrawn),
+            "vault_rev": inputs.get("vault_rev"), "as_of": inputs.get("as_of", False),
+            "lines": lines, "calls": calls, "log": logs}
 
 
 class FakeModel:
@@ -1025,6 +1056,9 @@ def write_note(ep, cast, vault, day, topic=None, audio=None, path=None, spend=No
     out += ["- topic: %s" % topic,
             "- window: %s → %s" % (ep["since"], ep["until"]),
             "- model: %s" % (model_name or "fake (no model)"),
+            "- vault: %s" % (("rev `%s` (%s)" % (ep["vault_rev"], "as of the window end" if ep.get("as_of")
+                                                  else "HEAD; the working tree was read"))
+                             if ep.get("vault_rev") else "not a git checkout"),
             "- calls: %d of %d (host %d · answers %d · confirms %d)" % (c["total"], c["cap"], c["host"], c["answers"], c["confirms"])]
     if audio:
         out.append("- audio: `%s` · %.1f s · Kokoro-82M v1.0 q8 · played with `afplay` (local, not tracked)"
@@ -1046,7 +1080,8 @@ def write_note(ep, cast, vault, day, topic=None, audio=None, path=None, spend=No
         num = "%d%s" % (l["i"], (" @%.0fs" % t["start"]) if t else "")
         out.append("| %s | %s | `%s` | %s | %s | %s |" % (
             num, by[l["speaker"]]["name"], by[l["speaker"]]["voice"], _cell(l["text"]),
-            _cell(_source_text(l["source"])), _cell(l["reason"] or "")))
+            _cell(_source_text(l["source"]) + (" · WITHDRAWN by its desk" if l.get("withdrawn") else "")),
+            _cell(l["reason"] or "")))
     off = [l for l in ep["lines"] if not l["on_air"]]
     if off:
         out += ["", "## Off air", ""]

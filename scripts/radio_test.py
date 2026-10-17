@@ -307,6 +307,24 @@ class InputsCase(unittest.TestCase):
         self.assertLess([x["id"] for x in srcs].index(owed[0]["id"]),
                         [x["id"] for x in srcs].index([x for x in srcs if x["kind"] == "spend"][0]["id"]))
 
+    def test_an_owed_row_carries_its_project(self):
+        """QR3-4: the note's desk, unless the row names another desk."""
+        self.fx.note("01_Projects/Sidebar/13 - Briefing — Where Sidebar Is (rolling).md",
+                     "# S\n\n## §3 Owed\n- Permafrost c3 operator wallet 2.34 SUI, floor 5\n- listen\n",
+                     mtime=NOW - timedelta(days=3))
+        srcs = radio.desk_sources(self.desk(self.inputs(), "accountant"))
+        owed = {x["text"].split(" (")[0]: x for x in srcs if x["kind"] == "owed"}
+        self.assertEqual(owed["- Permafrost c3 operator wallet 2.34 SUI, floor 5"]["project"], "Permafrost")
+        self.assertEqual(owed["- listen"]["project"], "Sidebar")
+        self.assertEqual(owed["- BAS-242"]["project"], "Bastion")
+        self.assertIn("project: Bastion", owed["- BAS-242"]["text"])
+
+    def test_inputs_record_the_vault_rev(self):
+        """QR3-3: the rev read, as of --until or HEAD for a live read."""
+        head = git(self.fx.vault, "rev-parse", "HEAD").strip()
+        self.assertEqual(self.inputs()["vault_rev"], head)
+        self.assertFalse(self.inputs()["as_of"])
+
     def test_the_host_reads_nothing_and_is_always_on(self):
         h = self.desk(self.inputs(), "host")
         self.assertTrue(h["on_air"])
@@ -442,7 +460,7 @@ class RoundCase(unittest.TestCase):
             return J({"ask": {"to": "meridian", "about_line": line, "question": "Sure?"}, "say": "Meridian, sure?"})
         ep, m = self.run_ep({("host", "cross"): own})
         self.assertFalse([l for l in ep["lines"] if l["kind"] == "cross"])
-        self.assertIn("cross:", " ".join(ep["log"]))
+        self.assertIn("cross: refused", " ".join(ep["log"]))
         self.assertEqual(speakers(ep)[-1], "accountant")
 
     def test_the_accountant_leads_with_the_owed_rows(self):
@@ -526,16 +544,76 @@ class RoundCase(unittest.TestCase):
         self.assertTrue(on_air(ep)[i]["text"].startswith("So, Meridian, you're saying"))
         self.assertEqual(kinds[i + 2], ("host", "cross"))
 
-    def test_a_withdrawal_takes_the_claim_and_its_bridge_off_air(self):
+    def test_a_withdrawal_stays_on_air_with_the_challenge(self):
+        """QR3-1: claim, the Skeptic's doubt, the repeat-back and the withdrawal are all heard."""
         def rb(view):
             line = view["contested"][0]
             return J({"repeat_back": {"line": line, "claim": "the TFS rewrite landed"}, "say": "x"})
-        ep, m = self.run_ep({("host", "cross"): rb,
-                             ("confirm", "meridian"): J({"verdict": "withdraw", "say": "Not sure, actually."})})
+        ep, m = self.run_ep({("host", "cross"): [rb],
+                             ("confirm", "meridian"): J({"verdict": "withdraw", "say": ""})})
         mer = [l for l in ep["lines"] if l["speaker"] == "meridian"]
-        self.assertFalse([l for l in mer if l["on_air"]])
-        bridge = ep["lines"][mer[0]["i"] - 1]
-        self.assertFalse(bridge["on_air"])
+        claim = mer[0]
+        self.assertTrue(claim["on_air"])
+        self.assertTrue(claim["withdrawn"])
+        self.assertTrue(ep["lines"][claim["i"] - 1]["on_air"])  # its bridge too
+        kinds = [(l["speaker"], l["kind"]) for l in on_air(ep)]
+        self.assertIn(("skeptic", "answer"), kinds)
+        i = kinds.index(("host", "repeat"))
+        self.assertEqual(kinds[i + 1], ("meridian", "withdraw"))
+        w = on_air(ep)[i + 1]
+        self.assertEqual(w["text"], "I can't source that, I withdraw it.")
+        self.assertEqual(ep["withdrawn"], [claim["i"]])
+
+    def test_a_withdrawn_line_is_no_longer_a_target_or_a_source(self):
+        seen = {}
+
+        def rb(view):
+            line = view["contested"][0]
+            return J({"repeat_back": {"line": line, "claim": "the TFS rewrite landed"},
+                      "ask": {"to": "bastion", "about_line": line, "question": "Does that touch you?"},
+                      "say": "Bastion?"})
+
+        def good(view):
+            seen["standing"] = [x["line"] for x in view["lines"]]
+            seen["withdrawn"] = view["withdrawn"]
+            line = [x for x in view["lines"] if x["desk"] != "bastion"][0]["line"]
+            return J({"ask": {"to": "bastion", "about_line": line, "question": "Does that touch you?"},
+                      "say": "Bastion, does that touch you?"})
+
+        def acc(view):
+            seen["acc_sources"] = [x["id"] for x in view["sources"]]
+            return None
+
+        ep, m = self.run_ep({("host", "cross"): [rb, good],
+                             ("confirm", "meridian"): J({"verdict": "withdraw", "say": "Not sure."}),
+                             ("desk", "accountant"): acc})
+        wd = ep["withdrawn"][0]
+        self.assertNotIn(wd, seen["standing"])
+        self.assertEqual(seen["withdrawn"], [wd])
+        self.assertNotIn("L%d" % wd, seen["acc_sources"])
+
+    def test_a_refused_cross_question_is_re_asked_once(self):
+        """QR3-2: the program re-asks the host once within the budget."""
+        def own(view):
+            line = [x for x in view["lines"] if x["desk"] == "meridian"][0]["line"]
+            return J({"ask": {"to": "meridian", "about_line": line, "question": "Sure?"}, "say": "Meridian?"})
+        ep, m = self.run_ep({("host", "cross"): [own]})  # the second call falls to the fake: a valid pick
+        crosses = [k for k, _ in m.calls if k == ("host", "cross")]
+        self.assertEqual(len(crosses), 2)
+        self.assertEqual(len([l for l in on_air(ep) if l["kind"] == "cross"]), 1)
+        retry_view = [v for k, v in m.calls if k == ("host", "cross")][1]
+        self.assertIn("refused", retry_view["retry"])
+        ep, m = self.run_ep({("host", "cross"): own})  # refused twice: no third call
+        self.assertEqual(len([k for k, _ in m.calls if k == ("host", "cross")]), 2)
+        self.assertFalse([l for l in ep["lines"] if l["kind"] == "cross"])
+
+    def test_the_sign_off_is_told_which_claims_were_withdrawn(self):
+        def rb(view):
+            return J({"repeat_back": {"line": view["contested"][0], "claim": "x"}, "say": "x"})
+        ep, m = self.run_ep({("host", "cross"): [rb],
+                             ("confirm", "meridian"): J({"verdict": "withdraw", "say": "Not sure."})})
+        last_host = [v for k, v in m.calls if k[0] == "host"][-1]
+        self.assertEqual(last_host["withdrawn"], ep["withdrawn"])
 
     # ── the rest ──
 
@@ -599,6 +677,15 @@ class NoteAndVoiceCase(unittest.TestCase):
                 self.assertIn(radio.voice_of(self.cast, l["speaker"]), t)
         self.assertIn("am_michael", t)
         self.assertIn("ops/139: TFS rewrite", t)  # a commit source, cited
+
+    def test_the_note_records_the_vault_rev_and_marks_withdrawn_claims(self):
+        ep = dict(self.ep, vault_rev="abc1234def", as_of=True, withdrawn=[2])
+        ep["lines"] = [dict(l) for l in self.ep["lines"]]
+        ep["lines"][2]["withdrawn"] = True
+        t = radio.write_note(ep, self.cast, self.fx.vault, day="2026-10-17").read_text()
+        self.assertIn("vault: rev `abc1234def` (as of the window end)", t)
+        row = [x for x in t.splitlines() if x.startswith("| 2 ")][0]
+        self.assertIn("WITHDRAWN", row)
 
     def test_a_topic_titles_the_note(self):
         p = radio.write_note(self.ep, self.cast, self.fx.vault, day="2026-10-17", topic="the bastion week")
@@ -738,6 +825,14 @@ class WallCase(unittest.TestCase):
             src = (HERE / f).read_text()
             self.assertNotRegex(src, r"(?m)^\s*(import radio|from radio)", f)
             self.assertNotIn("kokoro", src.lower(), f)
+
+    def test_the_readme_has_no_vault_ref(self):
+        import lint
+        body = (REPO / "README.md").read_text()
+        nofence = lint.FENCE.sub("", body)
+        prose = lint.WIKI.sub(lambda m: m.group(0), lint.INLINE.sub("", nofence))
+        self.assertIsNone(lint.VAULT_PROSE.search(prose))
+        self.assertIsNone(lint.VAULT_CITE.search(nofence))
 
     def test_the_voice_sidecar_pins_kokoro_exactly(self):
         pkg = json.loads((REPO / "radio-voice" / "package.json").read_text())
