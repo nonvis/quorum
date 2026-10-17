@@ -989,6 +989,22 @@ def render(ep, cast, out_mp3, fake_tts=False, cast_file=CAST_FILE):
     return r
 
 
+def episode_spend(session_dir, since, script=None):
+    """The episode's spend line: every `claude -p` call ran from session_dir, so
+    the readout over that project from the episode's start is the episode."""
+    script = script or HERE / "spend_readout.py"
+    home = os.path.expanduser("~")
+    shown = str(session_dir).replace(home, "~", 1)
+    cmd = "`quorum spend --project %s --since %s`" % (shown, since)
+    p = subprocess.run([sys.executable, str(script), "--project", str(session_dir), "--since", since, "--json"],
+                       capture_output=True, text=True)
+    try:
+        o = json.loads(p.stdout)
+        return "spend: %s = %d calls · total $%.2f EST" % (cmd, o["sessions_scanned"], o["total"]["est_usd"])
+    except (ValueError, KeyError, TypeError):
+        return "spend: %s = (no readout: exit %d)" % (cmd, p.returncode)
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 def _now():
@@ -1071,10 +1087,7 @@ def main(argv):
     model_name = None if o.get("--fake") else "claude -p --model %s" % MODEL
     spend = None
     if not o.get("--fake"):
-        sp = subprocess.run([sys.executable, str(HERE / "spend_readout.py"), "--project", str(session_dir),
-                             "--since", started.isoformat().replace("+00:00", "Z"), "--line"],
-                            capture_output=True, text=True)
-        spend = (sp.stdout.strip().splitlines() or ["spend: (no readout)"])[-1]
+        spend = episode_spend(session_dir, started.isoformat().replace("+00:00", "Z"))
     path = write_note(ep, cast, vault, day, topic, spend=spend, model_name=model_name)
     print(str(path))
     if not o.get("--no-voice"):

@@ -593,6 +593,26 @@ class CliCase(unittest.TestCase):
         self.assertEqual(p.returncode, 2)
 
 
+class SpendCase(unittest.TestCase):
+    def test_the_episode_spend_line_reads_the_session_dirs_window(self):
+        with tempfile.TemporaryDirectory() as td:
+            stub = Path(td) / "stub.py"
+            stub.write_text("import json, sys\nprint(json.dumps({'status': 'ok', 'argv': sys.argv[1:], "
+                            "'sessions_scanned': 13, 'total': {'est_usd': 0.1954}}))\n")
+            line = radio.episode_spend(Path(td) / "session", "2026-10-17T02:20:00Z", script=stub)
+        self.assertTrue(line.startswith("spend: `quorum spend --project "), line)
+        self.assertIn("--since 2026-10-17T02:20:00Z", line)
+        self.assertIn("13 calls", line)
+        self.assertIn("$0.20 EST", line)
+
+    def test_a_failed_readout_says_so(self):
+        with tempfile.TemporaryDirectory() as td:
+            stub = Path(td) / "stub.py"
+            stub.write_text("import sys\nsys.exit(2)\n")
+            line = radio.episode_spend(Path(td), "2026-10-17T02:20:00Z", script=stub)
+        self.assertIn("no readout", line)
+
+
 class WallCase(unittest.TestCase):
     def test_the_stdlib_core_never_imports_radio(self):
         for f in ("quorum_cli.py", "vault_index.py", "repo_index.py", "spend_readout.py", "lint.py"):
