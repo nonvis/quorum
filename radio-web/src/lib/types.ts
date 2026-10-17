@@ -325,6 +325,9 @@ export interface StudyExcerpt {
 export interface StudyCandidate {
   path: string;
   name: string;
+  subtree: string | null;
+  summary: string;
+  touched: string | null;
   head: { ref: string | null; sha: string | null } | null;
 }
 

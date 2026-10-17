@@ -75,6 +75,48 @@ class TrackTest(Case):
         self.assertEqual(subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain"],
                                         capture_output=True, text=True).stdout, "")
 
+    def test_one_pick_derives_id_project_and_goal(self):
+        d = study.derive(self.store, str(self.repo), "listener", projects={"bastion": []}, roots=self.roots)
+        self.assertEqual(d, {"id": "sweeping-sui-listener", "project": "work", "repo": str(self.repo.resolve()),
+                             "subtree": "listener", "goal": "Understand sweeping-sui/listener"})
+        d = study.derive(self.store, str(self.repo), None, projects={"bastion": ["sweeping-sui"]}, roots=self.roots)
+        self.assertEqual((d["id"], d["project"], d["goal"]), ("sweeping-sui", "bastion", "Understand sweeping-sui"))
+        self.store.create("sweeping-sui-listener", "work", str(self.repo), "g", now=DAY1, roots=self.roots)
+        d = study.derive(self.store, str(self.repo), "listener", projects={}, roots=self.roots)
+        self.assertEqual(d["id"], "sweeping-sui-listener-2")     # a taken id gets a suffix
+
+    def test_the_parent_folder_names_the_project_when_it_is_one(self):
+        d = study.derive(self.store, str(self.repo), None, projects={"work": []}, roots=self.roots)
+        self.assertEqual(d["project"], "work")
+        flat = self.home / "nonvis" / "toolbox"
+        flat.mkdir(parents=True)
+        git(flat, "init", "-q")
+        self.assertEqual(study.derive(self.store, str(flat), None, projects={}, roots=self.roots)["project"], "toolbox")
+
+    def test_candidates_are_repos_and_their_folders_newest_first(self):
+        old = self.home / "projects" / "work" / "old-listener"
+        (old / "indexer").mkdir(parents=True)
+        (old / "README.md").write_text("# Old Listener\n\nThe retired V1 listener.\n")
+        git(old, "init", "-q", "-b", "main")
+        os_t = 1_700_000_000
+        import os
+        for p in (old / ".git").rglob("*"):
+            os.utime(p, (os_t, os_t))
+        os.utime(old / ".git", (os_t, os_t))
+        c = study.candidates(self.roots)
+        paths = [(x["name"], x["subtree"]) for x in c]
+        self.assertLess(paths.index(("sweeping-sui", None)), paths.index(("old-listener", None)))
+        self.assertIn(("sweeping-sui", "listener"), paths)
+        self.assertNotIn(("sweeping-sui", ".git"), paths)
+        o = next(x for x in c if x["name"] == "old-listener" and not x["subtree"])
+        self.assertEqual(o["summary"], "The retired V1 listener.")
+        (old / "indexer" / "README.md").write_text("---\ntitle: Indexer\n---\n# Indexer\n\nReads checkpoints.\n")
+        self.assertEqual(study._summary(old / "indexer"), "Reads checkpoints.")
+        (old / "indexer" / "README.md").write_text("# I\n\n> [!WARNING]\n> Deprecated: see v2.\n")
+        self.assertEqual(study._summary(old / "indexer"), "Deprecated: see v2.")
+        self.assertEqual(o["head"]["ref"], "main")
+        self.assertTrue(o["touched"])
+
     def test_head_is_read_from_the_git_dir_without_git(self):
         self.assertEqual(study.read_head(self.repo)["ref"], "main")
         self.assertEqual(len(study.read_head(self.repo)["sha"]), 40)

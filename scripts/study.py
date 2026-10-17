@@ -213,6 +213,83 @@ def resolve_citations(track, text):
     return out
 
 
+NOT_A_FOCUS = SKIP_DIRS | {"docs", "doc", "docker", "assets", "static", "public"}
+
+
+def _summary(d):
+    """The first prose line of a README: what a candidate is, in its own words."""
+    for name in ("README.md", "readme.md", "README"):
+        p = Path(d) / name
+        if p.is_file():
+            lines = p.read_text(errors="replace").splitlines()
+            if lines and lines[0].strip() == "---":                 # YAML frontmatter is not prose
+                end = next((i for i, l in enumerate(lines[1:], 1) if l.strip() == "---"), 0)
+                lines = lines[end + 1:]
+            for line in lines[:40]:
+                t = line.strip().lstrip(">").strip()             # a blockquote's text counts; its callout tag does not
+                if t and not t.startswith(("#", "!", "[", "<", "```", "---", "|")):
+                    t = re.sub(r"[`*_]", "", t)
+                    return t if len(t) <= 160 else t[:157].rstrip() + "…"
+    return ""
+
+
+def _touched(repo):
+    g = Path(repo) / ".git"
+    ts = [p.stat().st_mtime for p in (g / "index", g / "HEAD", g / "FETCH_HEAD", g / "logs" / "HEAD") if p.exists()]
+    return _z(datetime.fromtimestamp(max(ts), timezone.utc)) if ts else None
+
+
+def candidates(roots=None):
+    """What a track can read, one pick each (QR-47): every git checkout under the roots (three levels down) and its
+    top-level folders, with the branch, when it was last touched and its README's first line; newest first."""
+    repos = []
+
+    def walk(d, depth):
+        try:
+            kids = sorted(x for x in d.iterdir() if x.is_dir() and not x.name.startswith(".") and x.name not in SKIP_DIRS)
+        except OSError:
+            return
+        for k in kids:
+            if (k / ".git").exists():
+                repos.append(k.resolve())
+            elif depth < 3:
+                walk(k, depth + 1)
+    for r in roots or default_roots():
+        if Path(r).is_dir():
+            walk(Path(r), 1)
+    out = []
+    for r in repos:
+        base = {"path": str(r), "name": r.name, "head": read_head(r), "touched": _touched(r)}
+        out.append(dict(base, subtree=None, summary=_summary(r)))
+        try:
+            subs = sorted(x for x in r.iterdir() if x.is_dir() and not x.name.startswith(".") and x.name not in NOT_A_FOCUS)
+        except OSError:
+            subs = []
+        out += [dict(base, subtree=s.name, summary=_summary(s)) for s in subs]
+    out.sort(key=lambda c: c["touched"] or "", reverse=True)   # stable: a repo, then its folders
+    return out[:1000]
+
+
+def derive(store, repo, subtree=None, projects=None, roots=None):
+    """Everything a track needs from one pick (repo + optional folder): the id, the project and a default goal.
+    The project is the one whose repos name it, else the parent folder (a project id, or any folder not a root)."""
+    r = Path(os.path.expanduser(repo or "")).resolve()
+    sub = (subtree or "").strip().strip("/") or None
+    label = "%s/%s" % (r.name, sub) if sub else r.name
+    base = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")[:36] or "track"
+    tid, n = base, 2
+    while (store.root / tid).exists():
+        tid, n = "%s-%d" % (base, n), n + 1
+    projects = projects or {}
+    roots = [Path(x).resolve() for x in (roots or default_roots())]
+    pid = next((p for p, names in projects.items() if r.name in (names or [])), None)
+    if not pid:
+        parent = r.parent.name.lower()
+        pid = parent if parent in projects or r.parent not in roots else r.name.lower()
+    pid = re.sub(r"[^a-z0-9-]+", "-", pid).strip("-")[:40] or "misc"
+    return {"id": tid, "project": pid, "repo": str(r), "subtree": sub, "goal": "Understand %s" % label}
+
+
 def excerpt(track, rel, line=1, end=None, context=EXCERPT_CONTEXT):
     """The lines around a citation: {path, start, end, total, lines: [[n, text]]}."""
     r = _resolve(track, rel)

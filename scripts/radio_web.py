@@ -306,24 +306,15 @@ class App:
 
     # ── study (QR-41…47) ────────────────────────────────────────────────────
     def study_candidates(self):
-        """Git checkouts under the roots, up to three levels down: what a track can read (QR-47)."""
-        out = []
+        return study.candidates(self.study_roots)
 
-        def walk(d, depth):
-            try:
-                kids = sorted(x for x in d.iterdir() if x.is_dir() and not x.name.startswith(".")
-                              and x.name not in ("node_modules", "target"))
-            except OSError:
-                return
-            for k in kids:
-                if (k / ".git").exists():
-                    out.append({"path": str(k.resolve()), "name": k.name, "head": study.read_head(k)})
-                elif depth < 3:
-                    walk(k, depth + 1)
-        for r in self.study_roots:
-            if Path(r).is_dir():
-                walk(Path(r), 1)
-        return out[:400]
+    def study_create(self, b):
+        """One pick (repo + optional folder) is enough: the id, the project and the goal default (study.derive)."""
+        projects = {pid: cfg.get("repos", []) for pid, cfg in radio_projects.load(self.vault).items()}
+        d = study.derive(self.study, str(b.get("repo") or ""), b.get("subtree") or None, projects, self.study_roots)
+        return self.study.create(str(b.get("id") or d["id"]), str(b.get("project") or d["project"]), d["repo"],
+                                 " ".join(str(b.get("goal") or "").split()) or d["goal"], subtree=d["subtree"],
+                                 now=datetime.now(timezone.utc), roots=self.study_roots)
 
     def study_running(self, tid=None):
         return [j for j in self.jobs.values() if j.kind == "study" and not j.done and (tid is None or j.project == tid)]
@@ -632,11 +623,7 @@ class Handler(BaseHTTPRequestHandler):
             if not rest and m == "GET":
                 return self._send(200, {"tracks": a.study.tracks()})
             if not rest and m == "POST":
-                b = self._json_body()
-                t = a.study.create(str(b.get("id") or ""), str(b.get("project") or ""), str(b.get("repo") or ""),
-                                   str(b.get("goal") or ""), subtree=b.get("subtree") or None,
-                                   now=datetime.now(timezone.utc), roots=a.study_roots)
-                return self._send(200, t)
+                return self._send(200, a.study_create(self._json_body()))
             if rest == ["candidates"] and m == "GET":
                 return self._send(200, {"repos": a.study_candidates()})
             tid = rest[0]

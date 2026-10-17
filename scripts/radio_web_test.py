@@ -318,6 +318,17 @@ class StudyWebCase(unittest.TestCase):
         s, o = self.j("POST", "/api/study", {"id": "bad", "project": "bastion", "repo": "/tmp", "goal": "g"})
         self.assertEqual(s, 400)
 
+    def test_one_pick_creates_a_track(self):
+        s, o = self.j("GET", "/api/study/candidates")
+        pick = next(c for c in o["repos"] if c["name"] == "sweeping-sui" and c["subtree"] == "listener")
+        self.assertIn("touched", pick)
+        s, t = self.j("POST", "/api/study", {"repo": pick["path"], "subtree": pick["subtree"]})
+        self.assertEqual(s, 200, t)
+        self.assertEqual((t["id"], t["project"], t["subtree"], t["goal"]),
+                         ("sweeping-sui-listener", "work", "listener", "Understand sweeping-sui/listener"))
+        s, t2 = self.j("POST", "/api/study", {"repo": pick["path"], "subtree": "listener", "goal": "own the V2 listener"})
+        self.assertEqual((t2["id"], t2["goal"]), ("sweeping-sui-listener-2", "own the V2 listener"))
+
         ev = self.run_job("/api/study/web-listener/say", {"message": "where does it start?"})
         kinds = [e["event"] for e in ev]
         self.assertEqual(kinds[0], "started")

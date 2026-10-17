@@ -87,7 +87,7 @@ export const api = {
   track: (id: string) => call<StudyTrackView>('GET', `/study/${id}`),
   studyDay: (id: string, date: string) => call<StudyDay>('GET', `/study/${id}/days/${date}`),
   studyCandidates: () => call<{ repos: StudyCandidate[] }>('GET', '/study/candidates').then((r) => r.repos),
-  newTrack: (t: { id: string; project: string; repo: string; subtree?: string; goal: string }) =>
+  newTrack: (t: { repo: string; subtree?: string | null; goal?: string }) =>
     call<StudyTrack>('POST', '/study', t),
   studyStart: (id: string) => call<{ job: string }>('POST', `/study/${id}/start`, {}),
   studySay: (id: string, message: string) => call<{ job: string }>('POST', `/study/${id}/say`, { message }),

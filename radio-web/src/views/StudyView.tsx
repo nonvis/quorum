@@ -549,35 +549,41 @@ function FinishDialog({
   );
 }
 
-function slug(s: string) {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+/** "today", "yesterday", "5 d ago", "3 mo ago" — how fresh a checkout is. */
+function ago(iso: string | null): string {
+  if (!iso) return '';
+  const days = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 60) return `${days} d ago`;
+  return `${Math.floor(days / 30)} mo ago`;
 }
 
+const label = (c: { name: string; subtree: string | null }) => (c.subtree ? `${c.name}/${c.subtree}` : c.name);
+
+/** One pick: a repo or one of its folders. The track id, the project and the goal follow from it (study.derive). */
 function NewTrackDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const qc = useQueryClient();
   const cands = useQuery({ queryKey: ['study-candidates'], queryFn: api.studyCandidates, enabled: open });
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.projects, enabled: open });
-  const [filter, setFilter] = useState('');
-  const [repo, setRepo] = useState<string | null>(null);
-  const [subtree, setSubtree] = useState('');
-  const [tid, setTid] = useState('');
-  const [project, setProject] = useState('');
+  const [query, setQuery] = useState('');
+  const [pick, setPick] = useState<{ path: string; name: string; subtree: string | null } | null>(null);
   const [goal, setGoal] = useState('');
 
   useEffect(() => {
     if (!open) {
-      setFilter(''); setRepo(null); setSubtree(''); setTid(''); setGoal('');
+      setQuery(''); setPick(null); setGoal('');
     }
   }, [open]);
-  useEffect(() => {
-    if (repo) setTid(slug([repo.split('/').pop(), subtree].filter(Boolean).join('-')));
-  }, [repo, subtree]);
-  useEffect(() => {
-    if (!project && projects.data?.[0]) setProject(projects.data.find((p) => p.active)?.id ?? projects.data[0].id);
-  }, [projects.data, project]);
+
+  const all = cands.data ?? [];
+  const q = query.trim().toLowerCase();
+  const shown = q
+    ? all.filter((c) => label(c).toLowerCase().includes(q)).slice(0, 30)
+    : all.filter((c) => !c.subtree).slice(0, 15);
+  const folders = pick ? all.filter((c) => c.path === pick.path && c.subtree) : [];
 
   const create = useMutation({
-    mutationFn: () => api.newTrack({ id: tid, project, repo: repo!, subtree: subtree.trim() || undefined, goal }),
+    mutationFn: () => api.newTrack({ repo: pick!.path, subtree: pick!.subtree, goal: goal.trim() || undefined }),
     onSuccess: (t) => {
       void qc.invalidateQueries({ queryKey: ['study-tracks'] });
       onOpenChange(false);
@@ -586,57 +592,81 @@ function NewTrackDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     onError: (e) => toast.error('Not created', { description: errText(e) }),
   });
 
-  const shown = (cands.data ?? []).filter((c) => !filter || c.path.toLowerCase().includes(filter.toLowerCase()));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">
-        <DialogHeader
-          title="New study track"
-          description="One repo and a goal. The tutor reads it (read-only, never git); nothing about it is indexed or committed."
-        />
-        <div className="space-y-1.5">
-          <Label>Repo</Label>
-          <Input placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} />
-          <div className="max-h-52 overflow-y-auto rounded-lg border">
-            {cands.isLoading && <div className="p-3 text-sm text-muted-fg">Looking for checkouts…</div>}
-            {shown.map((c) => (
-              <button
-                key={c.path}
-                type="button"
-                onClick={() => setRepo(c.path)}
-                className={cn('flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-muted', repo === c.path && 'bg-accent-soft')}
-              >
-                <span className="font-medium">{c.name}</span>
-                <span className="truncate font-mono text-[11px] text-muted-fg">{c.path}</span>
-                {c.head?.ref && <span className="ml-auto shrink-0 text-[11px] text-muted-fg">{c.head.ref}</span>}
-              </button>
-            ))}
+        <DialogHeader title="What do you want to learn?" description="Pick a repo or one of its folders. The tutor reads it read-only; nothing about it is indexed or committed." />
+        {!pick ? (
+          <div className="space-y-2">
+            <Input autoFocus placeholder="Search repos and folders — e.g. listener" value={query} onChange={(e) => setQuery(e.target.value)} />
+            <div className="max-h-80 overflow-y-auto rounded-lg border">
+              {cands.isLoading && <div className="p-3 text-sm text-muted-fg">Looking for checkouts…</div>}
+              {!cands.isLoading && shown.length === 0 && <div className="p-3 text-sm text-muted-fg">Nothing matches “{query}”.</div>}
+              {shown.map((c) => (
+                <button
+                  key={c.path + (c.subtree ?? '')}
+                  type="button"
+                  onClick={() => setPick(c)}
+                  className="block w-full border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted"
+                >
+                  <div className="flex items-baseline gap-2 text-sm">
+                    <span className="font-medium">{c.name}</span>
+                    {c.subtree && <span className="font-medium text-accent">› {c.subtree}</span>}
+                    <span className="ml-auto shrink-0 text-[11px] text-muted-fg">
+                      {c.head?.ref ? `${c.head.ref} · ` : ''}{ago(c.touched)}
+                    </span>
+                  </div>
+                  {c.summary && <div className="mt-0.5 line-clamp-1 text-xs text-muted-fg">{c.summary}</div>}
+                </button>
+              ))}
+            </div>
+            {!q && <p className="text-xs text-muted-fg">Most recently touched first. Type to find a folder inside a repo.</p>}
           </div>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label>Focus (optional)</Label>
-            <Input placeholder="e.g. listener" value={subtree} onChange={(e) => setSubtree(e.target.value)} />
+        ) : (
+          <div className="space-y-4">
+            <div className="rounded-lg border bg-muted/40 px-3 py-2">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="font-medium">{label(pick)}</span>
+                <Button size="sm" variant="ghost" className="ml-auto h-7" onClick={() => setPick(null)}>Change</Button>
+              </div>
+              <div className="truncate font-mono text-[11px] text-muted-fg">{pick.path}</div>
+            </div>
+            {folders.length > 0 && (
+              <div className="space-y-1.5">
+                <Label>Focus</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[{ ...pick, subtree: null }, ...folders].map((c) => (
+                    <button
+                      key={c.subtree ?? '·'}
+                      type="button"
+                      onClick={() => setPick({ path: pick.path, name: pick.name, subtree: c.subtree })}
+                      className={cn(
+                        'rounded-full border px-3 py-1 text-xs transition-colors hover:bg-muted',
+                        pick.subtree === c.subtree && 'border-accent bg-accent-soft text-accent',
+                      )}
+                    >
+                      {c.subtree ?? 'whole repo'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label>Goal (optional)</Label>
+              <Input
+                autoFocus
+                placeholder={`Understand ${label(pick)}`}
+                value={goal}
+                onChange={(e) => setGoal(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && !create.isPending && create.mutate()}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button disabled={create.isPending} onClick={() => create.mutate()}>Start studying</Button>
+            </div>
           </div>
-          <div className="space-y-1.5">
-            <Label>Track id</Label>
-            <Input value={tid} onChange={(e) => setTid(slug(e.target.value))} />
-          </div>
-        </div>
-        <div className="space-y-1.5">
-          <Label>Project</Label>
-          <select value={project} onChange={(e) => setProject(e.target.value)} className="flex h-9 w-full rounded-lg border bg-card px-3 text-sm">
-            {(projects.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </div>
-        <div className="space-y-1.5">
-          <Label>Goal</Label>
-          <Input placeholder="e.g. own the V2 listener" value={goal} onChange={(e) => setGoal(e.target.value)} />
-        </div>
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button disabled={!repo || !tid || !goal.trim() || !project || create.isPending} onClick={() => create.mutate()}>Create track</Button>
-        </div>
+        )}
       </DialogContent>
     </Dialog>
   );
