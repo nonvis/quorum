@@ -274,7 +274,12 @@ class App:
             rng = str(body.get("range") or "today")
             if rng not in RANGES and not RANGE_RE.match(rng):
                 raise HttpError(400, "range: today | yesterday | week | YYYY-MM-DD | A..B")
-            argv += [pid, rng] + (["--with", "operator"] if body.get("with_operator") else [])
+            invite = [x for x in (body.get("with") or []) if isinstance(x, str)]
+            if body.get("with_operator") and "operator" not in invite:
+                invite.append("operator")
+            if any(x not in radio.RECAP_OPT_IN for x in invite):
+                raise HttpError(400, "with: %s only" % ", ".join(radio.RECAP_OPT_IN))
+            argv += [pid, rng] + (["--with", ",".join(invite)] if invite else [])
         else:
             q = re.sub(r"\s+", " ", str(body.get("question") or "")).strip()
             if not q:

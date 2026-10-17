@@ -702,6 +702,40 @@ def gather_project(pid, projects, vault, memory, since, until, repo_roots, as_of
     texts += [(n["path"], added(n["path"], 20000)[1]) for n in changed
               if not re.search(r"Run Prompt|Run Brief", n["title"], re.I)]  # a plan states intent, not a break
     breaks = find_breaks(texts, is_range)
+    # QR-40: the Chronicler — each repo's state, the notes no other specialty reads, the last close (when it moved).
+    state = [{"ref": "%s@state" % r["name"], "text": "%s: %s" % (r["name"], repo_state(r["path"]))} for r in repos]
+    state += [{"ref": n["path"], "text": "a note changed in the window: %s\nsummary: %s" % (n["title"], n["summary"])}
+              for n in changed if n["class"] is None][:8]
+    for b in briefing:
+        if b["in_window"]:
+            close = [bd for h, bd in sections(read(b["path"])) if re.search(r"close|last", h, re.I)]
+            if close:
+                state.append({"ref": b["path"] + "#close", "text": "the briefing's last close:\n" + close[0][:1500]})
+    # QR-40: the Historian — the earlier records that the window's lines supersede, amend or reverse, and archivings.
+    revisits, seen_ids = [], set()
+    decision_paths = [x for x in all_md if any(x.startswith(f) for f in folders)
+                      and DECISION_NOTE.search(x.rsplit("/", 1)[-1]) and "/Archive/" not in x]
+    window_lines = [(n["path"], l) for n in changed if n["class"] == "decision" for l in (n.get("added") or "").splitlines()]
+    window_lines += [(b["path"], l) for b in briefing if b["in_window"] for l in added(b["path"])[0]]
+    added_set = {l.strip() for _, l in window_lines}
+    for where, line in window_lines:
+        if not PIVOT.search(line):
+            continue
+        for rid in REVISIT_ID.findall(line):
+            if rid in seen_ids or len(revisits) >= 8:
+                continue
+            num = rid[1:] if rid.startswith("#") else None
+            row_rx = re.compile(r"^\s*\|\s*\**%s\**\s*\|" % re.escape(num) if num else
+                                r"^\s*(?:\|\s*|[-*]\s+)\**%s\b" % re.escape(rid))
+            for rel in decision_paths:
+                hit = next((l.strip() for l in read(rel).splitlines() if row_rx.search(l) and l.strip() not in added_set), None)
+                if hit:
+                    seen_ids.add(rid)
+                    revisits.append({"ref": "%s#%s" % (rel, rid), "text": "today's line (%s): %s\nthe earlier record of %s (%s): %s" % (
+                        where.rsplit("/", 1)[-1][:-3], line.strip()[:300], rid, rel.rsplit("/", 1)[-1][:-3], hit[:600])})
+                    break
+    revisits += [{"ref": rel, "text": "archived in the window: %s" % rel.rsplit("/", 1)[-1][:-3]} for rel in touched
+                 if "/Archive/" in rel and any(rel.startswith(f) for f in folders) and rel.endswith(".md")][:4]
     bits = []
     if commits:
         bits.append("%d commit(s)" % len(commits))
@@ -718,6 +752,7 @@ def gather_project(pid, projects, vault, memory, since, until, repo_roots, as_of
                        if c.get("parents", 1) > 1 or c["subject"].startswith("Merge ")],
             "per_day": per_day, "episodes": episodes, "surface": surface, "spend": spend,
             "owed": owed[:20], "action_queue": aq[:10], "rules": rules[:30], "breaks": breaks,
+            "state": state, "revisits": revisits,
             "active": bool(bits or cross), "why": ", ".join(bits) or ("a cross-project decision" if cross else "nothing in the window")}
 
 
@@ -783,6 +818,10 @@ def project_sources(inp, memory=None):
     for j, c in enumerate(inp["concept"], 1):
         out.append({"id": "P%d" % j, "kind": "surface", "ref": c["path"],
                     "text": "the concept note\nsummary: %s\n%s" % (c["summary"], c["excerpt"])})
+    for j, x in enumerate(inp.get("state", []), 1):          # QR-40: the Chronicler's where-things-stand
+        out.append({"id": "W%d" % j, "kind": "timeline", "ref": x["ref"], "text": x["text"]})
+    for j, x in enumerate(inp.get("revisits", []), 1):       # QR-40: the Historian's earlier records
+        out.append({"id": "Y%d" % j, "kind": "history", "ref": x["ref"], "text": x["text"]})
     for j, r in enumerate(inp["owed"], 1):
         out.append({"id": "O%d" % j, "kind": "owed", "ref": "owed#%d" % j, "text": r})
     for j, a in enumerate(inp["action_queue"], 1):
@@ -1003,7 +1042,9 @@ def _fmt_sources(srcs):
     return "\n".join("<<<%s (%s)\n%s\n>>>" % (s["id"], s["kind"], s["text"]) for s in srcs) or "(none)"
 
 
-ORDER = ("builder", "verifier", "architect", "product", "operator")
+ORDER = ("chronicler", "builder", "verifier", "architect", "historian", "product", "operator")
+RECAP_OPT_IN = ("product", "operator")   # QR-40: invited per episode (the Operator also joins on a break)
+REVISIT_ID = re.compile(r"(?<![\w-])(#\d{2,3}|[A-Z]{1,4}\d?-\d{1,3})(?![\w-])")
 
 WORKS = re.compile(r"\b(works?|working|pass(es|ed|ing)?|green|live|deployed|running|runs|serves?|serving|healthy|refuses?)\b", re.I)
 
@@ -1056,7 +1097,7 @@ def claim_kind(text):
 
 
 def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None, log=None, with_operator=False,
-                on_line=None, roles_dir=None):
+                on_line=None, roles_dir=None, invite=()):
     """One project's day (QR-7…14). The host opens with what the day was; then each
     specialty in the order of the questions — what changed (Builder) → is it real
     (Verifier, about the Builder's line) → what was decided (Architect) → does a
@@ -1286,9 +1327,11 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
             note("confirm: %s %ss line %d" % (target["speaker"], verdict, target["i"]))
 
     # Who sits tonight (speaks only when its slice has something; the Operator by invitation or a break).
-    slices = {sid: sources_for_specialty(cast, sid, src) for sid in ORDER}
+    order = [sid for sid in ORDER if sid in names and names[sid].get("recap", True)]
+    slices = {sid: sources_for_specialty(cast, sid, src) for sid in order}
+    invited = set(invite) | ({"operator"} if with_operator else set())
     breaks = inputs.get("breaks") or []
-    if with_operator:
+    if "operator" in invited:
         op_mode = "invited"
     elif breaks:
         op_mode = "break"
@@ -1296,7 +1339,8 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
     else:
         op_mode = None
         note("operator: off (not invited, nothing broke)")
-    sitting = [sid for sid in ORDER if (sid == "verifier" or slices[sid]) and (sid != "operator" or op_mode)]
+    sitting = [sid for sid in order if (sid == "verifier" or slices[sid])
+               and (sid not in RECAP_OPT_IN or sid in invited or (sid == "operator" and op_mode))]
     if op_mode == "break":
         slices["operator"] = [{"id": "B%d" % k, "kind": "break", "ref": "break#%d" % k,
                                "text": "%s: %s" % (b["signal"], b["text"])} for k, b in enumerate(breaks, 1)][:1]
@@ -1409,7 +1453,7 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
             "label": inputs.get("label"), "range": inputs.get("range", False),
             "since": inputs["since"], "until": inputs["until"], "why": inputs["why"],
             "vault_rev": inputs.get("vault_rev"), "as_of": inputs.get("as_of", False),
-            "cast": [HOST] + list(ORDER), "sitting": sitting, "operator": op_mode, "breaks": breaks,
+            "cast": [HOST] + order, "sitting": sitting, "operator": op_mode, "breaks": breaks, "invited": sorted(invited),
             "asked": asked, "spoke": sorted({l["speaker"] for l in lines if l["kind"] == "answer"}),
             "unverified": sorted(unverified), "verified": sorted(verified), "withdrawn": sorted(withdrawn),
             "lines": lines, "calls": calls, "log": logs}
@@ -1608,7 +1652,8 @@ def brainstorm_slice(cast, sid, src):
 class FakeModel:
     """A deterministic stand-in for tests and --fake: no model, no network."""
 
-    PREFER = {"builder": "commit", "architect": "decision", "product": "surface", "operator": "owed"}
+    PREFER = {"builder": "commit", "architect": "decision", "product": "surface", "operator": "owed",
+              "chronicler": "timeline", "historian": "history"}
 
     def __call__(self, role, system, user, view):
         if role == "editor":
@@ -1707,6 +1752,8 @@ def _status(ep, d, by):
         return None
     elif i == "operator" and not ep.get("operator"):
         return "off (not invited, nothing broke)"
+    elif i in RECAP_OPT_IN and i not in ep.get("invited", [i]):
+        return "off (opt-in)"
     if i in ep.get("spoke", []):
         return "spoke" + (" (joined on a break)" if i == "operator" and ep.get("operator") == "break" else "")
     if any(l["speaker"] == i and l["kind"] == "pass" for l in ep["lines"]):
@@ -1896,7 +1943,7 @@ def _roots():
 
 
 USAGE = """usage: quorum radio <project> [today | yesterday | week | YYYY-MM-DD | YYYY-MM-DD..YYYY-MM-DD]
-                    [--with operator] [--fake] [--no-voice] [--events] [--since <ISO8601>] [--until <ISO8601>]
+                    [--with product,operator] [--fake] [--no-voice] [--events] [--since <ISO8601>] [--until <ISO8601>]
        quorum radio brainstorm <project> "<one question>" [--with id,id,…] [--context <episode id>,…]
                     [--fake] [--no-voice] [--events]
        quorum radio inputs <project> [range] [--since …] [--until …]
@@ -2118,8 +2165,10 @@ def main(argv):
     except ValueError as e:
         print("ERROR: unknown radio argument %r\n\n%s" % (str(e), usage), file=sys.stderr)
         return 2
-    if o.get("--with") not in (None, "operator"):
-        print("ERROR: --with takes `operator` (the only specialty that is off by default)", file=sys.stderr)
+    invite = [x.strip() for x in (o.get("--with") or "").split(",") if x.strip()]
+    if any(x not in RECAP_OPT_IN for x in invite):
+        print("ERROR: --with takes %s (the specialties a recap leaves out by default, QR-40)" % ", ".join(RECAP_OPT_IN),
+              file=sys.stderr)
         return 2
     now = _now()
     try:
@@ -2154,14 +2203,13 @@ def main(argv):
         return 1
     eid = store.new("recap", pid, now, {"title": "%s (%s)" % (projects[pid]["name"], inp["label"]), "label": inp["label"],
                                         "project_name": projects[pid]["name"], "range": rng or "today",
-                                        "with_operator": o.get("--with") == "operator", "pid": os.getpid()})
+                                        "with": invite, "pid": os.getpid()})
     out.emit(event="started", id=eid, kind="recap", project=pid)
     session_dir = Path(os.path.expanduser("~/.cache/quorum/radio/session"))
     model = FakeModel() if o.get("--fake") else ClaudeModel(session_dir)
     started = datetime.now(timezone.utc).replace(microsecond=0)
     try:
-        ep = run_episode(inp, cast, model, vault=vault, memory=_memory(vault), log=out.log,
-                         with_operator=o.get("--with") == "operator", on_line=out.line)
+        ep = run_episode(inp, cast, model, vault=vault, memory=_memory(vault), log=out.log, invite=invite, on_line=out.line)
         out.mark("script")
     except ModelError as e:
         store.delete(eid)

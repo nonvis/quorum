@@ -115,7 +115,7 @@ function RecapForm({ project, busy }: { project: Project | null; busy: boolean }
   const label = RANGES.find((r) => r.id === draft.range)?.label ?? draft.date;
   const go_ = () =>
     project &&
-    g.start({ kind: 'recap', project: project.id, range, with_operator: draft.withOperator }, `${project.name} · ${label}`);
+    g.start({ kind: 'recap', project: project.id, range, with: draft.invite ?? [] }, `${project.name} · ${label}`);
   return (
     <>
       <section className="space-y-2">
@@ -138,14 +138,28 @@ function RecapForm({ project, busy }: { project: Project | null; busy: boolean }
         )}
         <p className="text-xs text-muted-fg">Days are in KST. A range longer than a day is a digest: brief, in themes.</p>
       </section>
-      <section className="flex items-center justify-between gap-4 rounded-xl border bg-card p-4">
-        <div>
-          <div className="text-sm font-medium">Bring the Operator</div>
-          <div className="text-xs text-muted-fg">
-            What’s waiting on you. It joins by itself only when something broke.
-          </div>
+      <section className="space-y-2 rounded-xl border bg-card p-4">
+        <div className="text-sm font-medium">On air</div>
+        <p className="text-xs text-muted-fg">
+          The Chronicler opens (where things stand), then the Builder, Verifier, Architect and Historian. Bring in:
+        </p>
+        <div className="space-y-2 pt-1">
+          {[
+            { id: 'product', label: 'Product', hint: 'Does a user notice any of it?' },
+            { id: 'operator', label: 'Operator', hint: 'What’s waiting on you. It joins by itself when something broke.' },
+          ].map((x) => (
+            <label key={x.id} className="flex items-center justify-between gap-4">
+              <span>
+                <span className="flex items-center gap-2 text-sm"><SpeakerDot id={x.id} /> {x.label}</span>
+                <span className="block text-xs text-muted-fg">{x.hint}</span>
+              </span>
+              <Switch
+                checked={(draft.invite ?? []).includes(x.id)}
+                onCheckedChange={(v) => patch({ invite: v ? [...(draft.invite ?? []), x.id] : (draft.invite ?? []).filter((i) => i !== x.id) })}
+              />
+            </label>
+          ))}
         </div>
-        <Switch checked={draft.withOperator} onCheckedChange={(v) => patch({ withOperator: v })} />
       </section>
       <Button size="lg" className="w-full" disabled={!project || busy || (draft.range === 'date' && !draft.date)} onClick={go_}>
         <Sparkles /> {busy ? 'A generation is running' : 'Generate the recap'}

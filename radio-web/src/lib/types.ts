@@ -166,7 +166,7 @@ export type JobEvent =
   | { event: 'exit'; code: number };
 
 export type GenerateRequest =
-  | { kind: 'recap'; project: string; range: string; with_operator?: boolean }
+  | { kind: 'recap'; project: string; range: string; with?: string[] }
   | { kind: 'brainstorm'; project: string; question: string; specialties: string[]; context: string[] };
 
 export interface Candidate {

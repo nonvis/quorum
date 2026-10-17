@@ -1,6 +1,6 @@
 {
   "v": 4,
-  "note": "Radio's cast: specialties that each answer ONE question the owner asks at the end of a day, from a source no other specialty reads, with a never-says list, so two of them can't say the same thing. The same cast for every project (one project per episode). Each is bound to one Kokoro voice and one stereo position for its lifetime; radio/voices.lock records every voice ever held. Brainstorm (QR-26): each specialty also has a brainstorm angle (the one question it answers about the owner's question) and its own source kinds; a specialty added from the web (QR-27) is brainstorm-only (`recap: false`) and reads the question's general hits. QR-39 (10-17): the old daemon's knower lenses return as brainstorm-only specialties — Cartographer (where things are; `layout`), Historian (what was decided over time, pivots and reversals; `history`), Chronicler (what happened lately and where Sang left off; `timeline`).",
+  "note": "Radio's cast: specialties that each answer ONE question the owner asks at the end of a day, from a source no other specialty reads, with a never-says list, so two of them can't say the same thing. The same cast for every project (one project per episode). Each is bound to one Kokoro voice and one stereo position for its lifetime; radio/voices.lock records every voice ever held. Brainstorm (QR-26): each specialty also has a brainstorm angle (the one question it answers about the owner's question) and its own source kinds; a specialty added from the web (QR-27) is brainstorm-only (`recap: false`) and reads the question's general hits. QR-39 (10-17): the old daemon's knower lenses return as brainstorm-only specialties — Cartographer (where things are; `layout`), Historian (what was decided over time, pivots and reversals; `history`), Chronicler (what happened lately and where Sang left off; `timeline`). QR-40 (10-17): the Chronicler and the Historian join recaps by default (the Chronicler first); Product joins recaps only when invited, like the Operator.",
   "cast": [
     {
       "id": "host",
@@ -139,12 +139,14 @@
       "name": "Historian",
       "voice": "bm_george",
       "pan": "far left",
-      "recap": false,
+      "recap": true,
       "reads": {
-        "question": "",
-        "sources": [],
-        "speaks_when": "brainstorm only (opt-in)",
-        "never": "what the code does today, what to build next"
+        "question": "Did today revisit anything decided before?",
+        "sources": [
+          "history"
+        ],
+        "speaks_when": "a line in the window supersedes, amends or reverses an earlier record, or a note was archived",
+        "never": "today's decision itself (the Architect's), what the code does"
       },
       "brainstorm": {
         "angle": "Have we been here before, and what happened?",
@@ -158,12 +160,14 @@
       "name": "Chronicler",
       "voice": "bf_lily",
       "pan": "left",
-      "recap": false,
+      "recap": true,
       "reads": {
-        "question": "",
-        "sources": [],
-        "speaks_when": "brainstorm only (opt-in)",
-        "never": "why it was decided, whether it is proven"
+        "question": "Where do things stand, and where did Sang leave off?",
+        "sources": [
+          "timeline"
+        ],
+        "speaks_when": "always first in a recap: the state of the repos, the notes no one else reads, the last close",
+        "never": "the commits themselves (the Builder's), why it was decided, whether it is proven"
       },
       "brainstorm": {
         "angle": "What happened lately that bears on this, and where did Sang leave off?",

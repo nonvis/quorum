@@ -99,6 +99,8 @@ class CastCase(unittest.TestCase):
             "verifier": ("Verifier", "am_fenrir", "centre-left"),
             "operator": ("Operator", "am_puck", "centre-right"),
             "product": ("Product", "af_bella", "far right"),
+            "chronicler": ("Chronicler", "bf_lily", "left"),         # QR-40: in recaps by default
+            "historian": ("Historian", "bm_george", "far left"),
         })
         for d in cast:
             if not d["recap"]:
@@ -446,6 +448,24 @@ class InputsCase(unittest.TestCase):
         self.assertNotIn("Merge screen-v0.6-wire", txt("product"))
         self.assertNotIn("31 tests green", txt("builder"))
 
+    def test_the_chronicler_and_the_historian_read_their_own_slices(self):
+        """QR-40: the Chronicler gets where things stand (repo state, the notes no one else reads, the last close);
+        the Historian the earlier records today's lines supersede, amend or reverse, and notes archived today."""
+        self.fx.note("01_Projects/Sidebar/12 - Decisions.md",
+                     "---\nsummary: \"d\"\n---\n# D\n\n| SD-12 | Rooms are salons, not channels. | 10-01 |\n", NOW - timedelta(days=9))
+        self.fx.note("01_Projects/Sidebar/60 - Rooms Revisited (Design, 2026-10-17).md",
+                     "---\nsummary: \"r\"\n---\n# R\n\n- SD-61 supersedes SD-12: rooms become channels again.\n", NOW - timedelta(minutes=50))
+        self.fx.note("01_Projects/Sidebar/61 - Notes from the call.md", "---\nsummary: \"call notes\"\n---\n# C\n\nTalked rooms.\n",
+                     NOW - timedelta(minutes=40))
+        cast = radio.load_cast(CAST, LOCK)
+        src = radio.project_sources(self.fx.inputs())
+        txt = lambda sid: " ".join(x["text"] for x in radio.sources_for_specialty(cast, sid, src))
+        self.assertIn("on branch main", txt("chronicler"))
+        self.assertIn("Notes from the call", txt("chronicler"))           # no one else's kind of note
+        self.assertIn("Rooms are salons, not channels.", txt("historian"))  # the earlier record, looked up by id
+        self.assertIn("supersedes SD-12", txt("historian"))
+        self.assertNotIn("Rooms are salons", txt("architect"))
+
     def test_r6_product_sees_the_merge_subjects_as_context_only(self):
         i = self.fx.inputs()
         self.assertEqual([m["subject"] for m in i["merges"]], ["Merge screen-v0.6-wire: the violence gate wired in"])
@@ -458,10 +478,10 @@ class InputsCase(unittest.TestCase):
         Builder also sees (R6); it is context in Product's prompt, never a source it can cite."""
         cast = radio.load_cast(CAST, LOCK)
         src = radio.project_sources(self.fx.inputs())
-        sids = ("builder", "verifier", "architect", "product", "operator")
+        sids = ("chronicler", "builder", "verifier", "architect", "historian", "product", "operator")
         keys = {sid: {(x["kind"], x["ref"], x["text"]) for x in radio.sources_for_specialty(cast, sid, src)} for sid in sids}
         for i, a in enumerate(sids):
-            self.assertTrue(keys[a] or a == "operator", a)
+            self.assertTrue(keys[a] or a in ("operator", "historian"), a)
             for b in sids[i + 1:]:
                 self.assertFalse(keys[a] & keys[b], (a, b))
                 self.assertFalse({k[1] for k in keys[a]} & {k[1] for k in keys[b]}, (a, b))
@@ -720,6 +740,7 @@ class RoundCase(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_ep(self, overrides=None, inp=None, **kw):
+        kw.setdefault("invite", ("product",))     # these tests predate QR-40; Product is opt-in now
         m = Recorder(overrides)
         return radio.run_episode(inp or self.inp, self.cast, m, vault=self.fx.vault, memory=self.fx.memory, **kw), m
 
@@ -727,8 +748,15 @@ class RoundCase(unittest.TestCase):
         return next(d for d in self.cast if d["id"] == sid)["reads"]["question"]
 
     def test_the_order_follows_the_questions_and_the_operator_is_off_by_default(self):
-        ep, m = self.run_ep()
-        self.assertEqual(speakers(ep), ["builder", "verifier", "architect", "product"])
+        """QR-40: the Chronicler opens the recap; Product and the Operator are opt-in."""
+        ep, m = self.run_ep(invite=())
+        self.assertEqual(speakers(ep), ["chronicler", "builder", "verifier", "architect"])
+        self.assertEqual(on_air(ep)[0]["kind"], "open")
+        self.assertTrue(on_air(ep)[0]["text"].endswith("Where do things stand, and where did Sang leave off?"))
+
+    def test_product_is_opt_in(self):
+        ep, m = self.run_ep(invite=("product",))
+        self.assertEqual(speakers(ep), ["chronicler", "builder", "verifier", "architect", "product"])
         self.assertIn("operator: off", " ".join(ep["log"]))
         lines = on_air(ep)
         self.assertEqual(lines[0]["kind"], "open")
@@ -755,7 +783,7 @@ class RoundCase(unittest.TestCase):
         self.assertEqual(view["day"]["notes"], len(self.inp["changed"]))
         self.assertTrue(view["day"]["themes"])
         self.assertNotIn("subjects", view["day"])
-        self.assertTrue(on_air(ep)[0]["text"].endswith(self.question("builder")))
+        self.assertTrue(on_air(ep)[0]["text"].endswith(self.question("chronicler")))     # QR-40: the Chronicler opens
 
     def test_each_specialty_is_given_only_its_slice(self):
         ep, m = self.run_ep()
@@ -1011,8 +1039,10 @@ class RoundCase(unittest.TestCase):
     def test_a_range_asks_its_questions_for_the_period(self):
         week = self.fx.inputs(since=datetime(2026, 10, 10, 15, 0, tzinfo=timezone.utc), until=NOW, label="2026-10-11..2026-10-17")
         ep, m = self.run_ep(inp=week)
-        self.assertTrue(on_air(ep)[0]["text"].endswith("What actually changed this week?"), on_air(ep)[0]["text"])
-        self.assertNotIn("today", " ".join(l["text"] for l in on_air(ep) if l["kind"] == "ask"))
+        self.assertTrue(on_air(ep)[0]["text"].endswith(self.question("chronicler")), on_air(ep)[0]["text"])   # QR-40
+        asks = [l["text"] for l in on_air(ep) if l["kind"] == "ask"]
+        self.assertIn("What actually changed this week?", asks)
+        self.assertNotIn("today", " ".join(asks))
 
     def test_a_not_proven_claim_is_put_back_and_its_withdrawal_stays_on_air(self):
         ep, m = self.run_ep({("desk", "verifier"): J({"verdict": "not_proven", "answer": "no run shown.",
@@ -1200,6 +1230,11 @@ class CliCase(unittest.TestCase):
         self.assertIn("| Operator | `am_puck` |", self.fx.store.script_md(self.episodes()[0]["id"]).split("## Script")[0])
         p = self.cli("sidebar", "--fake", "--no-voice", "--with", "builder")
         self.assertEqual(p.returncode, 2)
+        p = self.cli("sidebar", "--fake", "--no-voice", "--with", "product,operator")     # QR-40: both opt-ins
+        self.assertEqual(p.returncode, 0, p.stderr)
+        md = self.fx.store.script_md(self.episodes()[0]["id"]).split("## Script")[0]
+        self.assertIn("| Product | `af_bella` |", md)
+        self.assertNotIn("off (opt-in)", md.split("| Product |")[1].split("\n")[0])
 
     def test_a_week_episode_is_titled_for_its_range(self):
         p = self.cli("sidebar", "week", "--fake", "--no-voice")
@@ -1306,9 +1341,9 @@ class BrainstormCase(unittest.TestCase):
         self.assertTrue(any("branch" in s["text"] for s in by["timeline"]))
         self.assertFalse(any(s["kind"] == "code" and s["ref"].startswith("sidebar@") for s in src))      # commits are the timeline's
         cast = radio.load_cast(CAST, LOCK)
-        for sid, kind in (("cartographer", "layout"), ("historian", "history"), ("chronicler", "timeline")):
+        for sid, kind, recap in (("cartographer", "layout", False), ("historian", "history", True), ("chronicler", "timeline", True)):
             d = next(x for x in cast if x["id"] == sid)
-            self.assertEqual((d["recap"], d["brainstorm"]["sources"]), (False, [kind]))
+            self.assertEqual((d["recap"], d["brainstorm"]["sources"]), (recap, [kind]))
             self.assertTrue(d["brainstorm"]["angle"].endswith("?"))
             self.assertGreater(len(radio.role_text(sid, "room")), 300, sid)
 

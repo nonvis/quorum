@@ -7,14 +7,14 @@ export interface Draft {
   project: string | null;
   range: string;
   date: string;
-  withOperator: boolean;
+  invite: string[]; // QR-40: product / operator join a recap only when invited
   question: string;
   specialties: string[] | null; // null = the default four
   context: string[];
 }
 
 const DEFAULT: Draft = {
-  kind: 'recap', project: null, range: 'today', date: '', withOperator: false,
+  kind: 'recap', project: null, range: 'today', date: '', invite: [],
   question: '', specialties: null, context: [],
 };
 const KEY = 'quorum-radio-draft';
