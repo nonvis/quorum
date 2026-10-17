@@ -23,6 +23,7 @@ can't be stale when it is read, and nothing has to be scheduled.
          worktree it belongs to, and origin's URL. The allowlist is the tracked
          file <vault>/06_Metadata/quorum-repos.txt (one repo name per line).
 """
+import json
 import subprocess
 import os
 import re
@@ -44,53 +45,12 @@ STOPWORDS = set("""a an and are as at be by do does for from has have how i in i
 its of on or so that the this to was we what when where which who why will with
 you your can should would could about into than then them they there these those
 """.split())
-# Words rare in a technical vault yet no topic ("trying something", "anymore
-# finished"): the hook never matches on them. Picked from the 10-16 replay of
-# 505 real prompts (vault Quorum/16 §Step 4). Explicit `quorum q` keeps them.
-GENERAL_WORDS = set("""
-able about above accounted accum accumulated accumulating accurately across actually
-adopted affect affected after again against ago ahead all almost alone along already also
-although always among analyze angle another any anymore anyone anything anyway anywhere
-appreciate approved appropriate aren around asked asking attention attract attractive
-automatically away back bad bare basic basically because become becoming been before began
-begin begins behind being believe below best better between beyond big biz bit boring
-breaks briefly bring brought but came cannot care case cause certain certainly change
-changed choose clear clearly close come comes coming company completely completing concern
-connecting connects consider continue correct covers created curious currently decide
-decided deeper delivering deliver describe described developed developing did didn
-different directly discussed disposal distribute doesn doesnt doing done don dont dots down
-downside during each early easy effort either else end engaging enough entire especially
-even ever every everyone everything exactly example except expand expected expect
-expensive fact fairly far feasible feel feels few figure fine finally finish finished first
-focus focused follow following found friends full fully further gave get gets getting give
-given gives going gone good got great group guess had handed happen happened happening
-happens happy hard having heavily he help helps her here him his hmm hold honed honestly
-hours however idea ideally ideas imagine implemented important include included including
-increase independently initiative installed instead instructs interested interesting
-internally introduced isn just keep keeping kept keyboard kind know known largely last
-latest later least less let lets level like likely little long look looking looks lose lot
-made main mainly maintain make makes making manually many matter maybe mean meaning means
-meant mention mentioned might mind minimum mixing modify more most mostly moved moving much
-must naturally nearly need needed needs never new newer next nice none nor not noted
-nothing noticed now obviously occurs offering often okay once one ones online only opened
-other others otherwise ourselves our out outdated outstand outstanding over overall own
-part particular past people perhaps place plate plus point poke possible posted powerful
-prefer pretty prevent probably problems produce producing proposed propose provide provided
-provides purpose put quite rather reached real really reason recent recently recommendation
-recommendations recommending reducing refine regard relevant remember remove require
-required researching respond reveal reviewed right rigid said same save saw say saying says
-second seeing seek seem seemed seems seen sense serve set setting several shall she short
-shown significant significantly similar simple simply since slow small solutions some
-someone something sometimes somewhat soon sort sound sounds spending start started starting
-step stripped stuff suggest summarized suppose supposed supported sure take taken takes
-taking targeted tell terms thanks therefore thing things think thinking third though
-thought thoughts through thus today together told tomorrow too took topic toward tried
-tries true trust try trying turn ultimate unable under understand understood unless unlock
-until upon usable usage use used useful uses using usually value various very via wait want
-wanted wants way ways welcome well went were whatever whats whereas whether while whole
-whom whose wins within without wonder work worked working works worthwhile wouldn yeah yes
-yesterday yet
-""".split())
+PROJECTS = "06_Metadata/quorum-projects.json"
+# Pasted text is someone else's words: a project it names is not the operator's topic.
+PASTED = re.compile(r"<pasted_content[^>]*>.*?(?:</pasted_content>|\Z)", re.S)
+# A note named by its folder and number: "Notes/12", "Daily Logs/3", "DL/3" (a
+# folder of several words also answers to its initials).
+NOTE_REF = re.compile(r"(?:([A-Za-z][\w&]*) )?([A-Za-z][\w&]*)/(\d{1,3})\b")
 # Claude Code delivers these as a "prompt"; their ids and paths are not a topic.
 HARNESS_PREFIXES = ("<task-notification", "<system-reminder", "<local-command", "<command-")
 BM25 = "bm25(fts, 10.0, 5.0, 3.0, 1.0)"
@@ -422,48 +382,81 @@ class Index:
         hits.sort(key=lambda h: (-h["matched"], is_archived(h["path"]), h["score"]))
         return hits[:limit]
 
-    def salient_terms(self, text, max_df=0.15, limit=10):
-        """The prompt's terms that are RARE in the index (in at most max_df of
-        docs, at least one), rarest first — so a common word never triggers."""
-        n = self.db.execute("SELECT count(*) FROM docs").fetchone()[0]
-        if not n:
+    def _projects(self):
+        """The active projects in the vault's projects file (Radio's, QR-8), each
+        with the names it answers to: its id, its name, its folders' last parts."""
+        try:
+            data = json.loads((self.vault / PROJECTS).read_text())
+        except (OSError, ValueError):
             return []
-        scored = []
-        for t in query_terms(text):
-            if len(t) < 3 or t.isdigit():
+        out = []
+        for pid, p in (data.get("projects") or {}).items():
+            if not isinstance(p, dict) or not p.get("active", True):
                 continue
-            df = self.db.execute("SELECT count(*) FROM fts WHERE fts MATCH ?",
-                                 ('"%s"*' % t,)).fetchone()[0]
-            if 0 < df <= max(1, max_df * n):
-                scored.append((df, t))
-        return [t for _, t in sorted(scored)[:limit]]
+            names = {pid.lower(), str(p.get("name") or pid).lower()}
+            names |= {f.rstrip("/").split("/")[-1].lower() for f in p.get("folders") or []}
+            out.append((p, names))
+        return out
 
-    def prompt_hits(self, prompt, limit=5):
-        """Notes clearly relevant to a prompt, for the UserPromptSubmit hook:
-        >= 2 salient terms in the prompt; a hit covers >= 2 of them and at least
-        a third, and names one in its title, summary or path — two when the prompt
-        has <= 3 salient terms (a note ABOUT the topic says so there; body-only
-        or single-word head matches are coincidence). General English words count
-        toward the prompt's size but never match; archived notes never inject;
-        a harness message is no prompt. -> (terms, hits)."""
+    def _note_refs(self, text):
+        """Vault paths of the notes a prompt names as Folder/NN, unarchived."""
+        dirs = {}
+        for (path,) in self.db.execute("SELECT path FROM docs WHERE source = 'vault'"):
+            d = path.rsplit("/", 1)[0] if "/" in path else ""
+            name = d.rsplit("/", 1)[-1].split(":", 1)[-1]
+            words = re.findall(r"[A-Za-z]+", name)
+            for key in {name.lower()} | ({"".join(w[0] for w in words).lower()}
+                                         if len(words) > 1 else set()):
+                dirs.setdefault(key, set()).add(d)
+        out = []
+        for m in NOTE_REF.finditer(text):
+            two = ("%s %s" % (m.group(1), m.group(2))).lower() if m.group(1) else None
+            for d in sorted(dirs.get(two) or dirs.get(m.group(2).lower()) or ()):
+                if is_archived(d + "/"):
+                    continue
+                for (path,) in self.db.execute(
+                        "SELECT path FROM docs WHERE path GLOB ? ORDER BY path",
+                        ("%s/%02d - *" % (d, int(m.group(3))),)):
+                    out.append(path)
+        return out
+
+    def prompt_hits(self, prompt, limit=5, seen=()):
+        """The notes the UserPromptSubmit hook injects for a prompt: each note it
+        names as Folder/NN, then, for each active project it names (a whole word:
+        id, name or folder), that project's memory index (MEMORY_<NAME>.md) and its
+        briefing notes. Only the operator's own words count (pasted text and
+        harness messages do not); a note in `seen` (injected earlier in the
+        session) is not repeated. Topic words alone never inject: in the 10-17
+        replay, 2 % of word-matched hits were then read, 42 % of these.
+        -> (anchors, hits)."""
+        import fnmatch
         if prompt.lstrip().startswith(HARNESS_PREFIXES):
             return [], []
-        ranked = self.salient_terms(prompt, limit=None)
-        size = min(len(ranked), 10)
-        terms = [t for t in ranked if t not in GENERAL_WORDS][:10]
-        if len(terms) < 2:
-            return terms, []
-        need = max(2, -(-size // 3))
-        pats = [re.compile(r"(?<!\w)" + re.escape(t)) for t in terms]
-        need_head = 2 if size <= 3 else 1
-        hits = []
-        for h in self.search(" ".join(terms), limit=limit * 4):
-            if is_archived(h["path"]):
+        own = PASTED.sub(" ", prompt)
+        low = own.lower()
+        anchors = [m.group(0) for m in NOTE_REF.finditer(own)]
+        paths = self._note_refs(own)
+        vault_paths = None
+        for p, names in self._projects():
+            hit = sorted(n for n in names if re.search(r"(?<![\w-])%s(?![\w])" % re.escape(n), low))
+            if not hit:
                 continue
-            head = ("%s %s %s" % (h["path"], h["title"], h["summary"][:300])).lower()
-            if h["matched"] >= need and sum(1 for p in pats if p.search(head)) >= need_head:
-                hits.append(h)
-        return terms, hits[:limit]
+            anchors.append(hit[0])
+            paths.append("memory:MEMORY_%s.md" % str(p.get("name") or "").upper())
+            if vault_paths is None:
+                vault_paths = [r[0] for r in self.db.execute(
+                    "SELECT path FROM docs WHERE source = 'vault' ORDER BY path")]
+            for g in p.get("notes") or []:
+                paths += [v for v in vault_paths if fnmatch.fnmatchcase(v, "vault:" + g)]
+        hits = []
+        for path in dict.fromkeys(paths):
+            if path in seen:
+                continue
+            r = self.db.execute("SELECT path, title, summary FROM docs WHERE path = ?",
+                                (path,)).fetchone()
+            if r:
+                hits.append(dict(r, snippet=""))
+        return anchors, hits[:limit]
 
     def _resolve(self, name):
         """A doc by full path, by path suffix, or by stem (vault first)."""

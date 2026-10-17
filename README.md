@@ -27,6 +27,7 @@ quorum lint [--fix-safe] [--json] [--show N]
 quorum hook                      # Claude Code UserPromptSubmit hook (stdin JSON)
 quorum hook on|off|status
 quorum hook --report [--json]
+quorum hook --replay [--sessions N] [--show N] [--json]
 quorum radio <project> [today | yesterday | week | YYYY-MM-DD | YYYY-MM-DD..YYYY-MM-DD]
              [--with operator] [--fake] [--no-voice] [--since <ISO8601>] [--until <ISO8601>]
 quorum radio brainstorm <project> "<one question>" [--with <id>,…] [--context <episode id>,…]
@@ -85,14 +86,18 @@ quorum version
 - **`q`** also searches the allowlisted repos' `docs/` and root guides, listed
   after the vault hits (`--vault-only` skips them).
 - **`hook`** is a Claude Code `UserPromptSubmit` hook. It reads the hook JSON on
-  stdin and, only when the prompt clearly matches indexed notes, prints up to five
-  of their paths + summaries as `additionalContext` (≤ ~1k tokens). "Clearly":
-  the prompt has ≥ 2 *salient* terms (in ≤ 15% of indexed docs; no numbers or
-  two-letter words); a hit covers ≥ 2 of them and at least a third, and names
-  one in its title, summary opening or path — two, when the prompt has ≤ 3. It
-  never blocks a prompt: any error exits 0 silently; `QUORUM_HOOK=off` disables
-  it. Each call appends one line to `<vault>/.quorum/hook.log` (session, term
-  count, hit paths — never the prompt). Install, in a project's
+  stdin and prints up to five note paths + summaries as `additionalContext`, only
+  for what the operator's own words name (pasted text and harness messages do not
+  count): a note as `Folder/NN` (`Notes/12`; a folder of several words also
+  answers to its initials, `Daily Logs/3` as `DL/3`), and an active project from the
+  vault's `06_Metadata/quorum-projects.json`, named as a whole word by its id,
+  name or a folder's last part (folder `Partners/Acme` answers to `acme`), which brings that
+  project's memory index (`MEMORY_<NAME>.md`) and its briefing notes. A note
+  already injected in the session (per `hook.log`) is not repeated. Topic words
+  alone inject nothing: on 530 real prompts, 2 % of word-matched notes were then
+  read. It never blocks a prompt: any error exits 0 silently; `QUORUM_HOOK=off`
+  disables it. Each call appends one line to `<vault>/.quorum/hook.log` (session,
+  anchor count, hit paths — never the prompt). Install, in a project's
   `.claude/settings.json`: `"command": "quorum hook 2>/dev/null || true"`.
 - **`hook off` / `on` / `status`** turn the hook off or on for every session in the
   vault (a flag file, `<vault>/.quorum/hook-off`); `QUORUM_HOOK=off claude` does
@@ -102,6 +107,11 @@ quorum version
   injections, how many injected notes the session then Read, how many sessions
   ran a `quorum` lookup themselves, and per mode (on / off) the sessions, prompts
   and measured main-session context per turn — an A/B of the hook's cost.
+- **`hook --replay`** puts the newest vault sessions' prompts (default 40) through
+  today's matcher and scores each hit against the notes that turn (and its
+  subagents) then Read; a note first committed after the prompt counts for
+  neither side. It prints fired / useful prompts, precision and coverage;
+  `--show N` lists the last N fired prompts with each hit marked.
 
 ## Radio
 

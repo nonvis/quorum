@@ -29,10 +29,12 @@ tooling that spends no model tokens:
       vault's allowlist or has opted in by having a .quorum/ dir.
   quorum hook
       The UserPromptSubmit hook: reads Claude Code's hook JSON on stdin and, when
-      the prompt clearly matches vault notes, prints their paths + summaries as
-      additionalContext (<= 5 hits, ~1k tokens). Never fails a prompt: any error
-      exits 0 silently; QUORUM_HOOK=off disables it. Each call appends a line to
-      <vault>/.quorum/hook.log (session, term count, hit paths — never the prompt).
+      the prompt names a project or a Folder/NN note, prints the project's memory
+      index + briefing (or that note) as additionalContext (<= 5 hits, once per
+      session). Never fails a prompt: any error exits 0 silently; QUORUM_HOOK=off
+      disables it. Each call appends a line to <vault>/.quorum/hook.log (session,
+      anchor count, hit paths — never the prompt). `hook --replay` scores the
+      matcher on past sessions (scripts/hook_replay.py).
   quorum radio <project> | brainstorm <project> "<question>" | inputs <project> …
       One project's day on air, or one question put to the room (scripts/radio.py,
       run as a subprocess): the one verb that calls a model. See scripts/radio.py.
@@ -93,6 +95,9 @@ USAGE = """usage: quorum <command> [options]
                   how often the hook injected, how many hits were then Read,
                   how many sessions ran quorum lookups themselves, and per mode
                   (on/off): sessions, prompts, main-session context per turn
+  hook --replay [--sessions N] [--show N] [--json]
+                  the newest N (40) vault sessions' prompts through today's
+                  matcher, scored by the notes each turn then Read ($0)
   radio <project> [today|yesterday|week|YYYY-MM-DD|A..B] [--with operator] [--fake] [--no-voice]
                   the one model-calling verb: one project's day or range (KST)
                   as a spoken recap — a script + an MP3 in bound voices, in the
@@ -569,12 +574,42 @@ def hook_report(as_json):
     return 0
 
 
+def hook_replay_cmd(args):
+    """The newest vault sessions' prompts through today's matcher, scored by the
+    notes each turn then Read (scripts/hook_replay.py)."""
+    import json
+    opts, _ = _flags(args, {"--sessions", "--show"}, {"--replay", "--json"})
+    sys.path.insert(0, str(REPO / "scripts"))
+    import hook_replay
+    idx = _index()
+    idx.refresh()
+    r = hook_replay.replay(idx, hook_replay.transcript_dir(idx.vault),
+                           sessions=int(opts.get("--sessions", 40)))
+    idx.close()
+    if opts.get("--json"):
+        print(json.dumps(r, ensure_ascii=False, indent=1))
+        return 0
+    s = r["summary"]
+    print("replay: %d prompts in %d sessions; %d then Read a note" % (
+        s["prompts"], s["sessions"], s["needing"]))
+    print("  fired %d, useful %d · hits %d, right %d · precision %s · coverage %s" % (
+        s["fired"], s["useful"], s["hits"], s["hits_right"], s["precision"], s["coverage"]))
+    show = int(opts.get("--show", 0))
+    for t in [t for t in r["turns"] if t["hits"]][-show:] if show else []:
+        print("  %s %s" % ("✓" if t["right"] else "✗", " ".join(t["prompt"].split())[:90]))
+        for h in t["hits"]:
+            print("      %s %s" % ("✓" if h in t["right"] else "·", h.split(":", 1)[1][:100]))
+    return 0
+
+
 def cmd_hook(args):
     """Never raises, never exits non-zero: a hook must not block a prompt."""
     import json
     import time
     if "--report" in args:
         return hook_report("--json" in args)
+    if "--replay" in args:
+        return hook_replay_cmd(args)
     sys.path.insert(0, str(REPO / "scripts"))
     import vault_index
     flag = vault_index.default_vault() / ".quorum" / "hook-off"
@@ -609,9 +644,16 @@ def cmd_hook(args):
             except OSError:
                 pass
             return 0
+        seen = set()
+        try:
+            for line in (vault_index.default_vault() / ".quorum" / "hook.log").read_text().splitlines():
+                if payload.get("session_id") and '"%s"' % payload["session_id"] in line:
+                    seen.update(json.loads(line).get("hits") or [])
+        except (OSError, ValueError):
+            pass
         idx = _index()
         idx.refresh()
-        terms, hits = idx.prompt_hits(prompt)
+        terms, hits = idx.prompt_hits(prompt, seen=seen)
         lines = []
         for h in hits:
             summary = " ".join((h["summary"] or h["snippet"] or "").split())[:180]

@@ -324,7 +324,10 @@ class MentionsCase(unittest.TestCase):
 
 
 class HookCase(unittest.TestCase):
-    """Step 4: `quorum hook` — the UserPromptSubmit hook."""
+    """Step 4: `quorum hook` — the UserPromptSubmit hook. It injects a project's
+    entry points (its memory index, its briefing) the first time the operator
+    names the project in a session, and a note named by `Folder/NN`; topic words
+    alone inject nothing (the 10-17 replay: 2 % of word-matched hits were read)."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -332,24 +335,37 @@ class HookCase(unittest.TestCase):
         self.vault = root / "vault"
         self.mem = root / "mem"
         self.mem.mkdir()
-        # 20 filler notes share common words, so they are not salient.
-        for i in range(20):
-            note(self.vault / ("Filler %02d.md" % i), "work next session notes plan today",
-                 title="Filler %02d" % i)
-        note(self.vault / "Litestream Restore.md",
+        (self.mem / "MEMORY_PERMAFROST.md").write_text(
+            "---\nname: permafrost-index\ndescription: Permafrost's memory index\n---\n\nhooks\n")
+        note(self.vault / "01_Projects" / "Permafrost" / "28 - Briefing.md", "where it is",
+             title="Briefing", summary='"Where Permafrost is"')
+        note(self.vault / "01_Projects" / "Permafrost" / "07 - Litestream Restore.md",
              "The restore drill: stop writers before litestream restores the WAL segments.",
              title="Litestream Restore", summary='"How the restore drill runs"')
-        note(self.vault / "Walrus Lease.md", "walrus blob lease renewal epochs",
-             title="Walrus Lease")
+        note(self.vault / "01_Projects" / "Partners" / "Samsung" / "21 - Bastion Briefing.md",
+             "listener", title="Bastion Briefing", summary='"Where Bastion is"')
+        note(self.vault / "01_Projects" / "Old" / "00 - Old.md", "old", title="Old")
+        note(self.vault / "Action Queue" / "94 - Loqua asks.md", "asks", title="Loqua asks",
+             summary='"Every open ask"')
+        note(self.vault / "Archive" / "Permafrost" / "07 - Old Restore.md", "old", title="Old")
+        (self.vault / "06_Metadata").mkdir()
+        (self.vault / "06_Metadata" / "quorum-projects.json").write_text(json.dumps({
+            "v": 1, "projects": {
+                "permafrost": {"name": "Permafrost", "folders": ["01_Projects/Permafrost"],
+                               "notes": ["01_Projects/Permafrost/28 - *.md"]},
+                "bastion": {"name": "Bastion", "folders": ["01_Projects/Partners/Samsung"],
+                            "notes": ["01_Projects/Partners/Samsung/21 - *.md"]},
+                "old": {"name": "Old", "folders": ["01_Projects/Old"],
+                        "notes": ["01_Projects/Old/00 - *.md"], "active": False}}}))
 
     def tearDown(self):
         self.tmp.cleanup()
 
-    def hook(self, prompt, extra_env=None, raw=None):
+    def hook(self, prompt, extra_env=None, raw=None, session="sess-1"):
         env = dict(os.environ, QUORUM_VAULT=str(self.vault), QUORUM_MEMORY=str(self.mem))
         env.update(extra_env or {})
         payload = raw if raw is not None else json.dumps(
-            {"prompt": prompt, "session_id": "sess-1", "hook_event_name": "UserPromptSubmit"})
+            {"prompt": prompt, "session_id": session, "hook_event_name": "UserPromptSubmit"})
         return subprocess.run([sys.executable, str(HERE / "quorum_cli.py"), "hook"],
                               input=payload, env=env, capture_output=True, text=True)
 
@@ -361,87 +377,69 @@ class HookCase(unittest.TestCase):
         self.assertEqual(out["hookEventName"], "UserPromptSubmit")
         return out["additionalContext"]
 
-    def test_a_relevant_prompt_injects_the_note_path_and_summary(self):
-        c = self.context(self.hook("how does the litestream restore drill handle the WAL?"))
-        self.assertIn("Litestream Restore.md", c)
-        self.assertIn("How the restore drill runs", c)
+    def test_naming_a_project_injects_its_memory_index_then_briefing(self):
+        c = self.context(self.hook("let's work on permafrost"))
+        self.assertIn("memory:MEMORY_PERMAFROST.md — Permafrost's memory index", c)
+        self.assertIn("28 - Briefing.md — Where Permafrost is", c)
+        self.assertLess(c.index("MEMORY_PERMAFROST"), c.index("28 - Briefing"))
+        self.assertNotIn("Litestream", c)
 
-    def test_a_short_prompt_injects_nothing(self):
-        for p in ("push", "yes do both", "go"):
-            self.assertEqual(self.context(self.hook(p)), "", p)
+    def test_a_projects_folder_name_names_it_too(self):
+        self.assertIn("21 - Bastion Briefing.md",
+                      self.context(self.hook("for samsung project, how is the listener?")))
 
-    def test_common_words_alone_inject_nothing(self):
-        self.assertEqual(self.context(self.hook("what work is next for the session plan today")), "")
+    def test_a_word_that_only_contains_the_name_is_no_mention(self):
+        self.assertEqual(self.context(self.hook("permafrosty mornings")), "")
 
-    def test_one_rare_term_is_below_the_floor(self):
-        self.assertEqual(self.context(self.hook("tell me about litestream please and thanks")), "")
+    def test_topic_words_without_a_project_inject_nothing(self):
+        self.assertEqual(self.context(self.hook(
+            "how does the litestream restore drill handle the WAL segments?")), "")
+
+    def test_an_inactive_project_injects_nothing(self):
+        self.assertEqual(self.context(self.hook("anything left on old?")), "")
+
+    def test_a_project_named_only_in_pasted_text_injects_nothing(self):
+        self.assertEqual(self.context(self.hook(
+            "<pasted_content id=\"a\">permafrost deploy log</pasted_content> what now?")), "")
+
+    def test_a_folder_and_number_injects_that_note(self):
+        c = self.context(self.hook("see permafrost/07 and AQ/94"))
+        self.assertIn("07 - Litestream Restore.md", c)
+        self.assertIn("94 - Loqua asks.md", c)
+        self.assertNotIn("Archive/", c)
+
+    def test_a_note_is_injected_once_per_session(self):
+        self.assertIn("28 - Briefing", self.context(self.hook("let's work on permafrost")))
+        self.assertEqual(self.context(self.hook("back to permafrost")), "")
+        self.assertIn("28 - Briefing",
+                      self.context(self.hook("permafrost again", session="sess-2")))
 
     def test_the_context_is_capped(self):
-        for i in range(30):
-            note(self.vault / ("Lease %02d.md" % i), "walrus blob lease renewal epochs " * 50,
-                 title="Lease %02d" % i, summary='"' + "x" * 400 + '"')
-        c = self.context(self.hook("walrus blob lease renewal epochs"))
+        refs = " ".join("permafrost/%02d" % i for i in range(30, 60))
+        for i in range(30, 60):
+            note(self.vault / "01_Projects" / "Permafrost" / ("%02d - N.md" % i), "n",
+                 title="N", summary='"' + "x" * 400 + '"')
+        c = self.context(self.hook(refs))
         self.assertLessEqual(c.count("\n- "), 5)
         self.assertLessEqual(len(c), 4000)
 
-    def test_rare_words_matched_only_in_a_body_inject_nothing(self):
-        """A note ABOUT a topic names it in its title, summary or path; rare
-        words that only occur in a body (a surname 'Park') are noise."""
-        note(self.vault / "Meeting.md", "Chan Park said the pull request is strong",
-             title="Meeting", summary='"Team intro"')
-        self.assertEqual(self.context(self.hook("can we park this, no strong pull here")), "")
-
-    def test_a_few_rare_terms_need_two_of_them_in_the_head(self):
-        """With <= 3 rare terms, one of them in a title ("Parked rulings") is a
-        coincidence; two is a topic."""
-        note(self.vault / "Parked Rulings.md", "the strong pull of the backlog",
-             title="Parked Rulings", summary='"Rulings parked for later"')
-        self.assertEqual(self.context(self.hook("can we park this, no strong pull here")), "")
-
-    def test_numbers_and_two_letter_terms_never_trigger(self):
-        note(self.vault / "MVP 94.md", "AQ 95 and 2026 items", title="MVP 94 AQ 95")
-        self.assertEqual(self.context(self.hook("what is AQ/95 and MVP/94 in 2026")), "")
-
-    def test_only_a_summary_opening_counts_as_its_head(self):
-        note(self.vault / "Status.md", "status body", title="Status",
-             summary='"' + "x " * 200 + 'litestream restore"')
-        self.assertNotIn("Status.md",
-                         self.context(self.hook("litestream restore questions")))
-
     def test_a_harness_message_is_not_a_prompt(self):
-        """A background task's completion notice arrives as a prompt; its ids and
-        paths are rare words, never the operator's topic."""
         for tag in ("task-notification", "system-reminder"):
-            p = "<%s> litestream restore drill WAL </%s>" % (tag, tag)
+            p = "<%s> permafrost done </%s>" % (tag, tag)
             self.assertEqual(self.context(self.hook(p)), "", tag)
 
-    def test_pasted_content_is_still_a_prompt(self):
-        c = self.context(self.hook(
-            "<pasted_content>litestream restore drill WAL</pasted_content> what now"))
-        self.assertIn("Litestream Restore.md", c)
-
-    def test_general_english_words_are_not_salient(self):
-        """Rare in a technical vault but no topic: 'anymore finished installed'."""
-        note(self.vault / "Trying Something.md", "trying something finished installed anymore",
-             title="Trying Something", summary='"Finished, installed, anymore"')
-        self.assertEqual(self.context(self.hook(
-            "i finished trying something installed, anymore?")), "")
-
-    def test_archived_notes_are_never_injected(self):
-        note(self.vault / "Archive" / "Walrus Lease Old.md", "walrus blob lease renewal epochs",
-             title="Walrus Lease Old")
-        c = self.context(self.hook("walrus blob lease renewal epochs"))
-        self.assertIn("Walrus Lease.md", c)
-        self.assertNotIn("Archive/", c)
+    def test_no_projects_file_injects_nothing(self):
+        (self.vault / "06_Metadata" / "quorum-projects.json").unlink()
+        self.assertEqual(self.context(self.hook("let's work on permafrost")), "")
 
     def test_off_switch(self):
-        p = self.hook("litestream restore drill WAL", {"QUORUM_HOOK": "off"})
+        p = self.hook("let's work on permafrost", {"QUORUM_HOOK": "off"})
         self.assertEqual((p.returncode, p.stdout), (0, ""))
 
     def test_bad_input_or_no_vault_exits_0_silently(self):
         p = self.hook(None, raw="not json")
         self.assertEqual((p.returncode, p.stdout), (0, ""))
-        p = self.hook("litestream restore drill", {"QUORUM_VAULT": str(self.vault / "nope")})
+        p = self.hook("permafrost", {"QUORUM_VAULT": str(self.vault / "nope")})
         self.assertEqual((p.returncode, p.stdout), (0, ""))
         self.assertFalse((self.vault / "nope").exists())
 
@@ -453,24 +451,24 @@ class HookCase(unittest.TestCase):
     def test_hook_off_persists_until_on_and_status_says_which(self):
         self.toggle("off")
         self.assertIn("off", self.toggle("status").stdout)
-        self.assertEqual(self.context(self.hook("litestream restore drill WAL")), "")
+        self.assertEqual(self.context(self.hook("let's work on permafrost")), "")
         self.toggle("on")
         self.assertIn("on", self.toggle("status").stdout)
-        self.assertIn("Litestream Restore.md", self.context(self.hook("litestream restore drill WAL")))
+        self.assertIn("28 - Briefing", self.context(self.hook("let's work on permafrost")))
 
     def test_an_off_call_is_logged_as_off_without_hits(self):
         self.toggle("off")
-        self.hook("litestream restore drill WAL")
-        self.hook("litestream restore drill WAL", {"QUORUM_HOOK": "off"})
+        self.hook("let's work on permafrost")
+        self.hook("let's work on permafrost", {"QUORUM_HOOK": "off"})
         self.toggle("on")
-        self.hook("litestream restore drill WAL")
+        self.hook("let's work on permafrost")
         lines = [json.loads(l) for l in
                  (self.vault / ".quorum" / "hook.log").read_text().splitlines()]
         self.assertEqual([(l["mode"], len(l["hits"]) > 0) for l in lines],
                          [("off", False), ("off", False), ("on", True)])
 
     def test_every_call_is_logged_for_the_readout(self):
-        self.hook("litestream restore drill WAL")
+        self.hook("let's work on permafrost")
         self.hook("push")
         lines = [json.loads(l) for l in
                  (self.vault / ".quorum" / "hook.log").read_text().splitlines()]
