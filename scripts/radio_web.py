@@ -332,9 +332,23 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if not rest and m == "GET":
                 return self._send(200, {"projects": a.projects()})
+            if rest == ["candidates"] and m == "GET":
+                return self._send(200, {"repos": radio_projects.candidates(a.vault, a.roots),
+                                        "folders": radio_projects.free_folders(a.vault)})
+            if rest == ["derive"] and m == "POST":
+                body = self._json_body()
+                if not (body.get("repo") or body.get("folder")):
+                    raise HttpError(400, "derive takes a repo or a folder")
+                if body.get("folder") and not radio_projects._safe(body["folder"]):
+                    raise HttpError(400, "not a vault folder")
+                d = radio_projects.derive(a.vault, a.roots, repo=body.get("repo"), folder=body.get("folder"))
+                d["check"] = radio_projects.check(d["spec"], a.vault, a.roots, existing=radio_projects.load(a.vault))
+                return self._send(200, d)
             if rest == ["check"] and m == "POST":
-                return self._send(200, radio_projects.check(self._json_body(), a.vault, a.roots,
-                                                            existing=radio_projects.load(a.vault)))
+                body = self._json_body()
+                editing = body.pop("editing", None)   # an edit is never in conflict with itself
+                others = {k: v for k, v in radio_projects.load(a.vault).items() if k != editing}
+                return self._send(200, radio_projects.check(body, a.vault, a.roots, existing=others))
             if not rest and m == "POST":
                 return self._send(200, radio_projects.add(a.vault, self._json_body(), a.roots))
             if len(rest) == 1 and m == "PATCH":

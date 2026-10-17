@@ -1,5 +1,7 @@
 import type {
+  Candidate,
   CastInfo,
+  Derived,
   EpisodeMeta,
   GenerateRequest,
   Health,
@@ -47,7 +49,9 @@ export const api = {
   generate: (req: GenerateRequest) => call<{ job: string }>('POST', '/generate', req),
   cancel: (job: string) => call('POST', `/jobs/${job}/cancel`),
   projects: () => call<{ projects: Project[] }>('GET', '/projects').then((r) => r.projects),
-  checkProject: (spec: Partial<Project>) => call<ProjectCheck>('POST', '/projects/check', spec),
+  checkProject: (spec: Partial<Project> & { editing?: string }) => call<ProjectCheck>('POST', '/projects/check', spec),
+  candidates: () => call<{ repos: Candidate[]; folders: string[] }>('GET', '/projects/candidates'),
+  derive: (from: { repo?: string; folder?: string }) => call<Derived>('POST', '/projects/derive', from),
   addProject: (spec: Omit<Project, 'active'>) => call<SaveResult>('POST', '/projects', spec),
   setActive: (id: string, active: boolean) => call<SaveResult>('PATCH', `/projects/${id}`, { active }),
   editProject: (id: string, fields: Partial<Project>) => call<SaveResult>('PATCH', `/projects/${id}`, fields),

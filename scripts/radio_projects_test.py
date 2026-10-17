@@ -138,5 +138,128 @@ class ProjectsCase(unittest.TestCase):
             rp.update(self.vault, "sidebar", {"repos": ["fluid"]}, self.roots)
 
 
+class DeriveCase(unittest.TestCase):
+    """The streamlined add: the repo is the one input, the rest follows the vault's conventions."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.vault, self.nonvis = root / "vault", root / "nonvis"
+        notes = {
+            "01_Projects/Envoy/00 - Envoy Overview.md": "# Envoy\n",
+            "01_Projects/Envoy/05 - Briefing — Where Envoy Is (rolling).md": "The `envoy` repo at ~/nonvis/envoy.\n",
+            "01_Projects/Envoy/07 - Gateway (Design, 2026-10-01).md": "envoy main abc.\n",
+            "01_Projects/Loqua/00 - Overview.md": "# Loqua\n",
+            "01_Projects/Loqua/01 - Current State.md": "old state, loqua-passkey\n",
+            "01_Projects/Loqua/MVP/00 - Index & Status.md": "loqua-passkey main `fa7b921`\n",
+            "01_Projects/Loqua/MVP/57 - Build Log.md": "~/nonvis/loqua-passkey: tests green\n",
+            "01_Projects/Permafrost/00 - Concept.md": "# P\n",
+            "01_Projects/Permafrost/28 - Briefing — Where Permafrost Is (rolling).md": "permafrost; also loqua-passkey once\n",
+            "01_Projects/Sidebar/13 - Briefing — Where Sidebar Is (rolling).md": "sidebar\n",
+            "01_Projects/Sidebar/00 - Concept.md": "# S\n",
+            "01_Projects/Partners/Samsung/Bastion/21 - Briefing — Where Bastion Is (rolling).md": "# B\n",
+            "01_Projects/Partners/Samsung/Bastion/00 - Overview.md": "# B\n",
+            "03_Resources/Envoy notes.md": "envoy envoy envoy envoy envoy\n",
+        }
+        for rel, text in notes.items():
+            (self.vault / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.vault / rel).write_text(text)
+        (self.vault / "06_Metadata").mkdir()
+        (self.vault / rp.ALLOWLIST).write_text("sidebar\n")
+        (self.vault / rp.PROJECTS_REL).write_text(json.dumps({"v": 1, "projects": {
+            "sidebar": {"name": "Sidebar", "notes": ["01_Projects/Sidebar/13 - *.md"], "folders": ["01_Projects/Sidebar"],
+                        "repos": ["sidebar"], "concept": ["01_Projects/Sidebar/00 - *.md"]}}}))
+        git(self.vault, "init", "-q", "-b", "main")
+        git(self.vault, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
+        git(self.vault, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        for name, url in (("envoy", "https://github.com/nonvis/envoy.git"), ("loqua-passkey", "git@github.com:nonvis/loqua-passkey.git"),
+                          ("fluid", "git@github.com:fluid-protocol/fluid.git"), ("sidebar", "https://github.com/nonvis/sidebar")):
+            (self.nonvis / name).mkdir(parents=True)
+            git(self.nonvis / name, "init", "-q")
+            git(self.nonvis / name, "remote", "add", "origin", url)
+        self.roots = [self.nonvis]
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_a_repo_derives_the_whole_project(self):
+        d = rp.derive(self.vault, self.roots, repo="envoy")
+        s = d["spec"]
+        self.assertEqual((s["id"], s["name"]), ("envoy", "Envoy"))
+        self.assertEqual(s["folders"], ["01_Projects/Envoy"])          # 03_Resources mentions don't count
+        self.assertEqual(s["notes"], ["01_Projects/Envoy/05 - *.md"])
+        self.assertEqual(s["concept"], ["01_Projects/Envoy/00 - *.md"])
+        self.assertEqual(s["repos"], ["envoy"])
+        self.assertEqual(d["warnings"], [])
+        self.assertEqual(rp.check(s, self.vault, self.roots, existing=rp.load(self.vault))["errors"], [])
+
+    def test_a_folder_without_a_rolling_briefing_takes_its_status_note_and_warns(self):
+        d = rp.derive(self.vault, self.roots, repo="loqua-passkey")
+        s = d["spec"]
+        self.assertEqual(s["folders"], ["01_Projects/Loqua"])          # 2 notes beat Permafrost's 1
+        self.assertEqual(s["notes"], ["01_Projects/Loqua/MVP/00 - *.md"])
+        self.assertEqual(s["concept"], ["01_Projects/Loqua/00 - *.md"])
+        self.assertTrue(any("no rolling briefing" in w for w in d["warnings"]))
+
+    def test_a_vault_only_project_derives_from_its_folder(self):
+        d = rp.derive(self.vault, self.roots, folder="01_Projects/Partners/Samsung/Bastion")
+        s = d["spec"]
+        self.assertEqual((s["id"], s["repos"]), ("bastion", []))
+        self.assertEqual(s["notes"], ["01_Projects/Partners/Samsung/Bastion/21 - *.md"])
+
+    def test_a_repo_with_no_mentions_says_so(self):
+        (self.nonvis / "lonely").mkdir()
+        git(self.nonvis / "lonely", "init", "-q")
+        git(self.nonvis / "lonely", "remote", "add", "origin", "https://github.com/nonvis/lonely")
+        d = rp.derive(self.vault, self.roots, repo="lonely")
+        self.assertEqual(d["spec"]["folders"], [])
+        self.assertTrue(any("no project folder" in w for w in d["warnings"]))
+
+    def test_candidates_are_own_repos_not_in_a_project(self):
+        git(self.vault, "remote", "add", "origin", "https://github.com/nonvis/second-brain.git")
+        (self.nonvis / "second-brain").symlink_to(self.vault)    # the vault is never a project's repo
+        c = {x["repo"]: x for x in rp.candidates(self.vault, self.roots)}
+        self.assertEqual(sorted(c), ["envoy", "loqua-passkey"])           # not fluid (#99), not sidebar (taken)
+        self.assertEqual(c["envoy"]["folder"], "01_Projects/Envoy")
+
+    def test_folders_are_project_folders_not_taken(self):
+        f = rp.free_folders(self.vault)
+        self.assertIn("01_Projects/Envoy", f)
+        self.assertIn("01_Projects/Partners/Samsung", f)          # a partner is a project folder; its subfolders are not
+        self.assertNotIn("01_Projects/Partners/Samsung/Bastion", f)
+        self.assertNotIn("01_Projects/Partners", f)
+        self.assertNotIn("01_Projects/Sidebar", f)
+        self.assertNotIn("01_Projects/Loqua/MVP", f)
+
+    # ── the rules ──────────────────────────────────────────────────────────
+
+    def test_a_repo_in_another_project_is_refused(self):
+        s = dict(rp.derive(self.vault, self.roots, repo="envoy")["spec"], repos=["envoy", "sidebar"])
+        e = rp.check(s, self.vault, self.roots, existing=rp.load(self.vault))["errors"]
+        self.assertTrue(any("sidebar" in x and "already in Sidebar" in x for x in e), e)
+
+    def test_a_folder_in_another_project_is_refused(self):
+        s = dict(rp.derive(self.vault, self.roots, repo="envoy")["spec"], folders=["01_Projects/Envoy", "01_Projects/Sidebar"])
+        e = rp.check(s, self.vault, self.roots, existing=rp.load(self.vault))["errors"]
+        self.assertTrue(any("already in Sidebar" in x for x in e), e)
+
+    def test_a_folder_outside_01_projects_is_refused(self):
+        s = dict(rp.derive(self.vault, self.roots, repo="envoy")["spec"], folders=["03_Resources"])
+        self.assertTrue(any("01_Projects" in x for x in rp.check(s, self.vault, self.roots)["errors"]))
+
+    def test_a_note_outside_the_projects_folders_is_refused(self):
+        s = dict(rp.derive(self.vault, self.roots, repo="envoy")["spec"], concept=["01_Projects/Sidebar/00 - *.md"])
+        self.assertTrue(any("outside its folders" in x for x in rp.check(s, self.vault, self.roots)["errors"]))
+
+    def test_editing_a_project_does_not_collide_with_itself(self):
+        rp.update(self.vault, "sidebar", {"concept": []}, self.roots)
+        self.assertEqual(rp.load(self.vault)["sidebar"]["concept"], [])
+
+    def test_editing_one_project_into_anothers_repo_is_refused(self):
+        rp.add(self.vault, rp.derive(self.vault, self.roots, repo="envoy")["spec"], self.roots)
+        with self.assertRaises(rp.ProjectsError):
+            rp.update(self.vault, "envoy", {"repos": ["envoy", "sidebar"]}, self.roots)
+
+
 if __name__ == "__main__":
     unittest.main()

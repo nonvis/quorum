@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { AlertTriangle, CheckCircle2, FolderKanban, GitBranch, Pencil, Plus, X, XCircle } from 'lucide-react';
+import { AddProjectDialog } from './AddProjectDialog';
 import { api, ApiError } from '@/lib/api';
 import type { Project, ProjectCheck, SaveResult } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -23,6 +24,8 @@ export function ProjectsView() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['projects'], queryFn: api.projects });
   const [editing, setEditing] = useState<Project | 'new' | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [adjust, setAdjust] = useState<typeof EMPTY | undefined>(undefined);
   const toggle = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) => api.setActive(id, active),
     onSuccess: (r, v) => {
@@ -43,7 +46,7 @@ export function ProjectsView() {
             each save is committed and pushed.
           </p>
         </div>
-        <Button onClick={() => setEditing('new')}>
+        <Button onClick={() => setAdding(true)}>
           <Plus /> Add project
         </Button>
       </div>
@@ -98,9 +101,23 @@ export function ProjectsView() {
           ))}
         </div>
       )}
+      <AddProjectDialog
+        open={adding}
+        onOpenChange={setAdding}
+        onAdjust={(spec) => {
+          setAdding(false);
+          setAdjust(spec);
+          setEditing('new');
+        }}
+        onSaved={() => void qc.invalidateQueries({ queryKey: ['projects'] })}
+      />
       <ProjectDialog
         project={editing}
-        onClose={() => setEditing(null)}
+        initial={adjust}
+        onClose={() => {
+          setEditing(null);
+          setAdjust(undefined);
+        }}
         onSaved={() => void qc.invalidateQueries({ queryKey: ['projects'] })}
       />
     </div>
@@ -118,24 +135,31 @@ function Row({ k, v }: { k: string; v: string[] }) {
   );
 }
 
-const EMPTY = { id: '', name: '', notes: [] as string[], folders: [] as string[], repos: [] as string[], concept: [] as string[] };
+export const EMPTY = { id: '', name: '', notes: [] as string[], folders: [] as string[], repos: [] as string[], concept: [] as string[] };
 
-function ProjectDialog({ project, onClose, onSaved }: { project: Project | 'new' | null; onClose: () => void; onSaved: () => void }) {
+function ProjectDialog({
+  project, initial, onClose, onSaved,
+}: {
+  project: Project | 'new' | null;
+  initial?: typeof EMPTY;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
   const isNew = project === 'new';
   const [f, setF] = useState(EMPTY);
   const [check, setCheck] = useState<ProjectCheck | null>(null);
 
   useEffect(() => {
-    if (project === 'new') setF(EMPTY);
+    if (project === 'new') setF(initial ?? EMPTY);
     else if (project) setF({ id: project.id, name: project.name, notes: project.notes, folders: project.folders, repos: project.repos, concept: project.concept });
     setCheck(null);
-  }, [project]);
+  }, [project, initial]);
 
   // A live check of every path, a moment after typing stops.
   useEffect(() => {
     if (!project) return;
     const t = setTimeout(() => {
-      const spec = isNew ? f : { name: f.name, notes: f.notes, folders: f.folders, repos: f.repos, concept: f.concept };
+      const spec = isNew ? f : { editing: f.id, name: f.name, notes: f.notes, folders: f.folders, repos: f.repos, concept: f.concept };
       api.checkProject(spec).then(setCheck).catch(() => setCheck(null));
     }, 400);
     return () => clearTimeout(t);

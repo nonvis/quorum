@@ -134,6 +134,17 @@ class WebCase(unittest.TestCase):
         s, r = self.j("PATCH", "/api/projects/nope", {"active": True})
         self.assertEqual(s, 404)
 
+    def test_candidates_and_derive(self):
+        s, o = self.j("GET", "/api/projects/candidates")
+        self.assertEqual(s, 200)
+        self.assertIn("repos", o)
+        self.assertNotIn("01_Projects/Sidebar", o["folders"])            # taken
+        s, d = self.j("POST", "/api/projects/derive", {"folder": "01_Projects/Sidebar"})
+        self.assertEqual(s, 200, d)
+        self.assertEqual(d["spec"]["id"], "sidebar")
+        self.assertTrue(any("already" in e for e in d["check"]["errors"]))
+        self.assertEqual(self.j("POST", "/api/projects/derive", {})[0], 400)
+
     def test_adding_a_project_with_errors_is_400_with_the_errors(self):
         s, o = self.j("POST", "/api/projects", {"id": "x", "name": "X", "notes": ["01_Projects/X/*.md"],
                                                  "folders": ["01_Projects/X"], "repos": [], "concept": []})

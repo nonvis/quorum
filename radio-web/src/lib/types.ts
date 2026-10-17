@@ -142,3 +142,17 @@ export type JobEvent =
 export type GenerateRequest =
   | { kind: 'recap'; project: string; range: string; with_operator?: boolean }
   | { kind: 'brainstorm'; project: string; question: string; specialties: string[]; context: string[] };
+
+export interface Candidate {
+  repo: string;
+  path: string;
+  folder: string | null;
+  notes: number;
+}
+
+export interface Derived {
+  spec: Omit<Project, 'active'>;
+  warnings: string[];
+  mentions: Record<string, number>;
+  check: ProjectCheck;
+}

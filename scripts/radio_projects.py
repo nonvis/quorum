@@ -19,6 +19,11 @@ ALLOWLIST = "06_Metadata/quorum-repos.txt"
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 OWN_REMOTE = re.compile(r"github\.com[:/]nonvis/", re.I)
 FIELDS = ("name", "notes", "folders", "repos", "concept")
+PROJECTS_DIR = "01_Projects"
+BRIEFING_NOTE = re.compile(r"^\d{2,3} - Briefing\b.*\(rolling\)\.md$")
+STATUS_NOTES = (re.compile(r"^\d{2,3} - .*Index & Status.*\.md$", re.I), re.compile(r"^\d{2,3} - .*\bStatus\b.*\.md$", re.I),
+                re.compile(r"^\d{2,3} - .*Current State.*\.md$", re.I))
+CONCEPT_NOTE = re.compile(r"^00 - .*\.md$")
 
 
 class ProjectsError(Exception):
@@ -62,9 +67,21 @@ def _remote(path):
     return p.stdout.strip() if p.returncode == 0 else ""
 
 
+def _owner(path, existing, key):
+    """The name of the project that already holds this repo (key=repos) or folder (key=folders)."""
+    for cfg in (existing or {}).values():
+        for x in cfg.get(key, []):
+            if (key == "repos" and x == path) or (key == "folders" and (
+                    x == path or path.startswith(x.rstrip("/") + "/") or x.startswith(path.rstrip("/") + "/"))):
+                return cfg.get("name") or "another project"
+    return None
+
+
 def check(spec, vault, roots, existing=None):
     """Each path resolved, for the web's live check: {notes, concept: [{pattern, matches}],
-    folders: [{path, exists}], repos: [{name, path, remote, own}], errors: [...]}."""
+    folders: [{path, exists}], repos: [{name, path, remote, own}], errors: [...]}. The rules:
+    folders under 01_Projects/, notes inside the project's own folders, and no repo or
+    folder shared with another project (`existing` = the other projects)."""
     errs = []
     pid = spec.get("id")
     if pid is not None:
@@ -91,11 +108,24 @@ def check(spec, vault, roots, existing=None):
         errs.append("at least one briefing note is needed")
     if "folders" in spec and not spec.get("folders"):
         errs.append("at least one vault folder is needed")
+    folders_ok = True
     for f in spec.get("folders") or []:
         ok = _safe(f) and (Path(vault) / f).is_dir()
         out["folders"].append({"path": f, "exists": ok})
         if not ok:
+            folders_ok = False
             errs.append("folders: %r is not a folder in the vault" % f)
+        elif not f.startswith(PROJECTS_DIR + "/"):
+            folders_ok = False
+            errs.append("folders: %r is not under %s/" % (f, PROJECTS_DIR))
+        elif _owner(f, existing, "folders"):
+            errs.append("folders: %r is already in %s" % (f, _owner(f, existing, "folders")))
+    if folders_ok and spec.get("folders"):
+        roots_ = [f.rstrip("/") + "/" for f in spec["folders"]]
+        for key in ("notes", "concept"):
+            for pat in spec.get(key) or []:
+                if _safe(pat) and not any(pat.startswith(r) for r in roots_):
+                    errs.append("%s: %r is outside its folders" % (key, pat))
     for name in spec.get("repos") or []:
         row = {"name": name, "path": None, "remote": "", "own": False}
         if not ID_RE.match(str(name)) and not re.match(r"^[A-Za-z0-9._-]{1,60}$", str(name)):
@@ -112,6 +142,8 @@ def check(spec, vault, roots, existing=None):
             elif not row["own"]:
                 errs.append("repos: %r is not one of your github.com/nonvis repos (#99; origin %s)"
                             % (name, row["remote"] or "none"))
+            elif _owner(name, existing, "repos"):
+                errs.append("repos: %r is already in %s" % (name, _owner(name, existing, "repos")))
         out["repos"].append(row)
     out["errors"] = errs
     return out
@@ -185,7 +217,11 @@ def update(vault, pid, fields, roots):
     if pid not in data["projects"]:
         raise KeyError(pid)
     fields = {k: v for k, v in fields.items() if k in FIELDS}
-    c = check(fields, vault, roots)
+    others = {k: v for k, v in data["projects"].items() if k != pid}
+    c = check(_clean(dict(data["projects"][pid], **fields)), vault, roots, existing=others)
+    # An edit is judged on what it changes: a repo not cloned on this host (#103) never blocks another field.
+    touched = set(fields) | ({"notes", "concept"} if "folders" in fields else set())
+    c["errors"] = [e for e in c["errors"] if e.split(":", 1)[0] in touched]
     if c["errors"]:
         raise ProjectsError("; ".join(c["errors"]), c["errors"])
     cfg = data["projects"][pid]
@@ -200,3 +236,107 @@ def set_active(vault, pid, active):
         raise KeyError(pid)
     data["projects"][pid]["active"] = bool(active)
     return dict(_save(vault, data, [], "Radio: %s %s" % ("activate" if active else "deactivate", pid)), project=pid)
+
+
+# ── the streamlined add: the repo is the one input ──────────────────────────
+
+def _project_dirs(vault):
+    """The project folders: each folder directly under 01_Projects/, and under 01_Projects/Partners/ each partner."""
+    base = Path(vault) / PROJECTS_DIR
+    out = []
+    for d in sorted(base.iterdir()) if base.is_dir() else []:
+        if not d.is_dir() or d.name.startswith(".") or d.name == "Archive":
+            continue
+        if d.name == "Partners":
+            out += [str(x.relative_to(vault)) for x in sorted(d.iterdir()) if x.is_dir() and not x.name.startswith(".")]
+        else:
+            out.append(str(d.relative_to(vault)))
+    return out
+
+
+def _texts(vault):
+    """(note path, text) for every note under 01_Projects/, read once per call."""
+    return [(str(f.relative_to(vault)), f.read_text(errors="replace")) for f in (Path(vault) / PROJECTS_DIR).rglob("*.md")]
+
+
+def mentions(vault, repo, texts=None, dirs=None):
+    """{project folder: notes under it that name the repo}, most first."""
+    rx = re.compile(r"(?<![\w-])%s(?![\w-])" % re.escape(repo))
+    dirs = dirs if dirs is not None else _project_dirs(vault)
+    counts = {}
+    for rel, text in (texts if texts is not None else _texts(vault)):
+        owner = next((d for d in dirs if rel.startswith(d + "/")), None)
+        if owner and repo in text and rx.search(text):
+            counts[owner] = counts.get(owner, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def _pattern(vault, path):
+    rel = str(path.relative_to(vault))
+    d, name = rel.rsplit("/", 1)
+    return "%s/%s - *.md" % (d, name.split(" - ", 1)[0])
+
+
+def derive(vault, roots, repo=None, folder=None):
+    """A whole project from one repo (or, vault-only, one folder): the folder whose notes
+    name the repo most; its rolling briefing (else its status note, with a warning); its
+    `00 - …` note as the concept; name and id from the folder."""
+    v = Path(vault)
+    warnings, counts = [], {}
+    if repo and not folder:
+        counts = mentions(v, repo)
+        folder = next(iter(counts), None)
+        if not folder:
+            warnings.append("no project folder under %s/ names %s: pick the folder" % (PROJECTS_DIR, repo))
+    spec = {"id": "", "name": "", "notes": [], "folders": [], "repos": [repo] if repo else [], "concept": []}
+    if folder:
+        d = v / folder
+        name = folder.rstrip("/").rsplit("/", 1)[-1]
+        spec.update(id=re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-"), name=name, folders=[folder.rstrip("/")])
+        files = [f for f in d.rglob("*.md") if "Archive" not in f.relative_to(d).parts and len(f.relative_to(d).parts) <= 2]
+        brief = sorted((f for f in files if BRIEFING_NOTE.match(f.name)), key=lambda f: (len(f.relative_to(d).parts), f.name))
+        if brief:
+            spec["notes"] = [_pattern(v, brief[0])]
+        else:
+            pick = None
+            for rx in STATUS_NOTES:
+                hits = sorted((f for f in files if rx.match(f.name)), key=lambda f: -f.stat().st_mtime)
+                if hits:
+                    pick = hits[0]
+                    break
+            top = sorted(f for f in d.iterdir() if f.is_file() and CONCEPT_NOTE.match(f.name))
+            pick = pick or (top[0] if top else None)
+            if pick:
+                spec["notes"] = [_pattern(v, pick)]
+                warnings.append("no rolling briefing in %s; using %s" % (folder, str(pick.relative_to(v))))
+            else:
+                warnings.append("no briefing or status note in %s: add one" % folder)
+        concept = sorted(f for f in d.iterdir() if f.is_file() and CONCEPT_NOTE.match(f.name))
+        if concept and _pattern(v, concept[0]) not in spec["notes"]:
+            spec["concept"] = [_pattern(v, concept[0])]
+    return {"spec": spec, "warnings": warnings, "mentions": dict(list(counts.items())[:4])}
+
+
+def candidates(vault, roots):
+    """Your own repos (github.com/nonvis) under the roots that no project holds yet, with the folder each would take."""
+    taken = {r for cfg in load(vault).values() for r in cfg.get("repos", [])}
+    texts, dirs, me = _texts(vault), _project_dirs(vault), Path(vault).resolve()
+    out = []
+    for root in roots:
+        if not Path(root).is_dir():
+            continue
+        for d in sorted(Path(root).iterdir()):
+            if d.name.startswith(".") or d.name in taken or not (d / ".git").exists() or d.resolve() == me:
+                continue
+            if OWN_REMOTE.search(_remote(d)):
+                m = mentions(vault, d.name, texts, dirs)
+                out.append({"repo": d.name, "path": str(d), "folder": next(iter(m), None),
+                            "notes": next(iter(m.values()), 0)})
+                taken.add(d.name)
+    return out
+
+
+def free_folders(vault):
+    """Project folders under 01_Projects/ that no project holds (for a vault-only project)."""
+    existing = load(vault)
+    return [d for d in _project_dirs(vault) if not _owner(d, existing, "folders")]
