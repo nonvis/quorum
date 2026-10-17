@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1831,10 +1832,30 @@ class Out:
     def __init__(self, events, cast):
         self.events = events
         self.names = {d["id"]: d["name"] for d in cast}
+        self.t0 = time.monotonic()
+        self.marks = {}
+
+    def now(self):
+        return round(time.monotonic() - self.t0, 2)
+
+    def mark(self, phase):
+        """Seconds since the start at the end of a phase (script, room, edit, voice)."""
+        self.marks[phase] = self.now()
+
+    def timings(self):
+        """Each phase's own seconds, plus the total."""
+        out, prev = {}, 0.0
+        for k, v in self.marks.items():
+            out[k] = round(v - prev, 2)
+            prev = v
+        if "room" in out and "edit" in out:
+            out["script"] = round(out["room"] + out["edit"], 2)
+        out["total"] = self.now()
+        return out
 
     def emit(self, **o):
         if self.events:
-            print(json.dumps(o, ensure_ascii=False), flush=True)
+            print(json.dumps(dict(o, t=self.now()), ensure_ascii=False), flush=True)
 
     def log(self, s):
         print("  " + s, file=sys.stderr)
@@ -1868,19 +1889,20 @@ def _finish(store, eid, ep, cast, out, fake, no_voice, spend, model_name):
                  spoke=[names[i] for i in ep.get("spoke", [])], threads=ep.get("threads"))
     out.say("%s  %s" % (eid, store.root / eid / "script.md"))
     if no_voice:
-        store.update(eid, pid=None)
+        store.update(eid, pid=None, timings=out.timings())
         out.emit(event="done", id=eid, status="unvoiced")
         return 0
     out.emit(event="status", id=eid, status="voicing")
     try:
         audio = render(ep, cast, store.audio_path(eid), fake_tts=fake)
     except RuntimeError as e:
-        store.update(eid, status="unvoiced", pid=None, error="voice: %s" % str(e)[:300])
+        store.update(eid, status="unvoiced", pid=None, error="voice: %s" % str(e)[:300], timings=out.timings())
         print("ERROR: voice: %s (the script stands, unvoiced)" % e, file=sys.stderr)
         out.emit(event="error", id=eid, message="voice: %s" % str(e)[:300], status="unvoiced")
         return 1
     store.write_script(eid, dict(ep, audio=audio), script_md(ep, cast, meta, audio=audio, spend=spend, model_name=model_name))
-    store.update(eid, status="ready", duration=audio["duration"], pid=None)
+    out.mark("voice")
+    store.update(eid, status="ready", duration=audio["duration"], pid=None, timings=out.timings())
     out.say("%s (%.1f s)" % (store.audio_path(eid), audio["duration"]))
     out.emit(event="done", id=eid, status="ready", duration=audio["duration"])
     return 0
@@ -1948,6 +1970,7 @@ def main_brainstorm(argv, projects, vault, usage):
     started = datetime.now(timezone.utc).replace(microsecond=0)
     try:
         room = radio_room.run_room(inp, cast, room_model, chosen, log=out.log, on_turn=out.room)
+        out.mark("room")
     except ModelError as e:
         store.delete(eid)
         print("ERROR: the first model call failed; nothing kept: %s" % e, file=sys.stderr)
@@ -1958,6 +1981,7 @@ def main_brainstorm(argv, projects, vault, usage):
     out.emit(event="status", id=eid, status="editing")
     editor = FakeModel() if o.get("--fake") else ClaudeModel(session_dir)
     ep = radio_room.broadcast(room, cast, editor, log=out.log, on_line=out.line)
+    out.mark("edit")
     model_name = None if o.get("--fake") else "room: claude -p --model %s (Read/Grep/Glob, a resumable session each) · editor: claude -p --model %s" % (
         radio_room.ROOM_MODEL, MODEL)
     spend = None if o.get("--fake") else episode_spend(session_dir, started.isoformat().replace("+00:00", "Z"))
@@ -2042,6 +2066,7 @@ def main(argv):
     try:
         ep = run_episode(inp, cast, model, vault=vault, memory=_memory(vault), log=out.log,
                          with_operator=o.get("--with") == "operator", on_line=out.line)
+        out.mark("script")
     except ModelError as e:
         store.delete(eid)
         print("ERROR: the first model call failed; nothing kept: %s" % e, file=sys.stderr)

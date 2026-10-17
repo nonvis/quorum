@@ -50,6 +50,7 @@ export interface EpisodeMeta {
   spoke?: string[];
   threads?: string[] | null;
   error?: string;
+  timings?: Record<string, number>;
 }
 
 export interface Source {

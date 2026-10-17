@@ -1159,6 +1159,19 @@ class CliCase(unittest.TestCase):
         self.assertEqual(lines[0]["line"]["speaker"], "host")
         self.assertIn("name", lines[0]["line"])
 
+    @unittest.skipUnless(shutil.which("node") and shutil.which("ffmpeg"), "node + ffmpeg needed")
+    def test_events_carry_seconds_and_the_meta_keeps_the_phase_times(self):
+        """The room's thread 10-17: split script time from voicing time before deciding on per-line audio."""
+        p = self.cli("sidebar", "--fake", "--events")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        ev = [json.loads(x) for x in p.stdout.splitlines()]
+        ts = [e["t"] for e in ev]
+        self.assertEqual(ts, sorted(ts))
+        self.assertTrue(all(isinstance(x, (int, float)) for x in ts))
+        m = self.episodes()[0]
+        self.assertEqual(sorted(m["timings"]), ["script", "total", "voice"])
+        self.assertGreaterEqual(m["timings"]["total"], m["timings"]["script"])
+
     def test_nothing_today_refuses_at_zero_cost(self):
         p = self.cli("meridian", "--no-voice")  # not --fake: a model call would fail the test env
         self.assertEqual(p.returncode, 1)

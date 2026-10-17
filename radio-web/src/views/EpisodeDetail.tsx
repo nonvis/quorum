@@ -268,6 +268,11 @@ export function EpisodeDetail({ id }: { id: string }) {
             {meta.model && <div>model: {meta.model}</div>}
             {meta.calls !== undefined && <div>calls: {meta.calls} of {meta.cap}</div>}
             {meta.spend && <div>{meta.spend}</div>}
+            {meta.timings && (
+              <div>
+                time: {Object.entries(meta.timings).map(([k, v]) => `${k} ${Math.round(v)} s`).join(' · ')}
+              </div>
+            )}
             {script.log.map((l, k) => (
               <div key={k}>{l}</div>
             ))}
