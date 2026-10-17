@@ -547,6 +547,15 @@ class RoundCase(unittest.TestCase):
         self.assertEqual(radio.with_label("I know the rewrite landed.", "grounded"),
                          "I know the rewrite landed.")
 
+    def test_a_long_host_line_ends_at_a_sentence_not_mid_clause(self):
+        long = "That is the night edition, Sang. " + "Meridian fixed a stale chain read on the box. " * 14
+        ep, m = self.run_ep({("host", "signoff"): J({"say": long}),
+                             ("host", "turn"): J({"action": "signoff", "say": long})})
+        so = on_air(ep)[-1]
+        self.assertEqual(so["kind"], "signoff")
+        self.assertTrue(so["text"].endswith("."), so["text"][-40:])
+        self.assertLessEqual(len(so["text"]), 480)
+
     def test_desks_no_longer_announce_themselves(self):
         """The host's bridge names the desk; the 300 characters are the claim's (QR2-7)."""
         ep, m = self.run_ep()
@@ -708,7 +717,7 @@ class SpendCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             stub = Path(td) / "stub.py"
             stub.write_text("import json, sys\nprint(json.dumps({'status': 'ok', 'argv': sys.argv[1:], "
-                            "'sessions_scanned': 13, 'total': {'est_usd': 0.1954}}))\n")
+                            "'sessions_scanned': 26, 'records_counted': 13, 'total': {'est_usd': 0.1954}}))\n")
             line = radio.episode_spend(Path(td) / "session", "2026-10-17T02:20:00Z", script=stub)
         self.assertTrue(line.startswith("spend: `quorum spend --project "), line)
         self.assertIn("--since 2026-10-17T02:20:00Z", line)

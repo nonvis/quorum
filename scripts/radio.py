@@ -468,7 +468,7 @@ def _json(reply):
     return None
 
 
-def _clean(s, n=480):
+def _clean(s, n=2000):
     s = re.sub(r"\s+", " ", str(s or "")).strip()
     s = re.sub(r"[*_`#]+", "", s)
     return s[:n]
@@ -660,7 +660,7 @@ def run_episode(inputs, cast, model, topic="daily night recap", cap=NIGHT_CALL_C
                    other=x["other"])
 
     def host_line(kind, text, reason=None):
-        t = _clean(text)
+        t = fit(_clean(text, 2000), 480)  # cut at a sentence, never mid-clause
         return add(speaker=HOST, kind=kind, text=t, reason=_clean(reason, 200) if reason else None) if t else None
 
     def name_in(say, did):
@@ -1125,7 +1125,7 @@ def episode_spend(session_dir, since, script=None):
                        capture_output=True, text=True)
     try:
         o = json.loads(p.stdout)
-        return "spend: %s = %d calls · total $%.2f EST" % (cmd, o["sessions_scanned"], o["total"]["est_usd"])
+        return "spend: %s = %d calls · total $%.2f EST" % (cmd, o["records_counted"], o["total"]["est_usd"])
     except (ValueError, KeyError, TypeError):
         return "spend: %s = (no readout: exit %d)" % (cmd, p.returncode)
 
