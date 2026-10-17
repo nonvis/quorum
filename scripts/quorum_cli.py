@@ -33,9 +33,11 @@ tooling that spends no model tokens:
       additionalContext (<= 5 hits, ~1k tokens). Never fails a prompt: any error
       exits 0 silently; QUORUM_HOOK=off disables it. Each call appends a line to
       <vault>/.quorum/hook.log (session, term count, hit paths — never the prompt).
-  quorum radio <project> | inputs <project> …
-      One project's day on air (scripts/radio.py, run as a subprocess): the one
-      verb that calls a model. See scripts/radio.py.
+  quorum radio <project> | brainstorm <project> "<question>" | inputs <project> …
+      One project's day on air, or one question put to the room (scripts/radio.py,
+      run as a subprocess): the one verb that calls a model. See scripts/radio.py.
+  quorum web start|stop|status|logs|dev
+      Radio Studio, the React front over a 127.0.0.1 API (scripts/web_ctl.py).
   quorum version
 
 `~/.local/bin/quorum` is a symlink to this file (scripts/install.sh).
@@ -90,7 +92,13 @@ USAGE = """usage: quorum <command> [options]
                   (on/off): sessions, prompts, main-session context per turn
   radio <project> [today|yesterday|week|YYYY-MM-DD|A..B] [--with operator] [--fake] [--no-voice]
                   the one model-calling verb: one project's day or range (KST)
-                  as a spoken recap — a vault note + an MP3 in bound voices
+                  as a spoken recap — a script + an MP3 in bound voices, in the
+                  per-host store (.quorum/radio/; unkept ones go after 7 days)
+  radio brainstorm <project> "<question>" [--with id,…] [--context <episode id>,…]
+                  one question put to the room; the host drives; a script
+  web start [--fake] | stop | status | logs [-f] | dev | build
+                  Radio Studio on http://127.0.0.1:4747: generate, play, keep,
+                  delete, export; manage projects and specialties
   radio inputs <project> [range] [--since …] [--until …]
                   the day's inputs per specialty slice (JSON, $0)
   version         print the checkout's commit
@@ -663,6 +671,11 @@ def cmd_radio(args):
     return subprocess.call([sys.executable, str(RADIO_SCRIPT)] + list(args))
 
 
+def cmd_web(args):
+    """Radio Studio's start/stop (QR-23), in its own process like radio."""
+    return subprocess.call([sys.executable, str(REPO / "scripts" / "web_ctl.py")] + list(args))
+
+
 def cmd_version(_args):
     sha = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
                          capture_output=True, text=True).stdout.strip() or "unknown"
@@ -699,6 +712,8 @@ def main(argv):
         return cmd_lint(rest)
     if sub == "radio":
         return cmd_radio(rest)
+    if sub == "web":
+        return cmd_web(rest)
     if sub in RETIRED:
         print("ERROR: `quorum %s` was retired with the C++ daemon on 2026-10-16 "
               "(vault Quorum Decision Log #98)." % sub, file=sys.stderr)

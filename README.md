@@ -1,12 +1,14 @@
 # Quorum
 
 Deterministic, local tooling around a Claude Code workspace. Python standard
-library only; no build step. One verb calls a model: `quorum radio <project>`
-(below); everything else is $0.
+library only; no build step. One verb calls a model: `quorum radio` (below);
+everything else is $0. Radio Studio (`quorum web start`) is the one web front: a
+React app over a stdlib API on 127.0.0.1.
 
 Quorum began as a C++ daemon that orchestrated Claude Code agents with a web
-dashboard. The daemon, the web app and the agent model were retired on
-2026-10-16; git history keeps them.
+dashboard. The daemon, that web app and the agent model were retired on
+2026-10-16; git history keeps them. Radio Studio is not a return of either: it
+has no daemon and no agents, and the owner starts and stops it.
 
 ## Commands
 
@@ -27,7 +29,10 @@ quorum hook on|off|status
 quorum hook --report [--json]
 quorum radio <project> [today | yesterday | week | YYYY-MM-DD | YYYY-MM-DD..YYYY-MM-DD]
              [--with operator] [--fake] [--no-voice] [--since <ISO8601>] [--until <ISO8601>]
+quorum radio brainstorm <project> "<one question>" [--with <id>,…] [--context <episode id>,…]
+             [--fake] [--no-voice] [--events]
 quorum radio inputs <project> [range] [--since <ISO8601>] [--until <ISO8601>]
+quorum web start [--fake] [--port N] [--no-open] | stop | status | logs [-f] | dev [--fake] | build
 quorum version
 ```
 
@@ -104,10 +109,16 @@ quorum version
 owner, run by hand (some projects get no work on a given day). The listener is
 the owner, so there is no screen or trust gate.
 
-- **`radio/projects.json`** (tracked) maps each project to its briefing note(s),
-  its vault folder(s), its concept note and its repos. Radio reads the repos on
-  this list by path (under `~/nonvis` or `~/projects`), whatever the index
-  allowlist says; a project may list none.
+- **The projects file** lives in the vault, `06_Metadata/quorum-projects.json`
+  (so it syncs between hosts and the repo holds no vault paths). It maps each
+  project to its briefing note(s), its vault folder(s), its concept note and its
+  repos, plus `active` (an inactive project is refused and hidden, nothing
+  deleted). Radio reads the repos on this list by path (under `~/nonvis` or
+  `~/projects`), whatever the index allowlist says; a project may list none.
+  Radio Studio adds, edits and (de)activates projects: each path is checked, a
+  repo must be one of the owner's own `github.com/nonvis` repos (from its
+  remote URL) and joins the index allowlist, and each save commits exactly the
+  files it wrote, by pathspec, then pushes (a failed push is reported).
 - **The range** is `today` (the default: KST midnight → now), `yesterday`, `week`
   (the last 7 days including today), a date, or `A..B` (inclusive, KST). A range
   that ends before now is read as the vault's git held it then (`--since` /
@@ -177,12 +188,37 @@ the owner, so there is no screen or trust gate.
   from `~/.cache/quorum/radio/session`, so `quorum spend --project
   ~/.cache/quorum/radio/session` meters it; `--fake` uses a deterministic
   stand-in. If the first call fails nothing is written.
-- The episode is written as a note `NN - <Project> (<date or range>).md` in the
-  vault's radio folder (`RADIO_DIR` in `scripts/radio.py`), recording the window,
-  the vault rev it read, the cast with each specialty's status, the transcript
-  (speaker / voice / line / source), the Verifier's reads, the program log, the
-  call count and the spend line, and voiced to an MP3 beside it (`--no-voice`
-  skips it). Play it with `afplay`.
+- **The store.** Every episode goes to the per-host store
+  `.quorum/radio/<id>/` in this checkout (`QUORUM_RADIO_STORE` overrides; never
+  tracked): `meta.json`, `script.json` (the lines, their sources, the audio
+  timings), `script.md` (the export: the window or question, the vault rev, the
+  cast with each specialty's status, the script with sources, the Verifier's
+  reads, the program log, the calls and the spend line) and `audio.mp3`
+  (`--no-voice` skips it). The id is `YYYYMMDD-HHMMSS-<kind>-<project>` (KST). A
+  new episode is unkept; an unkept one is deleted 7 days after it was made,
+  swept whenever the store is listed (no timer). Keep makes it permanent; delete
+  is immediate. Nothing goes to the vault: the script is exported by hand.
+  `--events` prints one JSON object per line (`started`, `line`, `log`,
+  `status`, `done` or `error`) for the web.
+- **Brainstorm.** `quorum radio brainstorm <project> "<question>"` puts **one
+  question** to the room; the owner is not on air and the host drives. The room
+  is the specialties named with `--with` (default: Builder, Verifier, Architect,
+  Product), each answering from its brainstorm **angle** (`brainstorm` in the
+  cast file) and its own source kinds: Builder `code` (recent commits, `quorum
+  repo q` hits), Verifier `evidence` (the briefing's state, evidence notes, and
+  reads it runs itself), Architect `decision` (the rulings in force, decision
+  notes), Product `surface` (the concept note, surface notes), Operator `owed`.
+  Every source comes from the question's hits through `quorum q` / `quorum repo
+  q` plus the briefing, at $0. The host opens with the question, asks each
+  specialty in the room at least once while calls allow, may ask one to answer a
+  line on air (`about`), and wraps when the question is worked or after two
+  passes in a row; a host question that claims something is replaced by the
+  specialty's angle. A claim without a source is said as a guess. The sign-off
+  names at most 5 open threads, never action items. 20 calls at most.
+  `--context <id>,…` attaches earlier scripts as context: depth comes from a
+  fresh session, never a follow-up in the same one. A specialty added from Radio
+  Studio is brainstorm-only (`recap: false`), reads the question's general hits,
+  and takes an unused voice for life (the lock records it).
 - **`radio-voice/`** is the voice sidecar, a separate Node package
   (`kokoro-js` pinned to 1.2.1, `package-lock.json` tracked, `node_modules/`
   not): `node render.mjs --cast radio/cast.json <job.json> <out.mp3>`. It voices
@@ -196,6 +232,30 @@ the owner, so there is no screen or trust gate.
 
 The stdlib core never imports radio: `quorum radio` runs `scripts/radio.py` as a
 subprocess, and the TTS lives in the sidecar.
+
+## Radio Studio
+
+`quorum web start` builds the app when its sources changed (`npm ci` when the
+lockfile did), starts `scripts/radio_web.py` detached on
+`http://127.0.0.1:4747` (pid + log in `.quorum/web/`) and opens the browser;
+`quorum web stop` stops it; `status`, `logs [-f]`; `quorum web dev` runs Vite
+with hot reload on 5173 in front of the API. `--fake` generates with the fake
+model and voice. It is never a login item and never restarts itself.
+
+- **The API** (`scripts/radio_web.py`, stdlib) serves the built app and
+  `/api/…`: episodes (list, script, `script.md` export, audio with HTTP Range,
+  keep, delete), generation (`radio.py … --events` as a child process, relayed
+  over SSE; one at a time; cancel deletes the partial episode), projects (list,
+  check, add, edit, (de)activate) and the cast (add a brainstorm specialty). It
+  binds 127.0.0.1 only and refuses a foreign `Host` or `Origin` (the Vite dev
+  origin is allowed).
+- **The app** (`radio-web/`, Vite + React + TypeScript, Tailwind, Radix
+  primitives, TanStack Query; exact pins, `package-lock.json` tracked,
+  `node_modules/` and `dist/` not): **Listen** (episodes by day, filters, the
+  script following the audio, keep, export, delete, "brainstorm from this"),
+  **Generate** (recap or brainstorm, lines appearing as the room speaks) and
+  **Projects**. One player plays across views (space, ←/→). `npm test` runs its
+  unit tests.
 
 The vault defaults to `~/nonvis/second-brain` (`QUORUM_VAULT` overrides); its
 memory directory is Claude Code's for that path (`QUORUM_MEMORY` overrides). The
@@ -222,10 +282,13 @@ scripts/spend_readout.py   spend (and its tests)
 scripts/vault_index.py     the vault index (and its tests)
 scripts/repo_index.py      the per-repo index (and its tests)
 scripts/lint.py            quorum lint (and its tests)
-scripts/radio.py           quorum radio: inputs, slices, the round, the Verifier's reads, the note (and its tests)
-radio/cast.json            the cast: question, slice, never-says, bound voice + pan; radio/voices.lock
-radio/projects.json        project -> briefing, folders, concept note, repos
+scripts/radio.py           quorum radio: inputs, slices, the recap and brainstorm rounds, the Verifier's reads, the script (and its tests)
+scripts/radio_store.py     the per-host episode store (and its tests)
+scripts/radio_projects.py  the vault's projects file: load, check, add, edit, (de)activate (and its tests)
+scripts/radio_web.py       Radio Studio's API (and its tests); scripts/web_ctl.py = quorum web
+radio/cast.json            the cast: question, angle, slice, never-says, bound voice + pan; radio/voices.lock
 radio-voice/               the Node voice sidecar (Kokoro + ffmpeg)
+radio-web/                 Radio Studio, the React app
 scripts/install.sh, doctor.sh
 templates/skills/          the three linked skills
 ```

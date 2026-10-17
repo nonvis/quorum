@@ -12,3 +12,7 @@ __pycache__/
 
 # Radio voice sidecar
 radio-voice/node_modules/
+
+# Radio Studio web app
+radio-web/node_modules/
+radio-web/dist/

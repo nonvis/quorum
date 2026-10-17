@@ -23,10 +23,10 @@ done
 # Radio: the cast file is checked like code; the voice sidecar is optional (warn only).
 python3 -c "import sys; sys.path.insert(0, '$REPO_ROOT/scripts'); import radio; radio.load_cast()" 2>/dev/null \
     && ok "radio cast file + voice lock" || bad "radio/cast.json refused (python3 scripts/radio.py inputs says why)"
-command -v claude >/dev/null && ok "claude on PATH (radio tonight)" || warn "claude not on PATH: radio tonight needs --fake"
+command -v claude >/dev/null && ok "claude on PATH (radio)" || warn "claude not on PATH: radio needs --fake"
 command -v node >/dev/null && [ -d "$REPO_ROOT/radio-voice/node_modules/kokoro-js" ] \
-    && ok "radio-voice sidecar installed" || warn "radio-voice not installed (cd radio-voice && npm ci): radio tonight needs --no-voice"
-command -v ffmpeg >/dev/null && ok "ffmpeg" || warn "ffmpeg not found: radio tonight needs --no-voice"
+    && ok "radio-voice sidecar installed" || warn "radio-voice not installed (cd radio-voice && npm ci): radio needs --no-voice"
+command -v ffmpeg >/dev/null && ok "ffmpeg" || warn "ffmpeg not found: radio needs --no-voice"
 w="${QUORUM_KOKORO_CACHE:-$HOME/.cache/quorum/kokoro}/onnx-community/Kokoro-82M-v1.0-ONNX/onnx/model_quantized.onnx"
 if [ -f "$w" ]; then
     [ "$(shasum -a 256 "$w" | cut -d' ' -f1)" = "$(cut -d' ' -f1 "$REPO_ROOT/radio-voice/weights.sha256")" ] \
@@ -34,5 +34,13 @@ if [ -f "$w" ]; then
 else
     warn "Kokoro weights not cached at $w (the first render downloads them)"
 fi
+# Radio's projects live in the vault (QR-24); Radio Studio's app is optional (warn only).
+vault="${QUORUM_VAULT:-$HOME/nonvis/second-brain}"
+python3 -c "import sys; sys.path.insert(0, '$REPO_ROOT/scripts'); import radio_projects; radio_projects.load('$vault')" 2>/dev/null \
+    && ok "radio projects file in the vault (06_Metadata/quorum-projects.json)" \
+    || bad "radio projects file missing or unreadable: $vault/06_Metadata/quorum-projects.json"
+command -v npm >/dev/null && [ -d "$REPO_ROOT/radio-web/node_modules" ] \
+    && ok "radio-web installed" || warn "radio-web not installed: quorum web start installs and builds it"
+[ -f "$REPO_ROOT/radio-web/dist/index.html" ] && ok "radio-web built" || warn "radio-web not built: quorum web start builds it"
 [ $fail = 0 ] && echo "0 failed" || echo "FAILED"
 exit $fail

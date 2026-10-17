@@ -1273,12 +1273,44 @@ class BrainstormCase(unittest.TestCase):
                             chosen=("builder", "product"))
         self.assertNotIn("operator", {l["speaker"] for l in on_air(ep)})
 
-    def test_a_host_question_that_claims_something_is_replaced_by_the_angle(self):
-        ep, m = self.run_bs({("bhost", "next"): [J({"action": "ask", "to": "product",
-                                                     "question": "The gate is slow. Would users notice?"})]})
+    def test_a_host_question_may_frame_one_line_on_air(self):
+        """Real run 10-17: building on a line is how the host drives a brainstorm (unlike a recap's QR7-1)."""
+        q = "Product says a stall feels worse than a long wait. What measurement would settle it?"
+        ep, m = self.run_bs({("bhost", "next"): [J({"action": "ask", "to": "verifier", "question": q})]})
         asks = [l["text"] for l in on_air(ep) if l["speaker"] == "host" and l["kind"] == "ask"]
-        self.assertNotIn("The gate is slow. Would users notice?", asks)
+        self.assertIn(q, asks)
+
+    def test_a_host_line_that_is_not_one_short_question_is_re_asked_then_templated(self):
+        bad = [J({"action": "ask", "to": "product", "question": "The gate is slow. Users hate it. Fix it now."}),
+               J({"action": "ask", "to": "product", "question": "Still not a question."})]
+        ep, m = self.run_bs({("bhost", "next"): bad})
+        asks = [l["text"] for l in on_air(ep) if l["speaker"] == "host" and l["kind"] == "ask"]
+        self.assertFalse([a for a in asks if "Fix it now" in a or "Still not" in a])
         self.assertTrue(any(a.startswith("Product, ") for a in asks), asks)
+        self.assertEqual(len([k for k, v in m.calls if k == ("bhost", "next") and v.get("retry")]), 1)
+
+    def test_a_specialty_asked_again_is_not_handed_its_angle_twice(self):
+        again = [J({"action": "ask", "to": "builder", "question": "Fix it."}), J({"action": "wrap"})]
+        ep, m = self.run_bs({("bhost", "next"): [again[0], again[0]] + [J({"action": "wrap"})] * 10},
+                            chosen=("builder", "product"))
+        asks = [l["text"] for l in on_air(ep) if l["speaker"] == "host" and l["kind"] == "ask"]
+        builder_angle = "Builder, what would it take to build, and what already exists?"
+        self.assertLessEqual(asks.count(builder_angle), 1, asks)
+
+    def test_a_specialty_never_repeats_its_own_earlier_line(self):
+        # Radio/brainstorm 10-17, lines 4 and 14: the same point said twice (overlap 0.61, under the room's 0.7).
+        same = J({"answer": "Nothing I read has voicing times on the MSI. Render hands the whole episode to one sidecar "
+                            "that writes a single MP3. The proof: time the first line against the full episode on the MSI.",
+                  "label": "inferred", "source": "none"})
+        near = J({"answer": "Today the audio route serves Range requests, but render passes the whole episode to one sidecar "
+                            "that writes one MP3. The proof: voice line one and the full episode on the MSI, then compare.",
+                  "label": "inferred", "source": "none"})
+        ep, m = self.run_bs({("bdesk", "product"): [same, near],
+                             ("bhost", "next"): [J({"action": "ask", "to": "product", "question": "Product, and then?"})]
+                                                + [None] * 10},
+                            chosen=("product", "builder"))
+        prod = [l for l in on_air(ep) if l["speaker"] == "product"]
+        self.assertEqual([l["kind"] for l in prod], ["answer", "pass"])
 
     def test_a_reply_names_the_line_it_answers(self):
         ep, m = self.run_bs({("bhost", "next"): [J({"action": "reply", "to": "architect", "about": 2,

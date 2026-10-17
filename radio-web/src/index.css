@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  --bg: oklch(0.985 0.004 85);
+  --fg: oklch(0.22 0.01 60);
+  --card: oklch(1 0 0);
+  --muted: oklch(0.955 0.006 85);
+  --muted-fg: oklch(0.5 0.012 60);
+  --border: oklch(0.9 0.008 80);
+  --ring: oklch(0.68 0.16 45);
+  --accent: oklch(0.66 0.17 42);        /* the on-air lamp */
+  --accent-fg: oklch(0.99 0 0);
+  --accent-soft: oklch(0.95 0.04 50);
+  --danger: oklch(0.58 0.2 25);
+  --ok: oklch(0.6 0.13 155);
+  --spk-host: oklch(0.55 0.02 60);
+  --spk-builder: oklch(0.58 0.15 250);
+  --spk-verifier: oklch(0.6 0.12 185);
+  --spk-architect: oklch(0.56 0.16 300);
+  --spk-product: oklch(0.6 0.17 10);
+  --spk-operator: oklch(0.66 0.14 75);
+  --spk-other: oklch(0.6 0.12 130);
+}
+
+[data-theme="dark"] {
+  --bg: oklch(0.17 0.008 60);
+  --fg: oklch(0.93 0.008 80);
+  --card: oklch(0.21 0.009 60);
+  --muted: oklch(0.25 0.01 60);
+  --muted-fg: oklch(0.68 0.012 70);
+  --border: oklch(0.3 0.01 60);
+  --ring: oklch(0.72 0.15 45);
+  --accent: oklch(0.72 0.16 45);
+  --accent-fg: oklch(0.16 0.01 60);
+  --accent-soft: oklch(0.3 0.06 45);
+  --danger: oklch(0.68 0.18 25);
+  --ok: oklch(0.72 0.13 155);
+  --spk-host: oklch(0.72 0.02 70);
+  --spk-builder: oklch(0.72 0.13 250);
+  --spk-verifier: oklch(0.75 0.11 185);
+  --spk-architect: oklch(0.72 0.14 300);
+  --spk-product: oklch(0.74 0.14 10);
+  --spk-operator: oklch(0.8 0.13 80);
+  --spk-other: oklch(0.76 0.12 130);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-fg: var(--fg);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-muted-fg: var(--muted-fg);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --animate-pulse-soft: pulse-soft 1.6s ease-in-out infinite;
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+}
+
+html, body, #root { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+* { border-color: var(--border); }
+::selection { background: var(--accent-soft); }

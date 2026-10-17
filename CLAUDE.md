@@ -4,18 +4,24 @@ Deterministic Python tooling: `quorum spend` (token/$ readout from Claude Code
 transcripts), the vault index (`quorum q`, `links`, `mentions`, `repos`, `index`)
 and the per-repo index (`quorum repo q`, `sym`, `repo index`), plus `quorum
 radio <project>` (one project's day on air: specialties answering one question
-each from their own slice of the inputs, a note, an MP3).
+each from their own slice of the inputs, a script, an MP3), `quorum radio
+brainstorm` (one question put to the room) and Radio Studio (`quorum web start`:
+a React app over a stdlib API on 127.0.0.1).
 What each command does is in `README.md`; the source is the truth.
 
 > Project status, roadmap and decisions live in the maintainer's private design
-> vault, not in this repo. The C++ daemon, the web app and the agent/knower model
-> were retired on 2026-10-16 — don't reintroduce them.
+> vault, not in this repo. The C++ daemon, its web app and the agent/knower model
+> were retired on 2026-10-16 — don't reintroduce them. Radio Studio (`radio-web/` +
+> `scripts/radio_web.py`) is the one web front, ruled separately: no daemon, no
+> agents, owner-started.
 
 ## Rules
 
 - **Python standard library only.** No pip dependencies, no build step, no
-  compiled code. `sqlite3` with FTS5 is the storage. The one non-Python piece is
-  `radio-voice/` (its own Node package; `kokoro-js` pinned exactly).
+  compiled code. `sqlite3` with FTS5 is the storage. The non-Python pieces are
+  `radio-voice/` (its own Node package; `kokoro-js` pinned exactly) and
+  `radio-web/` (Radio Studio's React app; every dependency pinned exactly, built
+  by `quorum web start`, served by the stdlib `scripts/radio_web.py`).
 - **Zero model calls, except `quorum radio <project>`.** Every other command is
   deterministic and costs $0. The core (`quorum_cli.py`, `vault_index.py`,
   `repo_index.py`, `spend_readout.py`, `lint.py`) never imports `radio.py` or
@@ -24,8 +30,13 @@ What each command does is in `README.md`; the source is the truth.
 - **Read-only toward what it reads.** `spend` reads transcripts; the indexes read
   markdown and git. The only files written are `<vault>/.quorum/index.db`,
   `<repo>/.quorum/index.db` and, if missing, `<repo>/.quorum/.gitignore` (`*`);
-  `quorum radio <project>` also writes its episode note + MP3 under the vault's
-  `01_Projects/Quorum/Radio/` and appends new ids to `radio/voices.lock`.
+  `quorum radio` also writes episodes to the per-host store `.quorum/radio/`
+  and appends new ids to `radio/voices.lock`; Radio Studio writes the vault's
+  `06_Metadata/quorum-projects.json` (+ the allowlist) and commits exactly those
+  files, and adds brainstorm specialties to `radio/cast.json`.
+- **Radio Studio binds 127.0.0.1 only** and refuses a foreign Host or Origin;
+  it is started and stopped by the owner (`quorum web start|stop`), never a
+  login item or a self-restarting service.
 - **Radio voices are bound for life.** `radio/cast.json` gives each specialty
   one Kokoro voice and one pan; never reassign a voice (the lock refuses it),
   never reuse a retired specialty's voice, never change the pinned weights.
