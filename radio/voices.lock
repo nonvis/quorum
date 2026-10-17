@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "note": "Every voice a specialty has ever held. Append only: an id keeps its voice for life; a retired id's voice stays reserved.",
+  "voices": {
+    "host": "af_heart",
+    "meridian": "am_michael",
+    "permafrost": "bf_emma",
+    "sidebar": "af_nicole",
+    "bastion": "bm_george",
+    "skeptic": "am_fenrir",
+    "accountant": "am_puck"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "quorum-radio-voice",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Quorum Radio's voice sidecar: Kokoro-82M (ONNX q8) through kokoro-js, one MP3 per episode via ffmpeg.",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "kokoro-js": "1.2.1"
+  }
+}

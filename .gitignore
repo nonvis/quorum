@@ -9,3 +9,6 @@ __pycache__/
 *.swp
 .idea/
 .vscode/
+
+# Radio voice sidecar
+radio-voice/node_modules/

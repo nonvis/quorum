@@ -33,6 +33,9 @@ tooling that spends no model tokens:
       additionalContext (<= 5 hits, ~1k tokens). Never fails a prompt: any error
       exits 0 silently; QUORUM_HOOK=off disables it. Each call appends a line to
       <vault>/.quorum/hook.log (session, term count, hit paths — never the prompt).
+  quorum radio inputs|tonight …
+      The owner's desks on air (scripts/radio.py, run as a subprocess): the one
+      verb that calls a model. See scripts/radio.py.
   quorum version
 
 `~/.local/bin/quorum` is a symlink to this file (scripts/install.sh).
@@ -45,6 +48,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SPEND_SCRIPT = REPO / "scripts" / "spend_readout.py"
+RADIO_SCRIPT = REPO / "scripts" / "radio.py"
 
 RETIRED = {"ask", "converse", "knower", "init", "search", "agent", "vault",
            "brainstorm", "autopilot", "run", "status"}
@@ -84,6 +88,12 @@ USAGE = """usage: quorum <command> [options]
                   how often the hook injected, how many hits were then Read,
                   how many sessions ran quorum lookups themselves, and per mode
                   (on/off): sessions, prompts, main-session context per turn
+  radio inputs [--since <ISO8601>]
+                  per desk, what tonight's episode reads: briefings, commit
+                  subjects, spend lines, Action Queue items (JSON, $0)
+  radio tonight [--fake] [--topic <words>] [--since <ISO8601>] [--no-voice]
+                  the one model-calling verb: a host-run round over `claude -p`
+                  among the desks, a vault note + an MP3 in the bound voices
   version         print the checkout's commit
 
 The vault defaults to ~/nonvis/second-brain (QUORUM_VAULT overrides); its memory
@@ -649,6 +659,11 @@ def cmd_lint(args):
     return 0
 
 
+def cmd_radio(args):
+    """Radio runs in its own process: the core never imports it (QR-1)."""
+    return subprocess.call([sys.executable, str(RADIO_SCRIPT)] + list(args))
+
+
 def cmd_version(_args):
     sha = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
                          capture_output=True, text=True).stdout.strip() or "unknown"
@@ -683,6 +698,8 @@ def main(argv):
         return cmd_hook(rest)
     if sub == "lint":
         return cmd_lint(rest)
+    if sub == "radio":
+        return cmd_radio(rest)
     if sub in RETIRED:
         print("ERROR: `quorum %s` was retired with the C++ daemon on 2026-10-16 "
               "(vault Quorum Decision Log #98)." % sub, file=sys.stderr)

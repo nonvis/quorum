@@ -1,0 +1,20 @@
+{
+  "v": 1,
+  "note": "Radio's cast: each specialty is bound to one Kokoro voice and one stereo position for its lifetime. A voice is never reassigned (radio/voices.lock records it); a retired specialty's voice stays reserved.",
+  "cast": [
+    {"id": "host", "name": "Host", "voice": "af_heart", "pan": "centre",
+     "reads": {}},
+    {"id": "meridian", "name": "Meridian", "voice": "am_michael", "pan": "far left",
+     "reads": {"notes": ["01_Projects/Meridian/08 - *.md"], "repos": ["meridian"], "names": ["Meridian", "Kestrel", "Prime"]}},
+    {"id": "permafrost", "name": "Permafrost", "voice": "bf_emma", "pan": "far right",
+     "reads": {"notes": ["01_Projects/Permafrost/28 - *.md", "01_Projects/Loqua/MVP/00 - *.md"], "repos": ["permafrost", "loqua-passkey"], "names": ["Permafrost", "Loqua"]}},
+    {"id": "sidebar", "name": "Sidebar", "voice": "af_nicole", "pan": "left",
+     "reads": {"notes": ["01_Projects/Sidebar/13 - *.md"], "repos": ["sidebar", "sidebar-screen"], "names": ["Sidebar"]}},
+    {"id": "bastion", "name": "Bastion", "voice": "bm_george", "pan": "right",
+     "reads": {"notes": ["01_Projects/Partners/Samsung/Bastion/21 - *.md", "01_Projects/Partners/Samsung/Linear/00 - *.md"], "repos": [], "names": ["Bastion", "Samsung"]}},
+    {"id": "skeptic", "name": "Skeptic", "voice": "am_fenrir", "pan": "centre-left",
+     "reads": {"memory": ["MEMORY_VERIFICATION.md", "MEMORY_VERIFICATION_2.md"], "answers": true}},
+    {"id": "accountant", "name": "Accountant", "voice": "am_puck", "pan": "centre-right",
+     "reads": {"spend": "all", "owed": "all"}}
+  ]
+}
