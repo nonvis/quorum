@@ -550,6 +550,25 @@ class InputsCase(unittest.TestCase):
                          "---\nsummary: \"x\"\n---\n# W\n\n%s\n" % text, NOW - timedelta(minutes=20))
             self.assertIn(signal, [b["signal"] for b in self.fx.inputs()["breaks"]], text)
 
+    def test_a_described_marker_rule_is_no_break(self):
+        """Real recap 10-17: the Quorum build log DESCRIBING the BROKEN: rule brought the Operator on air."""
+        for text in ("ROUND 5 (QR-15…17): echo filter, break net + BROKEN: marker, one follow-up.",
+                     "| **QR6-4** (R5) | a range counts only `BROKEN:` markers and red gate/walk records.",
+                     "- R5: a break is a keyword match **or** an explicit `BROKEN:` marker on a note line.",
+                     '| "down" / "outage" now fires only with a failure word in the same line (fail…, error, timeout).',
+                     'An earlier test was updated: "the sidecar is DOWN" now needs "health checks fail".',
+                     "It joins when something broke (a red gate or walk, a service down, a deploy rolled back).",
+                     "## Walk runs (what failed and why)"):
+            self.fx.note("01_Projects/Sidebar/59 - Walk (Build Log, 2026-10-17).md",
+                         "---\nsummary: \"x\"\n---\n# W\n\n%s\n" % text, NOW - timedelta(minutes=20))
+            self.assertEqual(self.fx.inputs()["breaks"], [], text)
+
+    def test_a_marker_opening_a_list_item_or_cell_still_counts(self):
+        for text in ("- BROKEN: the c1 box rejects every upload", "| 3 | **BROKEN:** uploads refused |"):
+            self.fx.note("01_Projects/Sidebar/59 - Walk (Build Log, 2026-10-17).md",
+                         "---\nsummary: \"x\"\n---\n# W\n\n%s\n" % text, NOW - timedelta(minutes=20))
+            self.assertIn("marked BROKEN", [b["signal"] for b in self.fx.inputs()["breaks"]], text)
+
     def test_r3_the_day_has_themes(self):
         th = self.fx.inputs()["themes"]
         self.assertEqual(sum(t["count"] for t in th), 3)
@@ -825,6 +844,15 @@ class RoundCase(unittest.TestCase):
         self.assertEqual(len([k for k, _ in m.calls if k == ("host", "followup")]), 1)
         ask = [l for l in on_air(ep) if l["kind"] == "followup"][0]
         self.assertEqual(ask["text"], "Which part of that was hardest?")
+
+    def test_a_follow_up_goes_to_the_specialty_it_names(self):
+        """Real recap 10-17: the question said "Builder, …" while `to` was the Architect, who passed."""
+        fu = J({"action": "ask", "to": "architect", "question": "Builder, which commit carries the most risk?", "reason": "x"})
+        ep, m = self.run_ep({("host", "followup"): fu, ("desk", "builder"): [None, J({
+            "answer": "My guess is the store change.", "label": "inferred", "source": "C2"})]})
+        i = next(l["i"] for l in on_air(ep) if l["kind"] == "followup")
+        nxt = [l for l in on_air(ep) if l["i"] > i][0]
+        self.assertEqual(nxt["speaker"], "builder")
 
     def test_r6_no_follow_up_after_a_pass(self):
         ep, m = self.run_ep({("desk", "product"): J({"pass": True})})

@@ -357,7 +357,7 @@ BREAKS = (
                                   re.I)),
     ("a deploy rolled back", re.compile(r"\brolled\s+back\b|\brollback\b", re.I)),
 )
-MARKER = re.compile(r"\bBROKEN:")
+MARKER = re.compile(r"BROKEN:")
 # R5 (QR6): a stopped or down box is not a break unless a failure signal comes with it.
 FAILURE = re.compile(r"\b(fail\w*|crash\w*|errors?|erroring|unreachable|refus\w*|time[sd]? ?out|timing out|5\d\d|panic\w*|oom)\b", re.I)
 DOWN_WORDS = re.compile(r"\b(is|went|was|are|been)\s+down\b(?!\s+to\b)|\boutage\b", re.I)
@@ -365,28 +365,52 @@ AMOUNT = re.compile(r"(\d+(?:\.\d+)?)\s*\**\s*(SUI|USDC|USDT|ETH)\b")
 FLOOR = re.compile(r"(?:fails?\s+below|below|floor(?:\s+of)?|<)\s*\**\s*(\d+(?:\.\d+)?)", re.I)
 
 
+QUOTED = re.compile(r"`[^`]*`|\"[^\"]*\"|“[^”]*”|‘[^’]*’")
+YAML_VALUE = re.compile(r'^\s*[\w-]+:\s*"(.*)"\s*$')
+# Naming two or more of these in one line is the rule being described, not a break being reported.
+BREAK_KINDS = re.compile(r"\bred (?:gate|walk)|\bgate or walk|\bservice (?:is )?down|\brolled back|\bfail floor|BROKEN:|"
+                         r"\bfailure (?:signal|word)", re.I)
+
+
+def _marked(line):
+    """A `BROKEN:` marker counts only where it opens the line, a list item or a table cell, not in a sentence about it."""
+    cells = line.strip().strip("|").split("|") if line.strip().startswith("|") else [line]
+    for c in cells:
+        c = re.sub(r"^\s*(?:[-*+]|\d+\.)\s+", "", c.strip())
+        if MARKER.match(c.lstrip("*_ ")):
+            return True
+    return False
+
+
 def find_breaks(texts, is_range=False):
     """[{signal, text, where}] for each added line that reads as a break. A range
     counts only BROKEN: markers and red gate/walk records (R5); the keyword net
-    is for single days, and "down" counts only with a failure signal."""
+    is for single days, and "down" counts only with a failure signal. Words in
+    code or quotes are examples, not reports, and a line naming two or more break
+    kinds describes the rule (real recap 10-17)."""
     out, seen = [], set()
     for where, text in texts:
-        for line in [x.strip() for x in re.split(r"(?<=[.!?])\s+|\n", text) if x.strip()]:
-            hits = []
-            if MARKER.search(line):
-                hits.append("marked BROKEN")
-            prose = re.sub(r"`[^`]*`", "", line)  # a word in code formatting is a state name, not prose
-            sigs = [signal for signal, rx in BREAKS if rx.search(prose)]
-            if DOWN_WORDS.search(prose) and FAILURE.search(prose) and "a service down" not in sigs:
-                sigs.append("a service down")
-            a, f = AMOUNT.search(line), FLOOR.search(line)
-            if a and f and re.search(r"fail", line, re.I) and float(a.group(1)) < float(f.group(1)):
-                sigs.append("balance below its FAIL floor")
-            hits += [x for x in sigs if not is_range or x == "a red gate or walk"]
-            for h in hits:
-                if (h, line) not in seen:
-                    seen.add((h, line))
-                    out.append({"signal": h, "text": line[:300], "where": where})
+        for raw in [x for x in text.split("\n") if x.strip() and not x.lstrip().startswith("#")]:   # a heading names a topic
+            if _marked(raw) and ("marked BROKEN", raw.strip()) not in seen:
+                seen.add(("marked BROKEN", raw.strip()))
+                out.append({"signal": "marked BROKEN", "text": raw.strip()[:300], "where": where})
+            y = YAML_VALUE.match(raw)
+            if len({m.group(0).lower() for m in BREAK_KINDS.finditer(raw)}) >= 2:
+                continue   # a list of break kinds: the rule, not a report
+            for line in [x.strip() for x in re.split(r"(?<=[.!?])\s+", y.group(1) if y else raw) if x.strip()]:
+                prose = QUOTED.sub("", line)
+                sigs = [signal for signal, rx in BREAKS if rx.search(prose)]
+                if DOWN_WORDS.search(prose) and FAILURE.search(prose) and "a service down" not in sigs:
+                    sigs.append("a service down")
+                a, f = AMOUNT.search(line), FLOOR.search(line)
+                if a and f and re.search(r"fail", line, re.I) and float(a.group(1)) < float(f.group(1)):
+                    sigs.append("balance below its FAIL floor")
+                if len(set(sigs)) >= 2:
+                    continue   # a list of break kinds: the rule, not a report
+                for h in [x for x in sigs if not is_range or x == "a red gate or walk"]:
+                    if (h, line) not in seen:
+                        seen.add((h, line))
+                        out.append({"signal": h, "text": line[:300], "where": where})
     return out
 
 
@@ -1300,6 +1324,10 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
             if not host_question_ok(q):
                 q = "%s, can you say more about that?" % names[to]["name"]
                 note("follow-up: still not a question only; the template was used")
+        named = ADDRESS.match(q)
+        if named and named.group(3).lower() in choices and named.group(3).lower() != to:
+            note("follow-up: the question names %s, not %s; %s answers" % (named.group(3).lower(), to, named.group(3).lower()))
+            to = named.group(3).lower()
         host_line("followup", q, o.get("reason"))
         note("follow-up: %s: %s" % (to, q[:120]))
         asked.append(to)
