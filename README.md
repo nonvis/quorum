@@ -125,8 +125,8 @@ the owner, so there is no screen or trust gate.
   |---|---|---|
   | Builder | What actually changed today? | the window's commits and the code files they touched (a range: ≤ 3 themes + commits per day) |
   | Verifier | Is that actually proven? | the evidence: build logs, walks, gates, tests changed today, the verification rules, and what it reads itself |
-  | Architect | What did we decide today, and what did it cost? | the lines design / ruling notes gained in the window (another project's decision note counts when those lines name this project), the briefing's §Rulings when it changed |
-  | Product | Does a user notice any of it? | the diffs of user-facing files (docs, UI, CLI help), surface notes, the concept note |
+  | Architect | What did we decide today, and what did it cost? | the lines design / ruling notes gained in the window (another project's decision note counts when those lines name this project, with its current summary/status), the briefing's §Rulings when it changed; a range gives dated items, one per note before a second |
+  | Product | Does a user notice any of it? | the diffs of user-facing files (docs, UI, CLI help), surface notes, the concept note; plus the window's merge subjects as context only (not citable) |
   | Operator | What's waiting on the owner? | the briefing's Owed + Next rows, Action Queue items naming the project, spend lines |
 
   Each specialty is bound to **one Kokoro voice and one stereo position for its
@@ -149,18 +149,24 @@ the owner, so there is no screen or trust gate.
   question, only if the last answer was a sourced one (GR-8). 14 calls at most,
   the last one the sign-off.
 - **The Verifier** reads before it speaks: one call asks for at most 4
-  read-only reads — `git show` / `log` / `grep` in the project's repos, or a
+  read-only reads — `git show` / `log` / `grep` / `branch --contains` in the
+  project's repos (a grep with no match is evidence: "(no matches)"), or a
   note in its vault folders (no shell; revisions and paths validated; output
   capped) — the program runs them, and a second call gives the verdict on the
   Builder's line: "Proven: …" or "Not proven yet. The one check that settles it:
-  …". An open doubt never airs. A claim found not proven is put back to its
+  …". An open doubt never airs. The evidence must match the kind of claim: a
+  *change* (added / removed / renamed / merged) is settled by the repository; a
+  *works* claim (it works / passes / is live) needs a build, test or walk record
+  in a log note, and a "proven" resting on repository evidence alone is not aired. A claim found not proven is put back to its
   speaker, who confirms, corrects or withdraws; a withdrawal stays on air and the
   claim is marked withdrawn. The reads it ran are listed in the note.
 - **The Operator** is off by default. `--with operator` invites it, last before
   the sign-off. It joins uninvited only when something broke in the window,
   read from the lines the project's notes gained in the window: a `BROKEN:`
   marker on a line (the reliable path), or, case-insensitively, a red gate or
-  walk, a service down, a balance under its FAIL floor, a deploy rolled back. Then it says only the break and the one act
+  walk, a service down *with a failure signal* (a stopped or down box alone is
+  routine), a balance under its FAIL floor, a deploy rolled back. A range counts
+  only the markers and red gate/walk records. Then it says only the break and the one act
   that fixes it. The signal that fired is logged.
 - The model is `claude -p --model claude-sonnet-5-5` (no tools, safe mode), run
   from `~/.cache/quorum/radio/session`, so `quorum spend --project

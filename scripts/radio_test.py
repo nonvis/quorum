@@ -218,6 +218,14 @@ class Fixture:
         self.note("01_Projects/Quorum/18 - Radio — the Owner's Desks on Air (Design, 2026-10-17).md",
                   "---\nsummary: \"radio design\"\n---\n# R\n\nOld text about voices.\n"
                   "QR-5: Sidebar Radio is removed; Radio moves to Quorum.\n", NOW - timedelta(hours=2, minutes=30))
+        self.note("01_Projects/Quorum/18 - Radio — the Owner's Desks on Air (Design, 2026-10-17).md",
+                  "---\nsummary: \"Radio BUILT in Quorum; quorum radio <project> runs\"\nstatus: \"BUILT\"\n---\n# R\n\n"
+                  "Old text about voices.\nQR-5: Sidebar Radio is removed; Radio moves to Quorum.\n", NOW - timedelta(hours=1, minutes=30))
+        self.note("01_Projects/Sidebar/45 - Rooms (Design, 2026-10-13).md",
+                  "---\nsummary: \"rooms\"\n---\n# Rooms\n\nRuled: rooms are salons.\n", datetime(2026, 10, 13, 2, 0, tzinfo=timezone.utc))
+        self.note("01_Projects/Sidebar/45 - Rooms (Design, 2026-10-13).md",
+                  "---\nsummary: \"rooms\"\n---\n# Rooms\n\nRuled: rooms are salons.\nRuled: old rooms do not carry over.\n",
+                  datetime(2026, 10, 15, 2, 0, tzinfo=timezone.utc))
         self.note("01_Projects/Permafrost/77 - Desk Broker (Design, 2026-10-17).md",
                   "---\nsummary: \"broker\"\n---\n# B\n\nNothing about the other project.\n", NOW - timedelta(hours=2))
         self.note("01_Projects/Quorum/Radio/03 - Sidebar (2026-10-15).md",
@@ -386,7 +394,16 @@ class InputsCase(unittest.TestCase):
         self.assertNotIn("Merge screen-v0.6-wire", txt("product"))
         self.assertNotIn("31 tests green", txt("builder"))
 
+    def test_r6_product_sees_the_merge_subjects_as_context_only(self):
+        i = self.fx.inputs()
+        self.assertEqual([m["subject"] for m in i["merges"]], ["Merge screen-v0.6-wire: the violence gate wired in"])
+        cast = radio.load_cast(CAST, LOCK)
+        prod = radio.sources_for_specialty(cast, "product", radio.project_sources(i))
+        self.assertNotIn("Merge screen-v0.6-wire", " ".join(x["text"] for x in prod))   # not a citable source
+
     def test_the_slices_are_disjoint(self):
+        """The one allowed overlap: Product's read-only merge context repeats merge subjects the
+        Builder also sees (R6); it is context in Product's prompt, never a source it can cite."""
         cast = radio.load_cast(CAST, LOCK)
         src = radio.project_sources(self.fx.inputs())
         sids = ("builder", "verifier", "architect", "product", "operator")
@@ -407,7 +424,7 @@ class InputsCase(unittest.TestCase):
         self.assertEqual([b["signal"] for b in br], ["balance below its FAIL floor"])
         self.assertIn("2.34 SUI", br[0]["text"])
         for text, signal in (("The live walk went RED at step 4.", "a red gate or walk"),
-                             ("The screen sidecar is DOWN since 09:10.", "a service down"),
+                             ("The screen sidecar is DOWN since 09:10; health checks fail.", "a service down"),
                              ("The c1 deploy was rolled back to r42.", "a deploy rolled back")):
             self.fx.note("01_Projects/Sidebar/59 - Walk (Build Log, 2026-10-17).md",
                          "---\nsummary: \"%s\"\n---\n# W\n" % text, NOW - timedelta(minutes=20))
@@ -442,6 +459,26 @@ class InputsCase(unittest.TestCase):
         self.assertNotIn("Old text about voices", arch)            # today's diff, not the whole note
         self.assertNotIn("Nothing about the other project", arch)  # a cross note that does not name Sidebar
 
+    def test_r3_a_cross_note_also_gives_its_current_state(self):
+        cast = radio.load_cast(CAST, LOCK)
+        x = [s for s in radio.sources_for_specialty(cast, "architect", radio.project_sources(self.fx.inputs()))
+             if s["id"].startswith("X")][0]
+        self.assertIn("current state (at the window's end): Radio BUILT in Quorum; quorum radio <project> runs; status: BUILT",
+                      x["text"])
+
+    def test_r4_a_range_ranks_dated_decisions_one_note_before_a_second(self):
+        week = self.fx.inputs(since=datetime(2026, 10, 10, 15, 0, tzinfo=timezone.utc), until=NOW, label="2026-10-11..2026-10-17")
+        cast = radio.load_cast(CAST, LOCK)
+        arch = [s for s in radio.sources_for_specialty(cast, "architect", radio.project_sources(week))]
+        for s in arch:
+            self.assertRegex(s["text"], r"^\[2026-10-\d\d\] ", s["id"])
+        refs = [s["ref"].split("#")[0] for s in arch]
+        rooms = [i for i, r in enumerate(refs) if r.endswith("45 - Rooms (Design, 2026-10-13).md")]
+        self.assertEqual(len(rooms), 2)                              # two days of the same note …
+        others = {r for r in refs[:rooms[1]] if not r.endswith("45 - Rooms (Design, 2026-10-13).md")}
+        self.assertGreaterEqual(len(others), 2)                       # … the second after every other note's first
+        self.assertTrue(any(s["text"].startswith("[2026-10-15] ") and "old rooms do not carry over" in s["text"] for s in arch))
+
     def test_r4_product_reads_the_user_facing_diffs_and_the_builder_keeps_code(self):
         cast = radio.load_cast(CAST, LOCK)
         src = radio.project_sources(self.fx.inputs())
@@ -454,7 +491,7 @@ class InputsCase(unittest.TestCase):
 
     def test_r5_breaks_are_case_insensitive_or_marked(self):
         for text, signal in (("the live walk went red at step 4.", "a red gate or walk"),
-                             ("the screen sidecar is down since 09:10.", "a service down"),
+                             ("the screen sidecar is down since 09:10: health checks time out.", "a service down"),
                              ("BROKEN: the c1 box rejects every upload", "marked BROKEN"),
                              ("the screen daemon crashed twice overnight.", "a service down")):
             self.fx.note("01_Projects/Sidebar/59 - Walk (Build Log, 2026-10-17).md",
@@ -479,6 +516,27 @@ class InputsCase(unittest.TestCase):
                      "---\nsummary: \"x\"\n---\n# R\n\nNothing here needs a coin: c3 is down and the mac is held.\n",
                      NOW - timedelta(minutes=10))
         self.assertEqual(self.fx.inputs()["breaks"], [])
+
+    def test_r5_a_stopped_or_down_box_without_a_failure_is_no_break(self):
+        for text in ("c3 is down again; the marker was set and removed.", "The box is stopped at close (pf down).",
+                     "c1 went down at close, box off for the weekend."):
+            self.fx.note("01_Projects/Sidebar/59 - Walk (Build Log, 2026-10-17).md",
+                         "---\nsummary: \"x\"\n---\n# W\n\n%s\n" % text, NOW - timedelta(minutes=20))
+            self.assertEqual(self.fx.inputs()["breaks"], [], text)
+
+    def test_r5_a_range_counts_only_markers_and_red_gates(self):
+        wk = lambda: self.fx.inputs(since=datetime(2026, 10, 10, 15, 0, tzinfo=timezone.utc), until=NOW,
+                                    label="2026-10-11..2026-10-17")["breaks"]
+        for text, want in (("the screen daemon crashed twice overnight.", []),
+                           ("c3 operator **2.34 SUI**: health FAILs below 5", []),
+                           ("BROKEN: the c1 box rejects every upload", ["marked BROKEN"]),
+                           ("the live walk went red at step 4.", ["a red gate or walk"])):
+            # one note per case: a week window keeps every earlier case's added lines
+            for old in (self.fx.vault / "01_Projects" / "Sidebar").glob("59 - *.md"):
+                old.unlink()
+            self.fx.note("01_Projects/Sidebar/59 - Walk %d (Build Log, 2026-10-17).md" % len(text),
+                         "---\nsummary: \"x\"\n---\n# W\n\n%s\n" % text, NOW - timedelta(minutes=20))
+            self.assertEqual([b["signal"] for b in wk()], want, text)
 
     def test_a_routine_red_word_is_no_break(self):
         self.fx.note("01_Projects/Sidebar/59 - Walk (Build Log, 2026-10-17).md",
@@ -535,6 +593,13 @@ class EvidenceCase(unittest.TestCase):
         r = self.read({"op": "grep", "repo": "sidebar", "rev": "HEAD", "pattern": "kokoro-worker"})
         self.assertTrue(r["ok"], r)
         self.assertEqual(r["out"], "(no matches)")
+
+    def test_git_branch_contains(self):
+        sha = self.fx.sha("sidebar", "Merge screen-v0.6-wire: the violence gate wired in")
+        r = self.read({"op": "contains", "repo": "sidebar", "rev": sha})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["cmd"], "git -C ~/nonvis/sidebar branch --contains %s" % sha)
+        self.assertIn("main", r["out"])
 
     def test_output_is_bounded(self):
         r = self.read({"op": "log", "repo": "sidebar", "n": 500})
@@ -771,6 +836,39 @@ class RoundCase(unittest.TestCase):
         ep, m = self.run_ep({("verify", "verifier"): many})
         v = [l for l in ep["lines"] if l["speaker"] == "verifier"][0]
         self.assertEqual(len(v["evidence"]), radio.MAX_READS)
+
+    def test_r2_a_change_claim_is_proven_by_repository_evidence(self):
+        ep, m = self.run_ep({("desk", "builder"): J({"answer": "I know the Tune in card was removed.", "label": "grounded",
+                                                     "source": "C3"}),
+                             ("verify", "verifier"): J({"reads": [{"op": "grep", "repo": "sidebar", "rev": "HEAD",
+                                                                   "pattern": "kokoro-worker"}]}),
+                             ("desk", "verifier"): J({"verdict": "proven", "answer": "no trace is left at HEAD.", "source": "E1"})})
+        v = [l for l in on_air(ep) if l["speaker"] == "verifier"][0]
+        self.assertEqual(v["claim_kind"], "change")
+        self.assertTrue(v["text"].startswith("Proven"), v["text"])
+        _, rv = [c for c in m.calls if c[0] == ("verify", "verifier")][0]
+        self.assertEqual(rv["claim_kind"], "change")
+
+    def test_r2_a_works_claim_needs_a_run_record_not_repository_evidence(self):
+        works = J({"answer": "I know the gossip walk passes now.", "label": "grounded", "source": "C2"})
+        ep, m = self.run_ep({("desk", "builder"): works,
+                             ("desk", "verifier"): J({"verdict": "proven", "answer": "the commit is on main.", "source": "E1"})})
+        v = [l for l in ep["lines"] if l["speaker"] == "verifier"][0]
+        self.assertEqual(v["kind"], "pass")                        # a git show proves a change, not that it works
+        self.assertIn("needs a run record", " ".join(ep["log"]))
+        log = "01_Projects/Sidebar/57 - The Violence Gate Wired In (Build Log, 2026-10-17).md"
+        ep, m = self.run_ep({("desk", "builder"): works,
+                             ("verify", "verifier"): J({"reads": [{"op": "note", "path": log, "grep": "Tests"}]}),
+                             ("desk", "verifier"): J({"verdict": "proven", "answer": "the build log shows 31 green.", "source": "E1"})})
+        v = [l for l in on_air(ep) if l["speaker"] == "verifier"][0]
+        self.assertEqual(v["claim_kind"], "works")
+        self.assertTrue(v["text"].startswith("Proven"), v["text"])
+
+    def test_r6_product_is_given_the_merges_as_context(self):
+        ep, m = self.run_ep()
+        _, pv = [c for c in m.calls if c[0] == ("desk", "product")][0]
+        self.assertEqual(pv["merges"], ["sidebar: Merge screen-v0.6-wire: the violence gate wired in"])
+        self.assertFalse([x for x in pv["sources"] if "Merge screen" in x["text"]])
 
     def test_a_not_proven_line_keeps_its_sentences_capitalised(self):
         ep, m = self.run_ep({("desk", "verifier"): J({"verdict": "not_proven", "answer": "The docs part is shown.",
