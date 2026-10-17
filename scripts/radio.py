@@ -661,6 +661,10 @@ def run_read(op, inp, vault):
             args = ["grep", "-n", "-I", "-e", pat, rev] + (["--", path] if path else [])
         p = subprocess.run(["git", "-C", repo["path"]] + args, capture_output=True, text=True, timeout=20)
         out = (p.stdout or p.stderr)[:READ_CHARS]
+        if kind == "grep" and p.returncode == 1 and not (p.stdout + p.stderr).strip():
+            # git grep exits 1 when nothing matches: that absence is evidence, not a failed read.
+            shown = [a if " " not in a else "'%s'" % a for a in args]
+            return {"ok": True, "cmd": "git -C %s %s" % (repo["shown"], " ".join(shown)), "out": "(no matches)"}
         shown = [a if " " not in a else "'%s'" % a for a in args]
         return {"ok": p.returncode == 0, "cmd": "git -C %s %s" % (repo["shown"], " ".join(shown)), "out": out}
     if kind == "note":
@@ -878,7 +882,12 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
         return add(speaker=HOST, kind=kind, text=t, reason=_clean(reason, 200) if reason else None, **kw) if t else None
 
     def question(sid):
-        return names[sid]["reads"]["question"]
+        q = names[sid]["reads"]["question"]
+        if inputs.get("range"):
+            a, b = inputs["label"].split("..")
+            span = (datetime.strptime(b, "%Y-%m-%d") - datetime.strptime(a, "%Y-%m-%d")).days
+            q = q.replace(" today", " this week" if span == 6 else " in this period")
+        return q
 
     def day():
         """QR-15 R3: the shape (counts + themes), never the news; a range adds the arc."""
@@ -977,11 +986,10 @@ def run_episode(inputs, cast, model, cap=NIGHT_CALL_CAP, vault=None, memory=None
             return passed("verifier", why, evidence=evidence, about=target["i"])
         ans = strip_echoes(re.sub(r"^(not\s+)?proven(\s+yet)?\s*[:,.—-]*\s*", "", ans, flags=re.I))
         ans = re.sub(r"^(yes|no|correct|right|indeed)\s*[.,!:—-]+\s*", "", ans, flags=re.I)  # "Proven: Yes." (R2)
-        ans = ans[:1].lower() + ans[1:] if ans[:2] != "I " else ans
         if not ans:
             return passed("verifier", "nothing left after the echo filter", evidence=evidence, about=target["i"])
         if verdict == "proven":
-            text = fit("Proven: " + ans)
+            text = fit("Proven: " + (ans[:1].lower() + ans[1:] if ans[:2] != "I " else ans))
             verified.add(target["i"])
         else:
             text = fit("Not proven yet. The one check that settles it: %s. %s" % (check.rstrip("."), ans))

@@ -531,6 +531,11 @@ class EvidenceCase(unittest.TestCase):
             self.assertFalse(r["ok"], op)
             self.assertIn("refused", r["out"])
 
+    def test_a_grep_with_no_match_is_evidence_not_a_failure(self):
+        r = self.read({"op": "grep", "repo": "sidebar", "rev": "HEAD", "pattern": "kokoro-worker"})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["out"], "(no matches)")
+
     def test_output_is_bounded(self):
         r = self.read({"op": "log", "repo": "sidebar", "n": 500})
         self.assertLessEqual(len(r["out"]), radio.READ_CHARS)
@@ -766,6 +771,18 @@ class RoundCase(unittest.TestCase):
         ep, m = self.run_ep({("verify", "verifier"): many})
         v = [l for l in ep["lines"] if l["speaker"] == "verifier"][0]
         self.assertEqual(len(v["evidence"]), radio.MAX_READS)
+
+    def test_a_not_proven_line_keeps_its_sentences_capitalised(self):
+        ep, m = self.run_ep({("desk", "verifier"): J({"verdict": "not_proven", "answer": "The docs part is shown.",
+                                                       "check": "grep for room", "source": "E1"})})
+        v = [l for l in on_air(ep) if l["speaker"] == "verifier"][0]
+        self.assertEqual(v["text"], "Not proven yet. The one check that settles it: grep for room. The docs part is shown.")
+
+    def test_a_range_asks_its_questions_for_the_period(self):
+        week = self.fx.inputs(since=datetime(2026, 10, 10, 15, 0, tzinfo=timezone.utc), until=NOW, label="2026-10-11..2026-10-17")
+        ep, m = self.run_ep(inp=week)
+        self.assertTrue(on_air(ep)[0]["text"].endswith("What actually changed this week?"), on_air(ep)[0]["text"])
+        self.assertNotIn("today", " ".join(l["text"] for l in on_air(ep) if l["kind"] == "ask"))
 
     def test_a_not_proven_claim_is_put_back_and_its_withdrawal_stays_on_air(self):
         ep, m = self.run_ep({("desk", "verifier"): J({"verdict": "not_proven", "answer": "no run shown.",
