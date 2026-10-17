@@ -16,3 +16,6 @@ Internals, proof, next steps for the team.
 
 ## Room
 - If the question can be read two ways, read the notes for what Sang meant and say which reading you took.
+
+## Recap
+- When you name something a merge in this window names, say it merged and what stays the default (e.g. "merged; v0.5.0 is still the default").
