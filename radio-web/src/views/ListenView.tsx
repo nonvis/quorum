@@ -118,7 +118,7 @@ function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; chi
 function EpisodeRow({ e, selected }: { e: EpisodeMeta; selected: boolean }) {
   const p = usePlayer();
   const playing = p.episode?.id === e.id && p.playing;
-  const busy = e.status === 'generating' || e.status === 'voicing';
+  const busy = e.status === 'generating' || e.status === 'editing' || e.status === 'voicing';
   return (
     <a
       href={href({ view: 'listen', id: e.id })}

@@ -20,6 +20,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tip } from '@/components/ui/tooltip';
 import { Empty, OnAir, SpeakerDot } from '@/components/bits';
 import { ScriptView } from '@/components/ScriptView';
+import { RoomView } from '@/components/RoomView';
 import { AddSpecialtyDialog } from './AddSpecialtyDialog';
 
 const RANGES = [
@@ -309,7 +310,7 @@ function LiveSession() {
     return (
       <Card className="lg:sticky lg:top-20">
         <Empty icon={<Radio />} title="Nothing on air">
-          The lines show here as the room speaks. A recap takes a few minutes: about 10–14 model calls, then the voice.
+          The lines show here as the room speaks. A recap takes a few minutes. A brainstorm is a real room: Opus specialists read the code, 5–15 minutes, then the broadcast is cut and voiced.
         </Empty>
       </Card>
     );
@@ -323,7 +324,9 @@ function LiveSession() {
     }
   };
 
-  const spoke = new Set(g.lines.filter((l) => l.speaker !== 'host' && l.kind === 'answer').map((l) => l.speaker));
+  const spoke = new Set(
+    [...g.lines.filter((l) => l.kind === 'answer'), ...g.room.filter((t) => t.kind === 'answer')].map((l) => l.speaker),
+  );
   return (
     <Card className="flex max-h-[calc(100vh-7rem)] flex-col lg:sticky lg:top-20">
       <div className="flex items-center gap-3 border-b p-4">
@@ -335,6 +338,11 @@ function LiveSession() {
             {g.phase === 'generating' && (
               <>
                 On air · {g.lines.length} lines · <Elapsed since={g.startedAt} />
+              </>
+            )}
+            {g.phase === 'editing' && (
+              <>
+                Cutting the broadcast from {g.room.filter((t) => t.kind === 'answer').length} answers · <Elapsed since={g.startedAt} />
               </>
             )}
             {g.phase === 'voicing' && (
@@ -361,15 +369,21 @@ function LiveSession() {
         <div className="flex flex-wrap gap-3 border-b px-4 py-2 text-xs">
           {[...spoke].map((sid) => (
             <span key={sid} className="inline-flex items-center gap-1.5" style={{ color: speakerColor(sid) }}>
-              <SpeakerDot id={sid} /> {g.lines.find((l) => l.speaker === sid)?.name ?? sid}
+              <SpeakerDot id={sid} /> {g.lines.find((l) => l.speaker === sid)?.name ?? g.room.find((t) => t.speaker === sid)?.name ?? sid}
             </span>
           ))}
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {g.room.length > 0 && (
+          <div className={cn(g.lines.length ? 'mb-4 border-b pb-4' : '')}>
+            <div className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-muted-fg">The room</div>
+            <RoomView turns={g.room} names={Object.fromEntries(g.room.map((t) => [t.speaker, t.name ?? t.speaker]))} live />
+          </div>
+        )}
         {g.lines.length ? (
           <ScriptView lines={g.lines} active={live ? g.lines[g.lines.length - 1]?.i : null} compact />
-        ) : (
+        ) : g.room.length ? null : (
           <div className="p-6 text-center text-sm text-muted-fg">{live ? 'Waiting for the host to open…' : ''}</div>
         )}
         {showLog && (

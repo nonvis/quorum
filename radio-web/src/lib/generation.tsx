@@ -2,9 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, ApiError } from './api';
-import type { GenerateRequest, JobEvent, Kind, Line, Status } from './types';
+import type { GenerateRequest, JobEvent, Kind, Line, RoomTurn, Status } from './types';
 
-export type Phase = 'idle' | 'starting' | 'generating' | 'voicing' | 'done' | 'failed' | 'cancelled';
+export type Phase = 'idle' | 'starting' | 'generating' | 'editing' | 'voicing' | 'done' | 'failed' | 'cancelled';
 
 export interface Generation {
   phase: Phase;
@@ -15,6 +15,7 @@ export interface Generation {
   episode: string | null;
   status: Status | null;
   lines: Line[];
+  room: RoomTurn[];
   logs: string[];
   error: string | null;
   startedAt: number | null;
@@ -28,7 +29,7 @@ interface Ctl extends Generation {
 
 const IDLE: Generation = {
   phase: 'idle', job: null, kind: null, project: null, title: null, episode: null, status: null,
-  lines: [], logs: [], error: null, startedAt: null,
+  lines: [], room: [], logs: [], error: null, startedAt: null,
 };
 const Ctx = createContext<Ctl | null>(null);
 
@@ -51,7 +52,7 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
         set((p) => {
           switch (ev.event) {
             case 'started': // a reconnect replays the job from here
-              return { ...p, episode: ev.id, kind: ev.kind, project: ev.project, phase: 'generating', lines: [], logs: [] };
+              return { ...p, episode: ev.id, kind: ev.kind, project: ev.project, phase: 'generating', lines: [], room: [], logs: [] };
             case 'line': {
               const lines = p.lines.filter((l) => l.i !== ev.line.i);
               lines.push(ev.line);
@@ -60,8 +61,10 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
             }
             case 'log':
               return { ...p, logs: [...p.logs, ev.text].slice(-200) };
+            case 'room':
+              return { ...p, room: [...p.room.filter((t) => t.n !== ev.turn.n), ev.turn] };
             case 'status':
-              return { ...p, status: ev.status, phase: ev.status === 'voicing' ? 'voicing' : p.phase };
+              return { ...p, status: ev.status, phase: ev.status === 'voicing' || ev.status === 'editing' ? ev.status : p.phase };
             case 'done':
               return { ...p, status: ev.status, phase: 'done' };
             case 'error':
@@ -133,4 +136,4 @@ export function useGeneration(): Ctl {
   return c;
 }
 
-export const running = (p: Phase) => p === 'starting' || p === 'generating' || p === 'voicing';
+export const running = (p: Phase) => p === 'starting' || p === 'generating' || p === 'editing' || p === 'voicing';

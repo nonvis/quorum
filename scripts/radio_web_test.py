@@ -202,6 +202,12 @@ class WebCase(unittest.TestCase):
         self.assertEqual(ev[-1]["code"], 0, ev)
         m = self.j("GET", "/api/episodes/%s" % ev[0]["id"])[1]["meta"]
         self.assertEqual((m["kind"], m["context"]), ("brainstorm", [first]))
+        self.assertTrue([e for e in ev if e["event"] == "room"])                       # the room's turns stream (QR-34)
+        self.assertIn("editing", [e.get("status") for e in ev if e["event"] == "status"])
+        s, h, b = self.req("GET", "/api/episodes/%s/room.md?download=1" % ev[0]["id"])
+        self.assertEqual(s, 200)
+        self.assertIn(b"# Room: Should the gate run first?", b)
+        self.assertIn("-room.md", h["Content-Disposition"])
 
     def test_generate_refusals(self):
         self.assertEqual(self.j("POST", "/api/generate", {"kind": "recap", "project": "nope"})[0], 400)

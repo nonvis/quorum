@@ -8,6 +8,7 @@ import { Tip } from './ui/tooltip';
 
 function sourceLabel(s: Source): string {
   if (s.kind === 'commit' || s.kind === 'code') return `${s.kind} · ${s.ref}`;
+  if (s.kind === 'room') return s.ref;
   if (s.kind === 'evidence' && !s.ref.endsWith('.md') && !s.ref.includes('#')) return `read · ${s.ref}`;
   const ref = s.ref.split('#')[0];
   const stem = ref.split('/').pop()?.replace(/\.md$/, '') ?? ref;

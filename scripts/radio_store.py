@@ -104,6 +104,19 @@ class Store:
         p = self._dir(i) / "script.md"
         return p.read_text() if p.exists() else None
 
+    TEXTS = ("room.md",)
+
+    def write_text(self, i, name, text):
+        if name not in self.TEXTS:
+            raise KeyError(name)
+        self._write(self._dir(i) / name, text)
+
+    def text(self, i, name):
+        if name not in self.TEXTS:
+            raise KeyError(name)
+        p = self._dir(i) / name
+        return p.read_text() if p.exists() else None
+
     def audio(self, i):
         p = self._dir(i) / "audio.mp3"
         return p if p.exists() else None
@@ -136,7 +149,7 @@ class Store:
             if sweep and not m.get("kept") and now >= expires:
                 shutil.rmtree(d, ignore_errors=True)
                 continue
-            if m.get("status") in ("generating", "voicing") and m.get("pid") and not _alive(m["pid"]):
+            if m.get("status") in ("generating", "editing", "voicing") and m.get("pid") and not _alive(m["pid"]):
                 m["status"] = "failed"
             m["expires"] = None if m.get("kept") else _z(expires)
             m["days_left"] = None if m.get("kept") else max(0, (expires - now).days + (1 if (expires - now).seconds else 0))

@@ -1201,6 +1201,7 @@ def fake_search(q):
 
 
 class BrainstormCase(unittest.TestCase):
+    """The brainstorm's inputs and slices; the room itself is radio_room_test.py (QR-30…34)."""
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.fx = Fixture(Path(self.tmp.name))
@@ -1213,10 +1214,6 @@ class BrainstormCase(unittest.TestCase):
     def inputs(self, **kw):
         return radio.gather_brainstorm("sidebar", radio.load_projects(self.fx.vault), self.fx.vault, self.fx.memory,
                                        QUESTION, [self.fx.home / "nonvis"], search=fake_search, **kw)
-
-    def run_bs(self, overrides=None, chosen=("builder", "verifier", "architect", "product"), **kw):
-        m = Recorder(overrides)
-        return radio.run_brainstorm(self.inp, self.cast, m, list(chosen), **kw), m
 
     def test_the_tracked_cast_gives_each_specialty_a_brainstorm_angle(self):
         for d in self.cast:
@@ -1251,126 +1248,6 @@ class BrainstormCase(unittest.TestCase):
         self.assertEqual(self.inp["question"], QUESTION)
         self.assertEqual([r["name"] for r in self.inp["repos"]], ["sidebar", "sidebar-screen"])
         self.assertTrue(any("violence gate" in c["subject"] for c in self.inp["commits"]))
-
-    def test_a_session_opens_asks_everyone_chosen_and_signs_off_with_threads(self):
-        ep, m = self.run_bs()
-        on = on_air(ep)
-        self.assertEqual((on[0]["speaker"], on[0]["kind"]), ("host", "open"))
-        self.assertEqual((on[-1]["speaker"], on[-1]["kind"]), ("host", "signoff"))
-        spoke = {l["speaker"] for l in on if l["speaker"] != "host"}
-        self.assertEqual(spoke, {"builder", "verifier", "architect", "product"})
-        self.assertTrue(ep["threads"])
-        self.assertLessEqual(ep["calls"]["total"], 20)
-        self.assertEqual(ep["kind"], "brainstorm")
-        self.assertEqual(ep["question"], QUESTION)
-
-    def test_only_the_chosen_specialties_sit(self):
-        ep, m = self.run_bs(chosen=("builder", "product"))
-        self.assertEqual({l["speaker"] for l in on_air(ep)} - {"host"}, {"builder", "product"})
-
-    def test_a_host_pick_outside_the_room_goes_to_someone_unasked(self):
-        ep, m = self.run_bs({("bhost", "next"): [J({"action": "ask", "to": "operator", "question": "What would it cost?"})]},
-                            chosen=("builder", "product"))
-        self.assertNotIn("operator", {l["speaker"] for l in on_air(ep)})
-
-    def test_a_host_question_may_frame_one_line_on_air(self):
-        """Real run 10-17: building on a line is how the host drives a brainstorm (unlike a recap's QR7-1)."""
-        q = "Product says a stall feels worse than a long wait. What measurement would settle it?"
-        ep, m = self.run_bs({("bhost", "next"): [J({"action": "ask", "to": "verifier", "question": q})]})
-        asks = [l["text"] for l in on_air(ep) if l["speaker"] == "host" and l["kind"] == "ask"]
-        self.assertIn(q, asks)
-
-    def test_a_long_framed_question_airs_whole(self):
-        """Real run 10-17: host lines were cut at 200 characters, which would drop the question after a framing."""
-        q = ("Builder wants a pure per-line queue with no handoff to the full MP3, kept only for replay and export. "
-             "What would you test to be sure the queue has no audible seams or stalls, and is that test in the first slice?")
-        self.assertGreater(len(q), 200)
-        ep, m = self.run_bs({("bhost", "next"): [J({"action": "ask", "to": "verifier", "question": q})]})
-        self.assertIn(q, [l["text"] for l in on_air(ep) if l["kind"] == "ask"])
-
-    def test_the_retry_shows_the_host_its_refused_question(self):
-        long_q = "Architect, " + "the line files and the queue " * 12 + "what then?"
-        ep, m = self.run_bs({("bhost", "next"): [J({"action": "ask", "to": "architect", "question": long_q})]})
-        retry = [v for k, v in m.calls if k == ("bhost", "next") and v.get("retry")]
-        self.assertEqual(retry[0]["refused"], long_q)
-
-    def test_a_host_line_that_is_not_one_short_question_is_re_asked_then_templated(self):
-        bad = [J({"action": "ask", "to": "product", "question": "The gate is slow. Users hate it. Fix it now."}),
-               J({"action": "ask", "to": "product", "question": "Still not a question."})]
-        ep, m = self.run_bs({("bhost", "next"): bad})
-        asks = [l["text"] for l in on_air(ep) if l["speaker"] == "host" and l["kind"] == "ask"]
-        self.assertFalse([a for a in asks if "Fix it now" in a or "Still not" in a])
-        self.assertTrue(any(a.startswith("Product, ") for a in asks), asks)
-        self.assertEqual(len([k for k, v in m.calls if k == ("bhost", "next") and v.get("retry")]), 1)
-
-    def test_a_specialty_asked_again_is_not_handed_its_angle_twice(self):
-        again = [J({"action": "ask", "to": "builder", "question": "Fix it."}), J({"action": "wrap"})]
-        ep, m = self.run_bs({("bhost", "next"): [again[0], again[0]] + [J({"action": "wrap"})] * 10},
-                            chosen=("builder", "product"))
-        asks = [l["text"] for l in on_air(ep) if l["speaker"] == "host" and l["kind"] == "ask"]
-        builder_angle = "Builder, what would it take to build, and what already exists?"
-        self.assertLessEqual(asks.count(builder_angle), 1, asks)
-
-    def test_a_specialty_never_repeats_its_own_earlier_line(self):
-        # Radio/brainstorm 10-17, lines 4 and 14: the same point said twice (overlap 0.61, under the room's 0.7).
-        same = J({"answer": "Nothing I read has voicing times on the MSI. Render hands the whole episode to one sidecar "
-                            "that writes a single MP3. The proof: time the first line against the full episode on the MSI.",
-                  "label": "inferred", "source": "none"})
-        near = J({"answer": "Today the audio route serves Range requests, but render passes the whole episode to one sidecar "
-                            "that writes one MP3. The proof: voice line one and the full episode on the MSI, then compare.",
-                  "label": "inferred", "source": "none"})
-        ep, m = self.run_bs({("bdesk", "product"): [same, near],
-                             ("bhost", "next"): [J({"action": "ask", "to": "product", "question": "Product, and then?"})]
-                                                + [None] * 10},
-                            chosen=("product", "builder"))
-        prod = [l for l in on_air(ep) if l["speaker"] == "product"]
-        self.assertEqual([l["kind"] for l in prod], ["answer", "pass"])
-
-    def test_a_reply_names_the_line_it_answers(self):
-        ep, m = self.run_bs({("bhost", "next"): [J({"action": "reply", "to": "architect", "about": 2,
-                                                     "question": "Architect, does that fit what we ruled?"})]})
-        a = next(l for l in on_air(ep) if l["speaker"] == "architect")
-        self.assertEqual(a["about"], 2)
-
-    def test_a_claim_without_a_source_is_said_as_a_guess(self):
-        ep, m = self.run_bs({("bdesk", "product"): [J({"answer": "Users would feel the delay.", "label": "grounded",
-                                                        "source": "none"})]})
-        p = next(l for l in on_air(ep) if l["speaker"] == "product")
-        self.assertTrue(p["text"].startswith("My guess is"), p["text"])
-        self.assertEqual(p["label"], "inferred")
-
-    def test_the_cap_holds_and_the_signoff_is_reserved(self):
-        never = lambda v: J({"action": "ask", "to": "builder", "question": "What else would it take?"})
-        ep, m = self.run_bs({("bhost", "next"): never}, cap=9)
-        self.assertLessEqual(ep["calls"]["total"], 9)
-        self.assertEqual(on_air(ep)[-1]["kind"], "signoff")
-
-    def test_two_passes_in_a_row_wrap_the_session(self):
-        pas = lambda v: J({"pass": True})
-        ep, m = self.run_bs({("bdesk", s): pas for s in ("builder", "architect", "product", "verifier")}
-                            | {("verify", "verifier"): J({"reads": []})})
-        self.assertLess(ep["calls"]["total"], 12)
-        self.assertIn("wrap", " ".join(ep["log"]))
-
-    def test_earlier_scripts_are_context_for_everyone(self):
-        ctx = [{"id": "x", "title": "Earlier", "question": "Before?", "transcript": "Builder: the gate exists."}]
-        self.inp = self.inputs(context=ctx)
-        ep, m = self.run_bs()
-        for key, view in m.calls:
-            if key[0] in ("bhost", "bdesk"):
-                self.assertEqual(view.get("context"), ["x"], key)
-
-    def test_the_verifier_reads_before_it_speaks(self):
-        ep, m = self.run_bs()
-        v = next(l for l in on_air(ep) if l["speaker"] == "verifier")
-        self.assertTrue(v.get("evidence"))
-
-    def test_the_script_lists_the_question_and_the_open_threads(self):
-        ep, m = self.run_bs()
-        t = radio.script_md(ep, self.cast, {"kind": "brainstorm", "title": QUESTION, "created": "2026-10-17T05:00:00Z"})
-        self.assertIn("## Question", t)
-        self.assertIn(QUESTION, t)
-        self.assertIn("## Open threads", t)
 
 
 class SpokenIdCase(unittest.TestCase):
@@ -1435,6 +1312,10 @@ class BrainstormCliCase(unittest.TestCase):
         [m] = self.episodes()
         self.assertEqual((m["kind"], m["question"], m["specialties"]), ("brainstorm", QUESTION, ["builder", "product"]))
         self.assertIn("## Open threads", self.fx.store.script_md(m["id"]))
+        self.assertIn("# Room: " + QUESTION, self.fx.store.text(m["id"], "room.md"))      # QR-34
+        sc = self.fx.store.script(m["id"])
+        self.assertEqual(sc["room"]["chosen"], ["builder", "product"])
+        self.assertEqual(sc["v"], 2)
 
     def test_brainstorm_refusals(self):
         self.assertEqual(self.cli("brainstorm", "sidebar", "", "--fake").returncode, 2)

@@ -200,35 +200,29 @@ the owner, so there is no screen or trust gate.
   is immediate. Nothing goes to the vault: the script is exported by hand.
   `--events` prints one JSON object per line (`started`, `line`, `log`,
   `status`, `done` or `error`) for the web.
-- **Brainstorm.** `quorum radio brainstorm <project> "<question>"` puts **one
-  question** to the room; the owner is not on air and the host drives. The room
-  is the specialties named with `--with` (default: Builder, Verifier, Architect,
-  Product), each answering from its brainstorm **angle** (`brainstorm` in the
-  cast file) and its own source kinds: Builder `code` (recent commits, `quorum
-  repo q` hits), Verifier `evidence` (the briefing's state, evidence notes, and
-  reads it runs itself), Architect `decision` (the rulings in force, decision
-  notes), Product `surface` (the concept note, surface notes), Operator `owed`.
-  Every source comes from the question's hits through `quorum q` / `quorum repo
-  q` plus the briefing, at $0. The host opens with the question, asks each
-  specialty in the room at least once while calls allow, may ask one to answer a
-  line on air (`about`), and wraps when the question is worked or after two
-  passes in a row; a host question that claims something is replaced by the
-  specialty's angle. A claim without a source is said as a guess. The sign-off
-  names at most 5 open threads, never action items. 20 calls at most.
-  `--context <id>,…` attaches earlier scripts as context: depth comes from a
-  fresh session, never a follow-up in the same one. A specialty added from Radio
-  Studio is brainstorm-only (`recap: false`), reads the question's general hits,
-  and takes an unused voice for life (the lock records it).
-- **`radio-voice/`** is the voice sidecar, a separate Node package
-  (`kokoro-js` pinned to 1.2.1, `package-lock.json` tracked, `node_modules/`
-  not): `node render.mjs --cast radio/cast.json <job.json> <out.mp3>`. It voices
-  one line at a time in the speaker's bound voice, pans it to the bound
-  position, inserts the pauses the job gives (computed from the script's
-  structure, never by the model), and encodes one MP3 with `ffmpeg`. It refuses
-  a line whose voice is not its speaker's in the cast file. Weights: Kokoro-82M
-  v1.0 ONNX q8 in `~/.cache/quorum/kokoro` (`QUORUM_KOKORO_CACHE`), checked
-  against `radio-voice/weights.sha256` and never re-fetched once present.
-  Setup: `cd radio-voice && npm ci`.
+- **Brainstorm** (`quorum radio brainstorm <project> "<question>"`) is two layers.
+  The **room** (`scripts/radio_room.py`) is a real deliberation: a host and the
+  specialties named with `--with` (default: Builder, Verifier, Architect,
+  Product), each with **its own resumable `claude -p` session** (`--session-id`
+  on its first turn, `-r` after), model `claude-opus-5-5`, tools `Read,Grep,Glob`
+  only (`--safe-mode`, `--strict-mcp-config`, a per-call `--max-budget-usd`),
+  scoped by `--add-dir` to the project's repos and vault folders. Each specialty
+  starts from its own pointers (its slice of the question's `quorum q` / `quorum
+  repo q` hits and the briefing: Builder `code`, Verifier `evidence`, Architect
+  `decision`, Product `surface`), reads what else it needs, cites what it read,
+  labels guesses, and ends with `VERDICT:`; a later turn carries what the room
+  said since it last spoke. The host routes with the HANDOFF block (`to:` a
+  specialty or `wrap`, `prompt:`); the program asks everyone chosen at least
+  once, sends an unknown `to` to the next unasked, wraps after two passes, and
+  caps the room at 14 calls with the close (≤ 5 `THREAD:` lines) reserved. The
+  **broadcast** is one `claude-sonnet-5-5` editor call that cuts the room into
+  the radio script; the program keeps only lines a specialty said in the room
+  (by turn), fits their length, strips spoken ids and supplies a missing
+  opening or sign-off. The store keeps `room.md` (the full deliberation) beside
+  `script.md`. `--context <id>,…` attaches earlier scripts. One real run: ~6
+  minutes, ~$1.30. A specialty added from Radio Studio is brainstorm-only
+  (`recap: false`), reads the question's general hits, and takes an unused voice
+  for life (the lock records it).
 
 The stdlib core never imports radio: `quorum radio` runs `scripts/radio.py` as a
 subprocess, and the TTS lives in the sidecar.
@@ -283,6 +277,7 @@ scripts/vault_index.py     the vault index (and its tests)
 scripts/repo_index.py      the per-repo index (and its tests)
 scripts/lint.py            quorum lint (and its tests)
 scripts/radio.py           quorum radio: inputs, slices, the recap and brainstorm rounds, the Verifier's reads, the script (and its tests)
+scripts/radio_room.py      the brainstorm room + its broadcast (and its tests)
 scripts/radio_store.py     the per-host episode store (and its tests)
 scripts/radio_projects.py  the vault's projects file: load, check, add, edit, (de)activate (and its tests)
 scripts/radio_web.py       Radio Studio's API (and its tests); scripts/web_ctl.py = quorum web

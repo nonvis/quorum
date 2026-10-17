@@ -45,6 +45,12 @@ export const api = {
     return res.text();
   },
   scriptUrl: (id: string) => `/api/episodes/${id}/script.md?download=1`,
+  roomMd: async (id: string) => {
+    const res = await fetch(`/api/episodes/${id}/room.md`);
+    if (!res.ok) throw new ApiError(res.status, 'no room transcript');
+    return res.text();
+  },
+  roomUrl: (id: string) => `/api/episodes/${id}/room.md?download=1`,
   audioUrl: (id: string) => `/api/episodes/${id}/audio`,
   generate: (req: GenerateRequest) => call<{ job: string }>('POST', '/generate', req),
   cancel: (job: string) => call('POST', `/jobs/${job}/cancel`),

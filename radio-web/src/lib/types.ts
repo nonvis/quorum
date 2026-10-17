@@ -1,5 +1,28 @@
 export type Kind = 'recap' | 'brainstorm';
-export type Status = 'generating' | 'voicing' | 'ready' | 'unvoiced' | 'failed';
+export type Status = 'generating' | 'editing' | 'voicing' | 'ready' | 'unvoiced' | 'failed';
+
+/** One turn of a brainstorm's room (QR-31): the host routing, a specialist answering or passing, the close. */
+export interface RoomTurn {
+  n: number;
+  speaker: string;
+  name?: string;
+  kind: 'route' | 'answer' | 'pass' | 'close';
+  to?: string;
+  prompt?: string;
+  text: string;
+  verdict?: string;
+  threads?: string[];
+}
+
+export interface Room {
+  question: string;
+  chosen: string[];
+  turns: RoomTurn[];
+  threads: string[];
+  calls: number;
+  cap: number;
+  sessions: Record<string, string>;
+}
 
 export interface EpisodeMeta {
   id: string;
@@ -66,6 +89,7 @@ export interface Script {
   log?: string[];
   audio?: AudioTiming | null;
   calls?: { total: number; cap: number };
+  room?: Room;
 }
 
 export interface Project {
@@ -134,6 +158,7 @@ export type JobEvent =
   | { event: 'started'; id: string; kind: Kind; project: string }
   | { event: 'line'; line: Line }
   | { event: 'log'; text: string }
+  | { event: 'room'; turn: RoomTurn }
   | { event: 'status'; id: string; status: Status }
   | { event: 'done'; id: string; status: Status; duration?: number }
   | { event: 'error'; message: string; id?: string; status?: string }

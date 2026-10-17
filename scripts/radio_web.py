@@ -387,6 +387,12 @@ class Handler(BaseHTTPRequestHandler):
                     raise HttpError(404, "no script yet")
                 h = {"Content-Disposition": 'attachment; filename="%s.md"' % rest[0]} if q.get("download") else {}
                 return self._send(200, md, "text/markdown; charset=utf-8", h)
+            if rest[1:] == ["room.md"] and m == "GET":
+                md = st.text(rest[0], "room.md")
+                if md is None:
+                    raise HttpError(404, "no room for this episode (a recap has none)")
+                h = {"Content-Disposition": 'attachment; filename="%s-room.md"' % rest[0]} if q.get("download") else {}
+                return self._send(200, md, "text/markdown; charset=utf-8", h)
             if rest[1:] == ["audio"] and m in ("GET", "HEAD"):
                 return self._audio(st, rest[0])
         except KeyError:

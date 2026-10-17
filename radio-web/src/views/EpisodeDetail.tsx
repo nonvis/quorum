@@ -18,6 +18,8 @@ import { Dialog, DialogClose, DialogContent, DialogHeader } from '@/components/u
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown';
 import { KindIcon, OnAir, SpeakerDot } from '@/components/bits';
 import { ScriptView } from '@/components/ScriptView';
+import { RoomView } from '@/components/RoomView';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 export function EpisodeDetail({ id }: { id: string }) {
   const qc = useQueryClient();
@@ -25,12 +27,13 @@ export function EpisodeDetail({ id }: { id: string }) {
   const { patch } = useDraft();
   const [confirm, setConfirm] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  const [tab, setTab] = useState<'broadcast' | 'room'>('broadcast');
   const q = useQuery({
     queryKey: ['episode', id],
     queryFn: () => api.episode(id),
     refetchInterval: (query) => {
       const s = query.state.data?.meta.status;
-      return s === 'generating' || s === 'voicing' ? 2000 : false;
+      return s === 'generating' || s === 'editing' || s === 'voicing' ? 2000 : false;
     },
   });
   const keep = useMutation({
@@ -79,7 +82,7 @@ export function EpisodeDetail({ id }: { id: string }) {
     );
 
   const playable = meta.has_audio && meta.status === 'ready';
-  const busy = meta.status === 'generating' || meta.status === 'voicing';
+  const busy = meta.status === 'generating' || meta.status === 'editing' || meta.status === 'voicing';
   const play = () => {
     if (isCurrent) p.toggle();
     else p.load(meta, script, { autoplay: true });
@@ -90,10 +93,10 @@ export function EpisodeDetail({ id }: { id: string }) {
     if (isCurrent) p.seek(t);
     else p.load(meta, script, { autoplay: true, at: t });
   };
-  const copy = async () => {
+  const copy = async (what: 'script' | 'room' = 'script') => {
     try {
-      await navigator.clipboard.writeText(await api.scriptMd(id));
-      toast.success('Script copied', { description: 'Paste it into a new Claude Code session.' });
+      await navigator.clipboard.writeText(await (what === 'room' ? api.roomMd(id) : api.scriptMd(id)));
+      toast.success(what === 'room' ? 'Room transcript copied' : 'Script copied', { description: 'Paste it into a new Claude Code session.' });
     } catch (e) {
       toast.error('Could not copy', { description: String(e) });
     }
@@ -138,7 +141,8 @@ export function EpisodeDetail({ id }: { id: string }) {
             </h1>
             {busy && (
               <div className="mt-2 flex items-center gap-2 text-sm text-accent">
-                <OnAir live /> {meta.status === 'voicing' ? 'Voicing the script…' : 'On air: the room is talking…'}
+                <OnAir live />{' '}
+                {meta.status === 'voicing' ? 'Voicing the script…' : meta.status === 'editing' ? 'Cutting the broadcast…' : 'The room is talking…'}
               </div>
             )}
             {meta.status === 'unvoiced' && (
@@ -163,12 +167,24 @@ export function EpisodeDetail({ id }: { id: string }) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              <DropdownMenuItem onSelect={copy}>
-                <ClipboardCopy /> Copy script
+              {script?.room && (
+                <>
+                  <DropdownMenuItem onSelect={() => copy('room')}>
+                    <ClipboardCopy /> Copy the room (full)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <a href={api.roomUrl(id)} download>
+                      <Download /> Download room.md
+                    </a>
+                  </DropdownMenuItem>
+                </>
+              )}
+              <DropdownMenuItem onSelect={() => copy('script')}>
+                <ClipboardCopy /> Copy {script?.room ? 'the broadcast script' : 'script'}
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <a href={api.scriptUrl(id)} download>
-                  <Download /> Download .md
+                  <Download /> Download script.md
                 </a>
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -217,6 +233,19 @@ export function EpisodeDetail({ id }: { id: string }) {
         </Card>
       )}
 
+      {script?.room && (
+        <Tabs value={tab} onValueChange={(v) => setTab(v as 'broadcast' | 'room')}>
+          <TabsList>
+            <TabsTrigger value="broadcast">Broadcast</TabsTrigger>
+            <TabsTrigger value="room">Room · {script.room.turns.filter((t) => t.kind === 'answer').length} answers</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
+      {script?.room && tab === 'room' ? (
+        <Card className="p-3 sm:p-4">
+          <RoomView turns={script.room.turns} names={Object.fromEntries(script.lines.map((l) => [l.speaker, l.name ?? l.speaker]))} />
+        </Card>
+      ) : (
       <Card className="p-3 sm:p-4">
         {script ? (
           <ScriptView
@@ -230,6 +259,7 @@ export function EpisodeDetail({ id }: { id: string }) {
           <p className="p-6 text-center text-sm text-muted-fg">The script appears when the room has finished.</p>
         )}
       </Card>
+      )}
 
       {showLog && script?.log && (
         <Card className="p-5">
