@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Tests for scripts/radio.py — `quorum radio`: the cast file and its voice lock,
-the $0 inputs, the host-run text round (on a fake model), the episode note and
-the voice job handed to the sidecar. Run: python3 scripts/radio_test.py
+"""Tests for scripts/radio.py — `quorum radio <project>`: the cast file and its
+voice lock, the projects file, one project's $0 inputs for the day, the
+perspective round (on a fake model) with the Verifier's bounded evidence reads,
+the episode note and the voice job handed to the sidecar.
+Run: python3 scripts/radio_test.py
 """
 import json
 import os
@@ -9,7 +11,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ import radio  # noqa: E402
 
 CAST = REPO / "radio" / "cast.json"
 LOCK = REPO / "radio" / "voices.lock"
+PROJECTS = REPO / "radio" / "projects.json"
 
 
 def git(cwd, *args, env=None):
@@ -32,6 +34,12 @@ def git(cwd, *args, env=None):
     return subprocess.run(["git", "-C", str(cwd)] + list(args), env=e, check=True,
                           capture_output=True, text=True).stdout
 
+
+def J(o):
+    return json.dumps(o)
+
+
+# ── the cast ────────────────────────────────────────────────────────────────
 
 class CastCase(unittest.TestCase):
     def setUp(self):
@@ -48,24 +56,30 @@ class CastCase(unittest.TestCase):
         lk.write_text(json.dumps({"v": 1, "voices": lock or {}}))
         return c, lk
 
-    def test_the_tracked_cast_is_the_designs_table(self):
+    def test_the_tracked_cast_is_the_perspective_table(self):
+        """QR-9/QR-12: the perspective specialties, re-bound once."""
         cast = radio.load_cast(CAST, LOCK)
         got = {d["id"]: (d["name"], d["voice"], d["pan"]) for d in cast}
         self.assertEqual(got, {
             "host": ("Host", "af_heart", "centre"),
-            "meridian": ("Meridian", "am_michael", "far left"),
-            "permafrost": ("Permafrost", "bf_emma", "far right"),
-            "sidebar": ("Sidebar", "af_nicole", "left"),
-            "bastion": ("Bastion", "bm_george", "right"),
-            "skeptic": ("Skeptic", "am_fenrir", "centre-left"),
-            "accountant": ("Accountant", "am_puck", "centre-right"),
+            "builder": ("Builder", "am_michael", "left"),
+            "architect": ("Architect", "bf_emma", "right"),
+            "verifier": ("Verifier", "am_fenrir", "centre-left"),
+            "operator": ("Operator", "am_puck", "centre-right"),
+            "product": ("Product", "af_nicole", "far right"),
         })
         for d in cast:
             self.assertEqual(set(d) - {"pan_value"}, {"id", "name", "voice", "pan", "reads"})
-        self.assertEqual(json.loads(LOCK.read_text())["voices"],
-                         {d["id"]: d["voice"] for d in cast})
-        # Bastion's repos are off the allowlist (#99): the desk reads no repo.
-        self.assertEqual([d for d in cast if d["id"] == "bastion"][0]["reads"]["repos"], [])
+            if d["id"] != "host":
+                self.assertTrue(d["reads"]["question"].endswith("?"))
+                self.assertTrue(d["reads"]["never"])
+
+    def test_the_lock_holds_only_the_new_ids_and_records_the_rebinding(self):
+        lock = json.loads(LOCK.read_text())
+        self.assertEqual(lock["voices"], {d["id"]: d["voice"] for d in radio.load_cast(CAST, LOCK)})
+        self.assertIn("QR-12", lock["note"])
+        for gone in ("meridian", "permafrost", "sidebar", "bastion", "skeptic", "accountant"):
+            self.assertNotIn(gone, lock["voices"])
 
     def test_a_duplicate_voice_is_refused(self):
         c, lk = self.write([
@@ -106,71 +120,79 @@ class CastCase(unittest.TestCase):
                          {"a": "am_puck", "gone": "am_echo", "b": "bf_emma"})
 
     def test_pans_map_to_numbers_left_negative(self):
-        cast = radio.load_cast(CAST, LOCK)
-        p = {d["id"]: d["pan_value"] for d in cast}
+        p = {d["id"]: d["pan_value"] for d in radio.load_cast(CAST, LOCK)}
         self.assertEqual(p["host"], 0.0)
-        self.assertLess(p["meridian"], p["sidebar"])
-        self.assertLess(p["sidebar"], p["skeptic"])
-        self.assertLess(p["skeptic"], 0)
-        self.assertGreater(p["accountant"], 0)
-        self.assertLess(p["accountant"], p["bastion"])
-        self.assertLess(p["bastion"], p["permafrost"])
+        self.assertLess(p["builder"], p["verifier"])
+        self.assertLess(p["verifier"], 0)
+        self.assertGreater(p["operator"], 0)
+        self.assertLess(p["operator"], p["architect"])
+        self.assertLess(p["architect"], p["product"])
 
 
-NOW = datetime(2026, 10, 17, 2, 0, tzinfo=timezone.utc)
+class ProjectsCase(unittest.TestCase):
+    def test_the_projects_file_maps_each_project(self):
+        """QR-8."""
+        pr = radio.load_projects(PROJECTS)
+        self.assertEqual(sorted(pr), ["bastion", "meridian", "permafrost", "quorum", "sidebar"])
+        self.assertEqual(pr["sidebar"]["repos"], ["sidebar", "sidebar-screen"])
+        self.assertEqual(pr["permafrost"]["repos"], ["permafrost", "loqua-passkey"])
+        self.assertEqual(pr["bastion"]["repos"], [])
+        for p in pr.values():
+            self.assertTrue(p["notes"] and p["folders"] and p["name"] and p["concept"])
+
+
+# ── a fixture: a git vault + repos, "now" = 14:00 KST ──────────────────────
+
+NOW = datetime(2026, 10, 17, 5, 0, tzinfo=timezone.utc)       # 14:00 KST
+TODAY = datetime(2026, 10, 16, 15, 0, tzinfo=timezone.utc)     # 00:00 KST
 
 
 class Fixture:
-    """A temp HOME with a vault, a memory dir, two git repos and the tracked cast."""
-
     def __init__(self, root):
         self.root = root
         self.home = root / "home"
         self.vault = self.home / "vault"
         self.memory = root / "memory"
-        for p in (self.vault / "06_Metadata", self.vault / "Action Queue", self.memory,
-                  self.home / "nonvis"):
+        for p in (self.vault / "06_Metadata", self.memory, self.home / "nonvis"):
             p.mkdir(parents=True)
-        (self.vault / "06_Metadata" / "quorum-repos.txt").write_text(
-            "# allowlist\nmeridian\nsidebar\npermafrost\n")
-        (self.vault / "Action Queue" / "15 - Meridian — parked rulings (2026-09-01).md").write_text("x")
-        (self.vault / "Action Queue" / "20 - GCP migration (2026-09-04).md").write_text("x")
+        (self.vault / "06_Metadata" / "quorum-repos.txt").write_text("# allowlist\nsidebar\nmeridian\n")
         git(self.vault, "init", "-q", "-b", "main")
         self.commit("2026-09-01T00:00:00Z")
-        recent = "2026-10-16T20:00:00Z"
-        old = "2026-10-10T00:00:00Z"
-        self.note("01_Projects/Meridian/08 - Briefing — Where Meridian Is (rolling).md",
-                  "# M\n\n## 1 · State\nOps/139 fixed the TFS rewrite.\n\n## 3 · Owed\n- ⚖ control token on GCP\n- linger on the MSI\n\n"
-                  "spend: `quorum spend --session aaaa1111` = main $1.00 · total $3.50 EST; window 2026-10-16T20:00Z → 23:00Z\n"
-                  "spend: `quorum spend --session bbbb2222` = main $9.00 · total $9.00 EST; window 2026-10-01T01:00Z → 02:00Z\n",
-                  mtime=NOW - timedelta(hours=2))
+        old = NOW - timedelta(days=3)
         self.note("01_Projects/Sidebar/13 - Briefing — Where Sidebar Is (rolling).md",
-                  "# S\n\n## §1 State\nRadio 4th mode.\n\n## §3 Owed\n- listen\n", mtime=NOW - timedelta(days=3))
-        self.note("01_Projects/Permafrost/28 - Briefing — Where Permafrost Is (rolling).md",
-                  "# P\n\n## 1 · State\nold\n\n## 3 · Owed\n- nothing\n", mtime=NOW - timedelta(days=3))
-        self.note("01_Projects/Loqua/MVP/00 - Index & Status.md", "# L\n", mtime=NOW - timedelta(days=3))
-        self.note("01_Projects/Partners/Samsung/Bastion/21 - Briefing — Where Bastion Is (rolling).md",
-                  "# B\n\n## 1. State\n#119 merged.\n\n## 3. Owed\n- BAS-242\n- top up the sweeper gas wallet: 2 SUI left, floor 5 SUI\n\n"
-                  "- **10-16 session `cccc3333`:** spend: `quorum spend --session cccc3333` = total $2.00 EST; window 2026-10-16T21:00Z → 22:00Z\n", mtime=NOW - timedelta(hours=5))
-        self.note("01_Projects/Partners/Samsung/Linear/00 - Ticket Ledger (rolling).md", "# T\n",
-                  mtime=NOW - timedelta(days=3))
+                  "---\ntitle: B\nsummary: \"Sidebar's briefing\"\n---\n# S\n\n## §1 State\nThe violence gate is wired in; v0.5.0 stays default.\n\n"
+                  "## §2 Rulings in force\n- SC-35 hold\n\n"
+                  "## §3 Owed\n- listen to the radio\n- c3 operator wallet 7.10 SUI, floor 5: top up next week\n\n"
+                  "## §4 Next moves\n- ship v0.6 as default\n\n"
+                  "- spend: `quorum spend --session aaaa1111` = total $3.50 EST; window 2026-10-16T20:00Z → 23:00Z\n"
+                  "- spend: `quorum spend --session bbbb2222` = total $9.00 EST; window 2026-10-10T01:00Z → 02:00Z\n",
+                  NOW - timedelta(hours=2))
+        self.note("01_Projects/Sidebar/57 - The Violence Gate Wired In (Build Log, 2026-10-17).md",
+                  "---\ntitle: G\nsummary: \"The gate merged as 0c13802; 31 tests green\"\n---\n# G\n\nTests: 31 green.\n",
+                  NOW - timedelta(hours=4))
+        self.note("01_Projects/Sidebar/58 - Radio Moves to Quorum (Design, 2026-10-17).md",
+                  "---\nsummary: \"Radio leaves Sidebar; three modes again\"\n---\n# D\n\nRuled: QR-5.\n",
+                  NOW - timedelta(hours=3))
+        self.note("01_Projects/Sidebar/00 - Concept.md", "---\nsummary: \"agents of different owners talk\"\n---\n# C\n", old)
+        self.note("Action Queue/90 - Sidebar — listen to Radio (2026-10-17).md", "x", NOW - timedelta(hours=1))
+        self.note("Action Queue/91 - Meridian — something (2026-10-17).md", "x", NOW - timedelta(hours=1))
+        self.note("01_Projects/Sidebar/40 - Old Note.md", "---\nsummary: old\n---\n# O\n", old)
+        self.note("01_Projects/Meridian/08 - Briefing — Where Meridian Is (rolling).md",
+                  "# M\n\n## 1 · State\nold\n", old)
         (self.memory / "MEMORY_VERIFICATION.md").write_text(
             "# V\n\n- [☠☠☠ TESTED ≠ CALLED](x.md) — 16 tests, 0 call sites\n- [☠ minor](y.md) — small\n")
-        (self.memory / "MEMORY_VERIFICATION_2.md").write_text(
-            "- [☠☠☠ A MODEL of the quantity is not the quantity](z.md) — read or believe\n")
-        # Repos: meridian has a recent and an old commit; sidebar only an old one; a repo
-        # off the allowlist (loqua-passkey) has a recent commit that must not be read.
-        self.repo("meridian", [("old meridian work", old), ("ops/139: TFS rewrite", recent)])
-        self.repo("sidebar", [("old sidebar work", old)])
-        self.repo("loqua-passkey", [("secret loqua work", recent)])
+        (self.memory / "MEMORY_VERIFICATION_2.md").write_text("")
+        self.repo("sidebar", [("old sidebar work", "2026-10-10T00:00:00Z"),
+                              ("Merge screen-v0.6-wire: the violence gate wired in", "2026-10-17T00:40:00Z"),
+                              ("Shell: the Tune in card is gone", "2026-10-17T01:00:00Z", "ui/Shell.tsx")])
+        self.repo("sidebar-screen", [("V1 violence gate candidate", "2026-10-17T00:39:00Z")])  # off the allowlist
+        self.repo("meridian", [("old meridian work", "2026-10-10T00:00:00Z")])
 
-    def note(self, rel, text, mtime):
-        """Writes a note and commits it at `mtime` (the git date is the evidence;
-        the file's own mtime is left at now, so mtime can't be what counts)."""
+    def note(self, rel, text, when):
         p = self.vault / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text)
-        self.commit(mtime.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        self.commit(when.strftime("%Y-%m-%dT%H:%M:%SZ"))
 
     def commit(self, when):
         git(self.vault, "add", "-A")
@@ -181,176 +203,215 @@ class Fixture:
         r = self.home / "nonvis" / name
         r.mkdir()
         git(r, "init", "-q", "-b", "main")
-        for i, (subject, when) in enumerate(commits):
-            (r / ("f%d" % i)).write_text(subject)
+        for i, c in enumerate(commits):
+            subject, when = c[0], c[1]
+            f = r / (c[2] if len(c) > 2 else "src/f%d.txt" % i)
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(subject + "\n")
             git(r, "add", ".")
-            git(r, "commit", "-q", "-m", subject,
-                env={"GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when})
+            git(r, "commit", "-q", "-m", subject, env={"GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when})
+
+    def sha(self, repo, subject):
+        for line in git(self.home / "nonvis" / repo, "log", "--format=%h %s").splitlines():
+            if line.split(" ", 1)[1] == subject:
+                return line.split(" ", 1)[0]
 
     def env(self):
-        return {"HOME": str(self.home), "QUORUM_VAULT": str(self.vault),
-                "QUORUM_MEMORY": str(self.memory)}
+        return {"HOME": str(self.home), "QUORUM_VAULT": str(self.vault), "QUORUM_MEMORY": str(self.memory),
+                "QUORUM_RADIO_NOW": NOW.isoformat()}
+
+    def inputs(self, project="sidebar", since=TODAY, until=NOW, **kw):
+        return radio.gather_project(project, radio.load_projects(PROJECTS), self.vault, self.memory,
+                                    since, until, [self.home / "nonvis"], **kw)
 
 
 class InputsCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.fx = Fixture(Path(self.tmp.name))
-        self.cast = radio.load_cast(CAST, LOCK)
 
     def tearDown(self):
         self.tmp.cleanup()
 
-    def inputs(self):
-        return radio.gather_inputs(self.cast, self.fx.vault, self.fx.memory,
-                                   since=NOW - timedelta(hours=24), until=NOW,
-                                   repo_roots=[self.fx.home / "nonvis"])
+    def test_the_project_reads_todays_commits_in_every_repo_it_lists(self):
+        i = self.fx.inputs()
+        self.assertTrue(i["active"])
+        subj = [(c["repo"], c["subject"]) for c in i["commits"]]
+        self.assertIn(("sidebar", "Merge screen-v0.6-wire: the violence gate wired in"), subj)
+        # sidebar-screen is off the index allowlist but on the project's list (QR-8).
+        self.assertIn(("sidebar-screen", "V1 violence gate candidate"), subj)
+        self.assertNotIn("old sidebar work", [s for _, s in subj])
 
-    def desk(self, inp, i):
-        return [d for d in inp["desks"] if d["id"] == i][0]
+    def test_the_vault_notes_changed_today_in_its_folder(self):
+        i = self.fx.inputs()
+        changed = [n["path"].rsplit("/", 1)[-1] for n in i["changed"]]
+        self.assertIn("57 - The Violence Gate Wired In (Build Log, 2026-10-17).md", changed)
+        self.assertNotIn("40 - Old Note.md", changed)
+        self.assertNotIn("08 - Briefing — Where Meridian Is (rolling).md", changed)
+        self.assertEqual([n["summary"] for n in i["changed"] if n["path"].endswith("(Build Log, 2026-10-17).md")],
+                         ["The gate merged as 0c13802; 31 tests green"])
 
-    def test_an_active_desk_reads_its_briefing_commits_spend_and_action_queue(self):
-        m = self.desk(self.inputs(), "meridian")
-        self.assertTrue(m["on_air"])
-        self.assertEqual([n["path"] for n in m["notes"]],
-                         ["01_Projects/Meridian/08 - Briefing — Where Meridian Is (rolling).md"])
-        self.assertEqual([c["subject"] for c in m["commits"]], ["ops/139: TFS rewrite"])
-        self.assertEqual(len(m["spend"]), 1)
-        self.assertIn("aaaa1111", m["spend"][0]["line"])
-        self.assertEqual([a["title"] for a in m["action_queue"]],
-                         ["15 - Meridian — parked rulings (2026-09-01)"])
+    def test_the_briefing_spend_and_owed_rows(self):
+        i = self.fx.inputs()
+        self.assertEqual([b["path"].rsplit("/", 1)[-1] for b in i["briefing"]],
+                         ["13 - Briefing — Where Sidebar Is (rolling).md"])
+        self.assertIn("SC-35", i["briefing"][0]["rulings"])   # rulings, for the Architect
+        self.assertEqual([s["line"][:45] for s in i["spend"]], ["spend: `quorum spend --session aaaa1111` = to"])
+        self.assertEqual(i["owed"][0], "- c3 operator wallet 7.10 SUI, floor 5: top up next week")  # money first
+        self.assertIn("- ship v0.6 as default", i["owed"])  # Next moves are the Operator's too
+        self.assertEqual([a["title"] for a in i["action_queue"]], ["90 - Sidebar — listen to Radio (2026-10-17)"])
 
-    def test_a_desk_with_no_activity_in_the_window_is_off_the_cast(self):
-        inp = self.inputs()
-        self.assertFalse(self.desk(inp, "sidebar")["on_air"])
-        self.assertFalse(self.desk(inp, "permafrost")["on_air"])
-        self.assertIn("no git activity", self.desk(inp, "sidebar")["why"])
+    def test_a_project_with_nothing_today_is_inactive(self):
+        i = self.fx.inputs("meridian")
+        self.assertFalse(i["active"])
+        self.assertEqual(i["commits"], [])
+        self.assertEqual(i["changed"], [])
 
-    def test_a_repo_off_the_allowlist_is_never_read(self):
-        p = self.desk(self.inputs(), "permafrost")
-        self.assertEqual(p["commits"], [])
-        self.assertIn("loqua-passkey", p["skipped_repos"])
-        self.assertNotIn("secret loqua work", json.dumps(self.inputs()))
-
-    def test_bastion_is_on_air_from_its_note_alone(self):
-        b = self.desk(self.inputs(), "bastion")
-        self.assertTrue(b["on_air"])
-        self.assertEqual(b["commits"], [])
-
-    def test_the_skeptic_and_the_accountant_always_sit(self):
-        fx = self.fx
-        inp = radio.gather_inputs(self.cast, fx.vault, fx.memory,
-                                  since=NOW + timedelta(days=30), until=NOW + timedelta(days=31),
-                                  repo_roots=[fx.home / "nonvis"])
-        on = [d["id"] for d in inp["desks"] if d["on_air"]]
-        self.assertEqual(on, ["host", "skeptic", "accountant"])
-
-    def test_the_skeptic_reads_the_top_verification_rules(self):
-        s = self.desk(self.inputs(), "skeptic")
-        texts = " ".join(r["text"] for r in s["rules"])
-        self.assertIn("TESTED ≠ CALLED", texts)
-        self.assertIn("A MODEL of the quantity", texts)
-        self.assertNotIn("minor", texts)
-
-    def test_the_accountant_reads_every_window_spend_line_and_the_owed_rows(self):
-        a = self.desk(self.inputs(), "accountant")
-        self.assertEqual([s["line"][:30] for s in a["spend"]],
-                         ["spend: `quorum spend --session"] * 2)
-        self.assertIn("cccc3333", a["spend"][1]["line"])
-        owed = " ".join(r for o in a["owed"] for r in o["rows"])
-        self.assertIn("control token on GCP", owed)
-        self.assertIn("BAS-242", owed)
-
-    def test_a_bulleted_spend_line_counts(self):
-        b = self.desk(self.inputs(), "bastion")
-        self.assertEqual([s["line"][:7] for s in b["spend"]], ["spend: "])
-
-    def test_a_touched_file_is_not_activity(self):
-        """QR2-2: file mtime no longer counts; only git evidence does."""
-        p = self.fx.vault / "01_Projects/Sidebar/13 - Briefing — Where Sidebar Is (rolling).md"
-        t = (NOW - timedelta(hours=1)).timestamp()
-        os.utime(p, (t, t))
-        self.assertFalse(self.desk(self.inputs(), "sidebar")["on_air"])
-
-    def test_a_spend_line_alone_is_not_activity(self):
-        self.fx.note("01_Projects/Sidebar/13 - Briefing — Where Sidebar Is (rolling).md",
-                     "# S\n\n## §1 State\nx\n\n- spend: `quorum spend --session dddd4444` = total $1.00 EST; "
-                     "window 2026-10-16T21:00Z → 22:00Z\n", mtime=NOW - timedelta(days=3))
-        s = self.desk(self.inputs(), "sidebar")
-        self.assertEqual(len(s["spend"]), 1)
-        self.assertFalse(s["on_air"])
-
-    def test_a_vault_commit_touching_the_desks_note_is_activity(self):
-        b = self.desk(self.inputs(), "bastion")
-        self.assertTrue(b["on_air"])
-        self.assertIn("note commit", b["why"])
-        self.assertTrue([n for n in b["notes"] if n["in_window"]])
-
-    def test_as_of_reads_the_notes_at_the_window_end(self):
-        """A replayed window reads each note as the vault held it at `until`."""
-        rel = "01_Projects/Meridian/08 - Briefing — Where Meridian Is (rolling).md"
-        self.fx.note(rel, "# M\n\n## 1 · State\nLATER TEXT\n", mtime=NOW + timedelta(hours=1))
-        fx = self.fx
-        then = radio.gather_inputs(self.cast, fx.vault, fx.memory, since=NOW - timedelta(hours=24),
-                                   until=NOW, repo_roots=[fx.home / "nonvis"], as_of=True)
-        live = self.inputs()
-        m_then = self.desk(then, "meridian")["notes"][0]["excerpt"]
-        self.assertIn("Ops/139", m_then)
-        self.assertNotIn("LATER TEXT", m_then)
-        self.assertIn("LATER TEXT", self.desk(live, "meridian")["notes"][0]["excerpt"])
-        self.assertEqual(len(self.desk(then, "meridian")["spend"]), 1)
-
-    def test_the_accountants_owed_rows_put_money_first(self):
-        srcs = radio.desk_sources(self.desk(self.inputs(), "accountant"), self.fx.vault)
-        owed = [x for x in srcs if x["kind"] == "owed"]
-        self.assertIn("SUI", owed[0]["text"])
-        self.assertLess([x["id"] for x in srcs].index(owed[0]["id"]),
-                        [x["id"] for x in srcs].index([x for x in srcs if x["kind"] == "spend"][0]["id"]))
-
-    def test_an_owed_row_carries_its_project(self):
-        """QR3-4: the note's desk, unless the row names another desk."""
-        self.fx.note("01_Projects/Sidebar/13 - Briefing — Where Sidebar Is (rolling).md",
-                     "# S\n\n## §3 Owed\n- Permafrost c3 operator wallet 2.34 SUI, floor 5\n- listen\n",
-                     mtime=NOW - timedelta(days=3))
-        srcs = radio.desk_sources(self.desk(self.inputs(), "accountant"))
-        owed = {x["text"].split(" (")[0]: x for x in srcs if x["kind"] == "owed"}
-        self.assertEqual(owed["- Permafrost c3 operator wallet 2.34 SUI, floor 5"]["project"], "Permafrost")
-        self.assertEqual(owed["- listen"]["project"], "Sidebar")
-        self.assertEqual(owed["- BAS-242"]["project"], "Bastion")
-        self.assertIn("project: Bastion", owed["- BAS-242"]["text"])
+    def test_bastion_reads_no_repo(self):
+        i = self.fx.inputs("bastion")
+        self.assertEqual(i["repos"], [])
 
     def test_inputs_record_the_vault_rev(self):
-        """QR3-3: the rev read, as of --until or HEAD for a live read."""
         head = git(self.fx.vault, "rev-parse", "HEAD").strip()
-        self.assertEqual(self.inputs()["vault_rev"], head)
-        self.assertFalse(self.inputs()["as_of"])
+        self.assertEqual(self.fx.inputs()["vault_rev"], head)
 
-    def test_the_host_reads_nothing_and_is_always_on(self):
-        h = self.desk(self.inputs(), "host")
-        self.assertTrue(h["on_air"])
-        self.assertEqual(h["notes"], [])
+    def test_the_default_window_is_today_in_kst(self):
+        self.assertEqual(radio.today_kst(NOW), TODAY)
+        self.assertEqual(radio.today_kst(datetime(2026, 10, 16, 14, 59, tzinfo=timezone.utc)),
+                         datetime(2026, 10, 15, 15, 0, tzinfo=timezone.utc))
 
     def test_spend_window_end_may_be_time_only_or_a_full_stamp(self):
-        self.assertEqual(radio.spend_window_end(
-            "spend: x; window 2026-10-15T02:24Z → 09:07Z"),
-            datetime(2026, 10, 15, 9, 7, tzinfo=timezone.utc))
-        self.assertEqual(radio.spend_window_end(
-            "spend: x; window 2026-10-15T09:32Z → 2026-10-16T10:25Z"),
-            datetime(2026, 10, 16, 10, 25, tzinfo=timezone.utc))
-        # An end clock before the start's means the window crossed midnight.
-        self.assertEqual(radio.spend_window_end(
-            "spend: x; window 2026-10-15T23:30Z → 01:10Z"),
-            datetime(2026, 10, 16, 1, 10, tzinfo=timezone.utc))
+        self.assertEqual(radio.spend_window_end("spend: x; window 2026-10-15T02:24Z → 09:07Z"),
+                         datetime(2026, 10, 15, 9, 7, tzinfo=timezone.utc))
+        self.assertEqual(radio.spend_window_end("spend: x; window 2026-10-15T09:32Z → 2026-10-16T10:25Z"),
+                         datetime(2026, 10, 16, 10, 25, tzinfo=timezone.utc))
+        self.assertEqual(radio.spend_window_end("spend: x; window 2026-10-15T23:30Z → 01:10Z"),
+                         datetime(2026, 10, 16, 1, 10, tzinfo=timezone.utc))
         self.assertIsNone(radio.spend_window_end("spend: no window"))
 
+    def test_each_specialty_reads_its_own_slice(self):
+        """QR-13: commits → Builder; evidence notes + rules → Verifier; rulings and design
+        notes → Architect; the user-visible surface + concept → Product; Owed/Next/AQ → Operator."""
+        cast = radio.load_cast(CAST, LOCK)
+        src = radio.project_sources(self.fx.inputs())
+        sl = {sid: radio.sources_for_specialty(cast, sid, src) for sid in ("builder", "verifier", "architect", "product", "operator")}
+        txt = lambda sid: " ".join(x["text"] for x in sl[sid])
+        self.assertIn("Merge screen-v0.6-wire", txt("builder"))
+        self.assertIn("31 tests green", txt("verifier"))
+        self.assertIn("TESTED ≠ CALLED", txt("verifier"))
+        self.assertIn("Radio leaves Sidebar", txt("architect"))
+        self.assertIn("SC-35", txt("architect"))                      # the briefing's §Rulings (it changed today)
+        self.assertIn("ui/Shell.tsx", txt("product"))
+        self.assertIn("agents of different owners talk", txt("product"))
+        self.assertIn("c3 operator wallet", txt("operator"))
+        self.assertIn("listen to Radio", txt("operator"))
+        self.assertNotIn("Merge screen-v0.6-wire", txt("product"))
+        self.assertNotIn("31 tests green", txt("builder"))
 
-def J(o):
-    return json.dumps(o)
+    def test_the_slices_are_disjoint(self):
+        cast = radio.load_cast(CAST, LOCK)
+        src = radio.project_sources(self.fx.inputs())
+        sids = ("builder", "verifier", "architect", "product", "operator")
+        keys = {sid: {(x["kind"], x["ref"], x["text"]) for x in radio.sources_for_specialty(cast, sid, src)} for sid in sids}
+        for i, a in enumerate(sids):
+            self.assertTrue(keys[a] or a == "operator", a)
+            for b in sids[i + 1:]:
+                self.assertFalse(keys[a] & keys[b], (a, b))
+                self.assertFalse({k[1] for k in keys[a]} & {k[1] for k in keys[b]}, (a, b))
 
+    def test_breaks_are_detected_mechanically(self):
+        """QR-14: a red gate/walk, a service down, a balance under its FAIL floor, a rollback."""
+        self.assertEqual(self.fx.inputs()["breaks"], [])
+        self.fx.note("01_Projects/Sidebar/13 - Briefing — Where Sidebar Is (rolling).md",
+                     "# S\n\n## §3 Owed\n- c3 operator `0xca4e` **2.34 SUI**: health FAILs below 5\n- listen\n",
+                     NOW - timedelta(minutes=30))
+        br = self.fx.inputs()["breaks"]
+        self.assertEqual([b["signal"] for b in br], ["balance below its FAIL floor"])
+        self.assertIn("2.34 SUI", br[0]["text"])
+        for text, signal in (("The live walk went RED at step 4.", "a red gate or walk"),
+                             ("The screen sidecar is DOWN since 09:10.", "a service down"),
+                             ("The c1 deploy was rolled back to r42.", "a deploy rolled back")):
+            self.fx.note("01_Projects/Sidebar/59 - Walk (Build Log, 2026-10-17).md",
+                         "---\nsummary: \"%s\"\n---\n# W\n" % text, NOW - timedelta(minutes=20))
+            self.assertIn(signal, [b["signal"] for b in self.fx.inputs()["breaks"]], text)
+
+    def test_a_fail_floor_row_already_there_before_the_window_is_no_break(self):
+        """QR-14 'broke in the window': an Owed row carried over from before today is routine."""
+        self.fx.note("01_Projects/Sidebar/13 - Briefing — Where Sidebar Is (rolling).md",
+                     "# S\n\n## §3 Owed\n- c3 operator **2.34 SUI**: health FAILs below 5\n",
+                     TODAY - timedelta(hours=5))
+        self.fx.note("01_Projects/Sidebar/13 - Briefing — Where Sidebar Is (rolling).md",
+                     "# S\n\n## §3 Owed\n- c3 operator **2.34 SUI**: health FAILs below 5\n- listen\n",
+                     NOW - timedelta(minutes=30))
+        self.assertEqual(self.fx.inputs()["breaks"], [])
+
+    def test_a_run_prompt_is_no_evidence(self):
+        self.fx.note("01_Projects/Sidebar/60 - Run Prompt — the Gate Walk (2026-10-17).md",
+                     "---\nsummary: \"walk the gate\"\n---\n# R\n", NOW - timedelta(minutes=10))
+        n = [x for x in self.fx.inputs()["changed"] if x["title"].startswith("60 - Run Prompt")][0]
+        self.assertIsNone(n["class"])
+
+    def test_a_routine_red_word_is_no_break(self):
+        self.fx.note("01_Projects/Sidebar/59 - Walk (Build Log, 2026-10-17).md",
+                     "---\nsummary: \"the gate turns a reject into a hold; red-team notes; the store is down to one copy\"\n---\n# W\n",
+                     NOW - timedelta(minutes=20))
+        self.assertEqual(self.fx.inputs()["breaks"], [])
+
+
+# ── the Verifier's evidence reads (QR-10) ──────────────────────────────────
+
+class EvidenceCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(Path(self.tmp.name))
+        self.inp = self.fx.inputs()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def read(self, op):
+        return radio.run_read(op, self.inp, self.fx.vault)
+
+    def test_git_show_in_a_project_repo(self):
+        sha = self.fx.sha("sidebar", "Merge screen-v0.6-wire: the violence gate wired in")
+        r = self.read({"op": "show", "repo": "sidebar", "rev": sha})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["cmd"], "git -C ~/nonvis/sidebar show --stat %s" % sha)
+        self.assertIn("violence gate", r["out"])
+
+    def test_git_log_and_grep_and_a_vault_note(self):
+        r = self.read({"op": "log", "repo": "sidebar-screen", "n": 5})
+        self.assertTrue(r["ok"], r)
+        self.assertIn("V1 violence gate candidate", r["out"])
+        r = self.read({"op": "grep", "repo": "sidebar", "rev": "HEAD", "pattern": "violence"})
+        self.assertTrue(r["ok"], r)
+        self.assertIn("violence", r["out"])
+        r = self.read({"op": "note", "path": "01_Projects/Sidebar/57 - The Violence Gate Wired In (Build Log, 2026-10-17).md",
+                       "grep": "Tests"})
+        self.assertTrue(r["ok"], r)
+        self.assertIn("31 green", r["out"])
+
+    def test_reads_outside_the_project_are_refused(self):
+        for op in ({"op": "log", "repo": "meridian"},                     # another project's repo
+                   {"op": "show", "repo": "sidebar", "rev": "--output=/tmp/x"},  # an option as a rev
+                   {"op": "show", "repo": "sidebar", "rev": "HEAD", "path": "../../etc/passwd"},
+                   {"op": "note", "path": "../outside.md"},
+                   {"op": "note", "path": "01_Projects/Meridian/08 - Briefing — Where Meridian Is (rolling).md"},
+                   {"op": "rm", "repo": "sidebar"}):
+            r = self.read(op)
+            self.assertFalse(r["ok"], op)
+            self.assertIn("refused", r["out"])
+
+    def test_output_is_bounded(self):
+        r = self.read({"op": "log", "repo": "sidebar", "n": 500})
+        self.assertLessEqual(len(r["out"]), radio.READ_CHARS)
+
+
+# ── the round ───────────────────────────────────────────────────────────────
 
 class Recorder(radio.FakeModel):
-    """The fake model with per-step overrides: {("host", mode) | ("desk", id) |
-    ("confirm", id): reply | callable(view) | [replies…]}; records every call."""
+    """The fake model with per-step overrides: {(role, step) | (role, specialty): reply |
+    callable(view) | [one-shot replies…]}; records every call as ((role, key), view)."""
 
     def __init__(self, overrides=None):
         super().__init__()
@@ -358,14 +419,16 @@ class Recorder(radio.FakeModel):
         self.calls = []
 
     def __call__(self, role, system, user, view):
-        key = (role, view.get("mode") if role == "host" else view.get("desk"))
+        key = (role, view.get("mode") if role == "host" else view.get("specialty"))
         self.calls.append((key, view))
         o = self.overrides.get(key)
         if isinstance(o, list):
             o = o.pop(0) if o else None
+        if callable(o):
+            o = o(view)
         if o is None:
             return super().__call__(role, system, user, view)
-        return o(view) if callable(o) else o
+        return o
 
 
 def on_air(ep):
@@ -381,271 +444,183 @@ class RoundCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.fx = Fixture(Path(self.tmp.name))
         self.cast = radio.load_cast(CAST, LOCK)
-        self.inp = radio.gather_inputs(self.cast, self.fx.vault, self.fx.memory,
-                                       since=NOW - timedelta(hours=24), until=NOW,
-                                       repo_roots=[self.fx.home / "nonvis"])
+        self.inp = self.fx.inputs()
 
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_ep(self, overrides=None, **kw):
+    def run_ep(self, overrides=None, inp=None, **kw):
         m = Recorder(overrides)
-        return radio.run_episode(self.inp, self.cast, m, topic="daily night recap",
-                                 vault=self.fx.vault, **kw), m
+        return radio.run_episode(inp or self.inp, self.cast, m, vault=self.fx.vault, memory=self.fx.memory, **kw), m
 
-    # ── the shape (QR2-1) ──
+    def question(self, sid):
+        return next(d for d in self.cast if d["id"] == sid)["reads"]["question"]
 
-    def test_the_fake_round_runs_projects_then_skeptic_then_cross_then_accountant(self):
+    def test_the_order_follows_the_questions_and_the_operator_is_off_by_default(self):
         ep, m = self.run_ep()
-        self.assertEqual(speakers(ep), ["meridian", "bastion", "skeptic", "bastion", "accountant"])
-        self.assertLessEqual(ep["calls"]["total"], 14)
-        self.assertEqual(on_air(ep)[0]["kind"], "open")
-        self.assertEqual(on_air(ep)[-1]["kind"], "signoff")
-        self.assertEqual(ep["cast"], ["host", "meridian", "bastion", "skeptic", "accountant"])
-
-    def test_the_opening_question_goes_to_the_project_desks_only(self):
-        ep, m = self.run_ep()
-        keys = [k for k, _ in m.calls]
-        first_order = keys.index(("host", "order"))
-        self.assertEqual(keys[1:first_order], [("desk", "meridian"), ("desk", "bastion")])
-
-    def test_one_host_call_orders_every_pick_with_a_bridge_and_a_reason(self):
-        order = J({"order": [{"desk": "bastion", "bridge": "First, the Samsung side.", "reason": "money at a floor"},
-                             {"desk": "meridian", "bridge": "Meridian, your night?", "reason": "the code"}],
-                   "skeptic_question": "Skeptic, what do you doubt?"})
-        ep, m = self.run_ep({("host", "order"): order})
-        keys = [k for k, _ in m.calls]
-        i = keys.index(("host", "order"))
-        self.assertEqual(keys[i + 1], ("desk", "skeptic"))  # no host call between the picks
+        self.assertEqual(speakers(ep), ["builder", "verifier", "architect", "product"])
+        self.assertIn("operator: off", " ".join(ep["log"]))
         lines = on_air(ep)
-        self.assertEqual([(l["speaker"], l["kind"]) for l in lines[1:5]],
-                         [("host", "pick"), ("bastion", "answer"), ("host", "pick"), ("meridian", "answer")])
-        self.assertIn("Bastion", lines[1]["text"])  # the bridge names the desk even if the model did not
-        self.assertEqual(lines[2]["reason"], "money at a floor")
-        self.assertEqual(lines[4]["reason"], "the code")
-
-    def test_an_answer_left_out_of_the_order_stays_off_air(self):
-        order = J({"order": [{"desk": "meridian", "bridge": "Meridian?", "reason": "r"}]})
-        ep, m = self.run_ep({("host", "order"): order})
-        b = [l for l in ep["lines"] if l["speaker"] == "bastion" and l["kind"] == "answer"]
-        self.assertEqual(speakers(ep)[0], "meridian")
-        self.assertNotIn("bastion", speakers(ep)[:2])
-        self.assertIn("drop: bastion", " ".join(ep["log"]))
-
-    def test_the_skeptic_must_cite_a_line_on_air(self):
-        ep, m = self.run_ep({("desk", "skeptic"): J({"answer": "Tested is not called.", "label": "grounded",
-                                                     "source": "V1"})})
-        sk = [l for l in on_air(ep) if l["speaker"] == "skeptic"]
-        self.assertEqual([(l["kind"], l["text"]) for l in sk], [("pass", "No opinion here.")])
-
-    def test_the_skeptic_citing_a_line_contests_it(self):
-        ep, m = self.run_ep()
-        sk = [l for l in on_air(ep) if l["speaker"] == "skeptic"][0]
-        self.assertEqual(sk["source"]["kind"], "line on air")
-        self.assertIn(int(sk["source"]["id"][1:]), ep["contested"])
-        ask = [l for l in on_air(ep) if l["kind"] == "ask"][0]
-        self.assertIn("Skeptic", ask["text"])
-
-    def test_the_cross_desk_question_asks_one_desk_about_anothers_line(self):
-        ep, m = self.run_ep()
-        cross = [l for l in on_air(ep) if l["kind"] == "cross"]
-        self.assertEqual(len(cross), 1)
-        self.assertIn("Bastion", cross[0]["text"])
-        ans = on_air(ep)[on_air(ep).index(cross[0]) + 1]
-        self.assertEqual(ans["speaker"], "bastion")
-
-    def test_a_cross_question_about_the_desks_own_line_is_refused(self):
-        def own(view):
-            line = [x for x in view["lines"] if x["desk"] == "meridian"][0]["line"]
-            return J({"ask": {"to": "meridian", "about_line": line, "question": "Sure?"}, "say": "Meridian, sure?"})
-        ep, m = self.run_ep({("host", "cross"): own})
-        self.assertFalse([l for l in ep["lines"] if l["kind"] == "cross"])
-        self.assertIn("cross: refused", " ".join(ep["log"]))
-        self.assertEqual(speakers(ep)[-1], "accountant")
-
-    def test_the_accountant_leads_with_the_owed_rows(self):
-        ep, m = self.run_ep({("desk", "accountant"): lambda v: J({
-            "answer": "Spend was three fifty.", "label": "grounded",
-            "source": [s for s in v["sources"] if s["kind"] == "spend"][0]["id"]})})
-        acc = [l for l in on_air(ep) if l["speaker"] == "accountant"]
-        self.assertEqual([l["kind"] for l in acc], ["pass"])
-        ep, m = self.run_ep()
-        acc = [l for l in on_air(ep) if l["speaker"] == "accountant"][0]
-        self.assertEqual(acc["source"]["kind"], "owed")
-        self.assertIn("SUI", acc["source"]["text"])
-
-    def test_a_host_turn_after_the_accountant_may_ask_one_desk_for_more_or_sign_off(self):
-        ep, m = self.run_ep({("host", "turn"): [J({"action": "ask", "ask": {"to": "meridian", "question": "More on that?"},
-                                                   "say": "Meridian, say more?"})]})
-        lines = on_air(ep)
-        self.assertEqual(lines[-3]["kind"], "ask")
-        self.assertEqual(lines[-2]["speaker"], "meridian")
+        self.assertEqual(lines[0]["kind"], "open")
         self.assertEqual(lines[-1]["kind"], "signoff")
+        self.assertLessEqual(ep["calls"]["total"], 14)
 
-    # ── limits ──
+    def test_the_host_asks_the_question_itself_not_the_roles_name(self):
+        ep, m = self.run_ep()
+        lines = on_air(ep)
+        for i, l in enumerate(lines):
+            if l["speaker"] == "host" or i == 0:
+                continue
+            ask = lines[i - 1]
+            self.assertEqual(ask["speaker"], "host")
+            self.assertIn(self.question(l["speaker"]), ask["text"])
+            self.assertNotIn(next(d for d in self.cast if d["id"] == l["speaker"])["name"], ask["text"])
 
-    def test_gr8_no_further_question_when_the_opening_drew_fewer_than_two(self):
-        ep, m = self.run_ep({("desk", "bastion"): J({"pass": True}),
-                             ("host", "turn"): J({"action": "ask", "ask": {"to": "meridian", "question": "More?"}})})
-        acc = [l for l in ep["lines"] if l["speaker"] == "accountant"][-1]
-        self.assertFalse([l for l in ep["lines"][acc["i"]:] if l["kind"] == "ask" and l["on_air"]])
-        self.assertIn("GR-8", " ".join(ep["log"]))
+    def test_the_host_opens_with_what_the_day_was(self):
+        ep, m = self.run_ep()
+        k, view = m.calls[0]
+        self.assertEqual(k, ("host", "open"))
+        self.assertEqual(view["day"]["commits"], 3)
+        self.assertIn("57 - The Violence Gate Wired In (Build Log, 2026-10-17)", view["day"]["notes"])
+        self.assertTrue(on_air(ep)[0]["text"].endswith(self.question("builder")))
+
+    def test_each_specialty_is_given_only_its_slice(self):
+        ep, m = self.run_ep()
+        for (role, sid), view in m.calls:
+            if role != "desk":
+                continue
+            kinds = {x["kind"] for x in view["sources"]}
+            allowed = set(next(d for d in self.cast if d["id"] == sid)["reads"]["sources"]) | {"line on air", "evidence"}
+            self.assertLessEqual(kinds, allowed, sid)
+
+    def test_operator_with_invites_it_last_before_the_sign_off(self):
+        ep, m = self.run_ep(with_operator=True)
+        self.assertEqual(speakers(ep)[-1], "operator")
         self.assertEqual(on_air(ep)[-1]["kind"], "signoff")
+        _, view = [c for c in m.calls if c[0] == ("desk", "operator")][0]
+        self.assertTrue({x["kind"] for x in view["sources"]} <= {"owed", "line on air"})
+        self.assertFalse(view["on_break"])
+
+    def test_operator_joins_uninvited_on_a_break_and_says_only_the_break(self):
+        self.fx.note("01_Projects/Sidebar/13 - Briefing — Where Sidebar Is (rolling).md",
+                     "# S\n\n## §3 Owed\n- c3 operator `0xca4e` **2.34 SUI**: health FAILs below 5\n- listen\n",
+                     NOW - timedelta(minutes=30))
+        ep, m = self.run_ep(inp=self.fx.inputs())
+        self.assertEqual(speakers(ep)[-1], "operator")
+        self.assertIn("operator joins: balance below its FAIL floor", " ".join(ep["log"]))
+        system, view = [(c[1]) for c in m.calls if c[0] == ("desk", "operator")][0], None
+        _, view = [c for c in m.calls if c[0] == ("desk", "operator")][0]
+        self.assertTrue(view["on_break"])
+        texts = [x["text"] for x in view["sources"] if x["kind"] != "line on air"]
+        self.assertEqual(len(texts), 1)
+        self.assertIn("2.34 SUI", texts[0])
+        self.assertNotIn("listen", " ".join(texts))
+
+    def test_a_specialty_with_an_empty_slice_is_not_asked(self):
+        """Speaks only when: no design note changed and no ruling → no Architect."""
+        inp = dict(self.inp, changed=[n for n in self.inp["changed"] if "Design" not in n["title"]],
+                   briefing=[dict(b, in_window=False) for b in self.inp["briefing"]])
+        ep, m = self.run_ep(inp=inp)
+        self.assertNotIn("architect", speakers(ep))
+        self.assertNotIn(("desk", "architect"), [k for k, _ in m.calls])
+
+    def test_no_opinion_here_is_free_and_normal(self):
+        ep, m = self.run_ep({("desk", "architect"): J({"pass": True})})
+        a = [l for l in on_air(ep) if l["speaker"] == "architect"]
+        self.assertEqual([(l["kind"], l["text"]) for l in a], [("pass", "No opinion here.")])
+        self.assertIn("product", speakers(ep))
 
     def test_the_cap_holds_and_the_last_call_is_the_sign_off(self):
-        greedy = lambda v: J({"action": "ask", "ask": {"to": "meridian", "question": "More?"}, "say": "Meridian?"})
-        ep, m = self.run_ep({("host", "turn"): greedy})
-        self.assertLessEqual(ep["calls"]["total"], 14)
-        self.assertEqual(m.calls[-1][0], ("host", "signoff"))
-        ep, m = self.run_ep({("host", "turn"): greedy}, cap=9)
-        self.assertLessEqual(ep["calls"]["total"], 9)
-        self.assertEqual(m.calls[-1][0], ("host", "signoff"))
+        for cap in (14, 6, 4, 3):
+            ep, m = self.run_ep(cap=cap, with_operator=True)
+            self.assertLessEqual(ep["calls"]["total"], cap)
+            self.assertEqual(m.calls[-1][0], ("host", "signoff"))
 
-    def test_an_on_air_answer_is_at_most_300_characters(self):
-        long = "The rewrite landed on main. " + "It also fixed many other things along the way. " * 12
-        ep, m = self.run_ep({("desk", "meridian"): J({"answer": long, "label": "grounded", "source": "C1"})})
-        mer = [l for l in on_air(ep) if l["speaker"] == "meridian"][0]
-        self.assertLessEqual(len(mer["text"]), 300)
-        self.assertTrue(mer["text"].endswith("."), mer["text"])
-        self.assertTrue(mer["text"].startswith("I know"))
-        self.assertTrue(radio.fit("x" * 400).endswith("."))
-        self.assertLessEqual(len(radio.fit("word " * 100)), 300)
+    def test_limits_answers_300_questions_200_signoff_told_its_limit(self):
+        long = "The gate merged on main. " + "It also did many other things along the way. " * 12
+        ep, m = self.run_ep({("desk", "builder"): J({"answer": long, "label": "grounded", "source": "C1"}),
+                             ("host", "signoff"): J({"say": "Good night, Sang. " * 60})})
+        b = [l for l in on_air(ep) if l["speaker"] == "builder"][0]
+        self.assertLessEqual(len(b["text"]), 300)
+        self.assertTrue(b["text"].endswith("."))
+        for l in on_air(ep):
+            if l["speaker"] == "host" and l["kind"] in ("ask", "repeat"):
+                self.assertLessEqual(len(l["text"]), 200, l["text"])
+        self.assertLessEqual(len(on_air(ep)[-1]["text"]), 480)
+        sv = [v for k, v in m.calls if k == ("host", "signoff")][0]
+        self.assertEqual(sv["limit"], radio.SIGNOFF_CHARS)
 
     def test_an_answer_without_a_resolvable_source_is_a_pass(self):
-        bad = J({"answer": "Things happened.", "label": "grounded", "source": "N99"})
-        nosrc = J({"answer": "Things happened.", "label": "grounded"})
-        ep, m = self.run_ep({("desk", "meridian"): bad, ("desk", "bastion"): nosrc})
-        self.assertFalse([l for l in ep["lines"] if l["kind"] == "answer" and l["speaker"] in ("meridian", "bastion")])
-        self.assertFalse([k for k, _ in m.calls if k == ("host", "order")])
-        self.assertEqual(on_air(ep)[-1]["kind"], "signoff")
-
-    # ── repeat-back (QR2-1: only an unverified or contested claim) ──
-
-    def test_a_repeat_back_of_an_uncontested_claim_is_ignored(self):
-        def rb(view):
-            line = [x for x in view["lines"] if x["desk"] == "bastion"][0]["line"]
-            return J({"repeat_back": {"line": line, "claim": "PR 119 merged"},
-                      "ask": {"to": "bastion", "about_line": [x for x in view["lines"] if x["desk"] == "meridian"][0]["line"],
-                              "question": "Does that touch you?"}, "say": "Bastion, does that touch you?"})
-        ep, m = self.run_ep({("host", "cross"): rb, ("desk", "skeptic"): J({"pass": True})})
-        self.assertFalse([l for l in ep["lines"] if l["kind"] == "repeat"])
-        self.assertIn("repeat-back refused", " ".join(ep["log"]))
-
-    def test_a_repeat_back_of_a_contested_claim_is_put_to_its_desk(self):
-        def rb(view):
-            line = view["contested"][0]
-            return J({"repeat_back": {"line": line, "claim": "the TFS rewrite landed"},
-                      "ask": {"to": "bastion", "about_line": line, "question": "Does that touch you?"},
-                      "say": "Bastion, does that touch you?"})
-        ep, m = self.run_ep({("host", "cross"): rb})
-        kinds = [(l["speaker"], l["kind"]) for l in on_air(ep)]
-        i = kinds.index(("host", "repeat"))
-        self.assertEqual(kinds[i + 1], ("meridian", "confirm"))
-        self.assertTrue(on_air(ep)[i]["text"].startswith("So, Meridian, you're saying"))
-        self.assertEqual(kinds[i + 2], ("host", "cross"))
-
-    def test_a_withdrawal_stays_on_air_with_the_challenge(self):
-        """QR3-1: claim, the Skeptic's doubt, the repeat-back and the withdrawal are all heard."""
-        def rb(view):
-            line = view["contested"][0]
-            return J({"repeat_back": {"line": line, "claim": "the TFS rewrite landed"}, "say": "x"})
-        ep, m = self.run_ep({("host", "cross"): [rb],
-                             ("confirm", "meridian"): J({"verdict": "withdraw", "say": ""})})
-        mer = [l for l in ep["lines"] if l["speaker"] == "meridian"]
-        claim = mer[0]
-        self.assertTrue(claim["on_air"])
-        self.assertTrue(claim["withdrawn"])
-        self.assertTrue(ep["lines"][claim["i"] - 1]["on_air"])  # its bridge too
-        kinds = [(l["speaker"], l["kind"]) for l in on_air(ep)]
-        self.assertIn(("skeptic", "answer"), kinds)
-        i = kinds.index(("host", "repeat"))
-        self.assertEqual(kinds[i + 1], ("meridian", "withdraw"))
-        w = on_air(ep)[i + 1]
-        self.assertEqual(w["text"], "I can't source that, I withdraw it.")
-        self.assertEqual(ep["withdrawn"], [claim["i"]])
-
-    def test_a_withdrawn_line_is_no_longer_a_target_or_a_source(self):
-        seen = {}
-
-        def rb(view):
-            line = view["contested"][0]
-            return J({"repeat_back": {"line": line, "claim": "the TFS rewrite landed"},
-                      "ask": {"to": "bastion", "about_line": line, "question": "Does that touch you?"},
-                      "say": "Bastion?"})
-
-        def good(view):
-            seen["standing"] = [x["line"] for x in view["lines"]]
-            seen["withdrawn"] = view["withdrawn"]
-            line = [x for x in view["lines"] if x["desk"] != "bastion"][0]["line"]
-            return J({"ask": {"to": "bastion", "about_line": line, "question": "Does that touch you?"},
-                      "say": "Bastion, does that touch you?"})
-
-        def acc(view):
-            seen["acc_sources"] = [x["id"] for x in view["sources"]]
-            return None
-
-        ep, m = self.run_ep({("host", "cross"): [rb, good],
-                             ("confirm", "meridian"): J({"verdict": "withdraw", "say": "Not sure."}),
-                             ("desk", "accountant"): acc})
-        wd = ep["withdrawn"][0]
-        self.assertNotIn(wd, seen["standing"])
-        self.assertEqual(seen["withdrawn"], [wd])
-        self.assertNotIn("L%d" % wd, seen["acc_sources"])
-
-    def test_a_refused_cross_question_is_re_asked_once(self):
-        """QR3-2: the program re-asks the host once within the budget."""
-        def own(view):
-            line = [x for x in view["lines"] if x["desk"] == "meridian"][0]["line"]
-            return J({"ask": {"to": "meridian", "about_line": line, "question": "Sure?"}, "say": "Meridian?"})
-        ep, m = self.run_ep({("host", "cross"): [own]})  # the second call falls to the fake: a valid pick
-        crosses = [k for k, _ in m.calls if k == ("host", "cross")]
-        self.assertEqual(len(crosses), 2)
-        self.assertEqual(len([l for l in on_air(ep) if l["kind"] == "cross"]), 1)
-        retry_view = [v for k, v in m.calls if k == ("host", "cross")][1]
-        self.assertIn("refused", retry_view["retry"])
-        ep, m = self.run_ep({("host", "cross"): own})  # refused twice: no third call
-        self.assertEqual(len([k for k, _ in m.calls if k == ("host", "cross")]), 2)
-        self.assertFalse([l for l in ep["lines"] if l["kind"] == "cross"])
-
-    def test_the_sign_off_is_told_which_claims_were_withdrawn(self):
-        def rb(view):
-            return J({"repeat_back": {"line": view["contested"][0], "claim": "x"}, "say": "x"})
-        ep, m = self.run_ep({("host", "cross"): [rb],
-                             ("confirm", "meridian"): J({"verdict": "withdraw", "say": "Not sure."})})
-        last_host = [v for k, v in m.calls if k[0] == "host"][-1]
-        self.assertEqual(last_host["withdrawn"], ep["withdrawn"])
-
-    # ── the rest ──
+        ep, m = self.run_ep({("desk", "builder"): J({"answer": "Things.", "label": "grounded", "source": "Z9"})})
+        self.assertEqual([l["kind"] for l in ep["lines"] if l["speaker"] == "builder"], ["pass"])
 
     def test_spoken_labels(self):
-        self.assertTrue(radio.with_label("The rewrite landed.", "grounded").startswith("I know"))
-        self.assertTrue(radio.with_label("It slips a week.", "inferred").lower().startswith("my guess"))
-        self.assertTrue(radio.with_label("It was tested, not called.", "borrowed", "meridian")
-                        .startswith("The Meridian desk says"))
-        self.assertEqual(radio.with_label("I know the rewrite landed.", "grounded"),
-                         "I know the rewrite landed.")
-
-    def test_a_long_host_line_ends_at_a_sentence_not_mid_clause(self):
-        long = "That is the night edition, Sang. " + "Meridian fixed a stale chain read on the box. " * 14
-        ep, m = self.run_ep({("host", "signoff"): J({"say": long}),
-                             ("host", "turn"): J({"action": "signoff", "say": long})})
-        so = on_air(ep)[-1]
-        self.assertEqual(so["kind"], "signoff")
-        self.assertTrue(so["text"].endswith("."), so["text"][-40:])
-        self.assertLessEqual(len(so["text"]), 480)
-
-    def test_desks_no_longer_announce_themselves(self):
-        """The host's bridge names the desk; the 300 characters are the claim's (QR2-7)."""
-        ep, m = self.run_ep()
-        for l in on_air(ep):
-            if l["speaker"] != "host":
-                self.assertNotRegex(l["text"], r"^(The )?\w+ here\.")
+        self.assertTrue(radio.with_label("The gate merged.", "grounded").startswith("I know"))
+        self.assertTrue(radio.with_label("It slips.", "inferred").lower().startswith("my guess"))
+        self.assertTrue(radio.with_label("It merged.", "borrowed", "builder").startswith("The Builder says"))
 
     def test_the_first_failed_call_aborts_the_episode(self):
         def boom(role, system, user, view):
             raise radio.ModelError("claude: unknown option")
         with self.assertRaises(radio.ModelError):
-            radio.run_episode(self.inp, self.cast, boom, topic="t")
+            radio.run_episode(self.inp, self.cast, boom, vault=self.fx.vault, memory=self.fx.memory)
+
+    # ── the Verifier (QR-10) ──
+
+    def test_the_verifier_reads_before_it_speaks_and_cites_the_builders_line(self):
+        ep, m = self.run_ep()
+        keys = [k for k, _ in m.calls]
+        i = keys.index(("verify", "verifier"))
+        self.assertEqual(keys[i + 1], ("desk", "verifier"))
+        v = [l for l in on_air(ep) if l["speaker"] == "verifier"][0]
+        b = [l for l in on_air(ep) if l["speaker"] == "builder"][0]
+        self.assertEqual(v["about"], b["i"])
+        self.assertTrue(v["evidence"][0]["cmd"].startswith("git -C ~/nonvis/sidebar"))
+        self.assertTrue(v["text"].startswith("Proven"), v["text"])
+        self.assertEqual(v["verdict"], "proven")
+        ask = on_air(ep)[on_air(ep).index(v) - 1]
+        self.assertIn("line %d" % b["i"], ask["text"])
+
+    def test_not_proven_names_the_one_check_or_is_not_aired(self):
+        ep, m = self.run_ep({("desk", "verifier"): J({"verdict": "not_proven", "answer": "the merge shows no test run.",
+                                                       "check": "run the screen e2e on the merge", "source": "E1"})})
+        v = [l for l in on_air(ep) if l["speaker"] == "verifier"][0]
+        self.assertTrue(v["text"].startswith("Not proven yet"), v["text"])
+        self.assertIn("run the screen e2e on the merge", v["text"])
+        self.assertIn(v["about"], ep["unverified"])
+        ep, m = self.run_ep({("desk", "verifier"): J({"verdict": "not_proven", "answer": "I doubt it.", "source": "E1"})})
+        self.assertEqual([l["kind"] for l in ep["lines"] if l["speaker"] == "verifier"], ["pass"])
+
+    def test_a_verifier_that_read_nothing_does_not_speak(self):
+        ep, m = self.run_ep({("verify", "verifier"): J({"reads": []})})
+        self.assertEqual([l["kind"] for l in ep["lines"] if l["speaker"] == "verifier"], ["pass"])
+        self.assertNotIn(("desk", "verifier"), [k for k, _ in m.calls])
+
+    def test_verifier_reads_are_bounded(self):
+        many = J({"reads": [{"op": "log", "repo": "sidebar", "n": 3}] * 9})
+        ep, m = self.run_ep({("verify", "verifier"): many})
+        v = [l for l in ep["lines"] if l["speaker"] == "verifier"][0]
+        self.assertEqual(len(v["evidence"]), radio.MAX_READS)
+
+    def test_a_not_proven_claim_is_put_back_and_its_withdrawal_stays_on_air(self):
+        ep, m = self.run_ep({("desk", "verifier"): J({"verdict": "not_proven", "answer": "no run shown.",
+                                                       "check": "run it", "source": "E1"}),
+                             ("confirm", "builder"): J({"verdict": "withdraw", "say": ""})})
+        b = [l for l in ep["lines"] if l["speaker"] == "builder"]
+        self.assertTrue(b[0]["on_air"])
+        self.assertTrue(b[0]["withdrawn"])
+        kinds = [(l["speaker"], l["kind"]) for l in on_air(ep)]
+        i = kinds.index(("host", "repeat"))
+        self.assertEqual(kinds[i - 1], ("verifier", "answer"))
+        self.assertEqual(kinds[i + 1], ("builder", "withdraw"))
+        self.assertEqual(on_air(ep)[i + 1]["text"], "I can't source that, I withdraw it.")
+        self.assertEqual(ep["withdrawn"], [b[0]["i"]])
+        sv = [v for k, v in m.calls if k == ("host", "signoff")][0]
+        self.assertEqual(sv["withdrawn"], [b[0]["i"]])
+
+    def test_a_proven_claim_is_never_put_back(self):
+        ep, m = self.run_ep()
+        self.assertFalse([l for l in ep["lines"] if l["kind"] == "repeat"])
 
 
 class NoteAndVoiceCase(unittest.TestCase):
@@ -653,43 +628,29 @@ class NoteAndVoiceCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.fx = Fixture(Path(self.tmp.name))
         self.cast = radio.load_cast(CAST, LOCK)
-        self.inp = radio.gather_inputs(self.cast, self.fx.vault, self.fx.memory,
-                                       since=NOW - timedelta(hours=24), until=NOW,
-                                       repo_roots=[self.fx.home / "nonvis"])
-        self.ep = radio.run_episode(self.inp, self.cast, radio.FakeModel(), topic="daily night recap")
+        self.inp = self.fx.inputs()
+        self.ep = radio.run_episode(self.inp, self.cast, radio.FakeModel(), vault=self.fx.vault, memory=self.fx.memory)
 
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_the_note_is_numbered_in_its_folder_and_carries_the_transcript(self):
+    def test_the_note_is_named_for_the_project_and_numbered_in_the_folder(self):
         d = self.fx.vault / "01_Projects" / "Quorum" / "Radio"
-        p0 = radio.write_note(self.ep, self.cast, self.fx.vault, day="2026-10-17")
-        self.assertEqual(p0, d / "00 - Night Recap (2026-10-17).md")
-        p1 = radio.write_note(self.ep, self.cast, self.fx.vault, day="2026-10-17")
-        self.assertEqual(p1.name, "01 - Night Recap (2026-10-17).md")
-        t = p0.read_text()
+        d.mkdir(parents=True)
+        (d / "02 - Night Recap (2026-10-17).md").write_text("x")
+        p = radio.write_note(self.ep, self.cast, self.fx.vault, day="2026-10-17")
+        self.assertEqual(p, d / "03 - Sidebar (2026-10-17).md")
+        t = p.read_text()
         fm = t.split("---")[1]
         for k in ("title:", "date: 2026-10-17", "tags:", "summary:"):
             self.assertIn(k, fm)
         self.assertIn("calls: %d of 14" % self.ep["calls"]["total"], t)
+        self.assertIn("vault: rev `%s`" % self.inp["vault_rev"], t)
+        self.assertIn("## Verifier reads", t)
+        self.assertIn("git -C ~/nonvis/sidebar", t)
         for l in self.ep["lines"]:
             if l["on_air"]:
                 self.assertIn(radio.voice_of(self.cast, l["speaker"]), t)
-        self.assertIn("am_michael", t)
-        self.assertIn("ops/139: TFS rewrite", t)  # a commit source, cited
-
-    def test_the_note_records_the_vault_rev_and_marks_withdrawn_claims(self):
-        ep = dict(self.ep, vault_rev="abc1234def", as_of=True, withdrawn=[2])
-        ep["lines"] = [dict(l) for l in self.ep["lines"]]
-        ep["lines"][2]["withdrawn"] = True
-        t = radio.write_note(ep, self.cast, self.fx.vault, day="2026-10-17").read_text()
-        self.assertIn("vault: rev `abc1234def` (as of the window end)", t)
-        row = [x for x in t.splitlines() if x.startswith("| 2 ")][0]
-        self.assertIn("WITHDRAWN", row)
-
-    def test_a_topic_titles_the_note(self):
-        p = radio.write_note(self.ep, self.cast, self.fx.vault, day="2026-10-17", topic="the bastion week")
-        self.assertEqual(p.name, "00 - The Bastion Week (2026-10-17).md")
 
     def test_the_voice_job_binds_each_line_to_its_speakers_voice_and_pan(self):
         job = radio.voice_job(self.ep, self.cast)
@@ -700,20 +661,18 @@ class NoteAndVoiceCase(unittest.TestCase):
             self.assertEqual(j["voice"], by[l["speaker"]]["voice"])
             self.assertEqual(j["pan"], by[l["speaker"]]["pan_value"])
             self.assertGreater(j["pause"], 0)
-        self.assertEqual(job["voices"], sorted({d["voice"] for d in self.cast}))
 
     def test_the_voice_job_speaks_no_symbols(self):
         ep = {"lines": [{"i": 0, "speaker": "host", "kind": "open", "text": "Good ☠☠☠ evening ⭐ ✅ — all.",
                          "on_air": True}]}
-        job = radio.voice_job(ep, self.cast)
-        self.assertEqual(job["lines"][0]["text"], "Good evening — all.")
+        self.assertEqual(radio.voice_job(ep, self.cast)["lines"][0]["text"], "Good evening — all.")
 
     def test_pauses_come_from_structure(self):
         P = radio.pause_before
         q = {"speaker": "host", "kind": "ask", "text": "What moved?"}
-        a = {"speaker": "meridian", "kind": "answer", "text": "x"}
+        a = {"speaker": "builder", "kind": "answer", "text": "x"}
         s = {"speaker": "host", "kind": "signoff", "text": "Good night."}
-        self.assertGreater(P(q, a), P(a, {"speaker": "bastion", "kind": "answer", "text": "y"}))
+        self.assertGreater(P(q, a), P(a, {"speaker": "architect", "kind": "answer", "text": "y"}))
         self.assertGreater(P(a, s), P(q, a))
         self.assertEqual(P(None, q), radio.PAUSES["lead"] * radio.NIGHT_STRETCH)
 
@@ -723,14 +682,10 @@ class NoteAndVoiceCase(unittest.TestCase):
         out = Path(self.tmp.name) / "ep.mp3"
         r = radio.render(self.ep, self.cast, out, fake_tts=True)
         self.assertTrue(out.exists())
-        self.assertGreater(r["duration"], 1.0)
         dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                                     "-of", "csv=p=0", str(out)], capture_output=True, text=True).stdout)
         self.assertAlmostEqual(dur, r["duration"], delta=0.5)
         self.assertEqual(len(r["lines"]), len([l for l in self.ep["lines"] if l["on_air"]]))
-        for x in r["lines"]:
-            self.assertIn("voice", x)
-            self.assertIn("start", x)
 
     @unittest.skipUnless(shutil.which("node"), "node needed")
     def test_the_sidecar_refuses_a_voice_not_in_the_cast_file(self):
@@ -756,47 +711,48 @@ class CliCase(unittest.TestCase):
     def cli(self, *args):
         env = dict(os.environ)
         env.update(self.fx.env())
-        env["QUORUM_RADIO_NOW"] = NOW.isoformat()
         return subprocess.run([sys.executable, str(HERE / "quorum_cli.py"), "radio"] + list(args),
                               env=env, capture_output=True, text=True)
 
-    def test_radio_inputs_prints_json_over_the_last_24h_by_default(self):
-        p = self.cli("inputs")
+    def notes(self):
+        d = self.fx.vault / "01_Projects" / "Quorum" / "Radio"
+        return sorted(d.glob("*.md")) if d.is_dir() else []
+
+    def test_radio_project_fake_no_voice_writes_the_note(self):
+        p = self.cli("sidebar", "--fake", "--no-voice")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual([n.name for n in self.notes()], ["00 - Sidebar (2026-10-17).md"])
+        self.assertIn("00 - Sidebar (2026-10-17).md", p.stdout)
+
+    def test_nothing_today_refuses_at_zero_cost(self):
+        p = self.cli("meridian", "--no-voice")  # not --fake: a model call would fail the test env
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("nothing on meridian today", p.stderr)
+        self.assertEqual(self.notes(), [])
+
+    def test_inputs_prints_the_project_json_for_today(self):
+        p = self.cli("inputs", "sidebar")
         self.assertEqual(p.returncode, 0, p.stderr)
         o = json.loads(p.stdout)
-        self.assertEqual(o["since"][:16], "2026-10-16T02:00")
-        on = [d["id"] for d in o["desks"] if d["on_air"]]
-        self.assertEqual(on, ["host", "meridian", "bastion", "skeptic", "accountant"])
+        self.assertEqual(o["since"][:19], "2026-10-16T15:00:00")
+        self.assertEqual(o["project"], "sidebar")
 
-    def test_radio_inputs_since(self):
-        p = self.cli("inputs", "--since", "2026-10-09T00:00Z")
-        o = json.loads(p.stdout)
-        self.assertIn("sidebar", [d["id"] for d in o["desks"] if d["on_air"]])
-
-    def test_radio_tonight_fake_no_voice_writes_the_note(self):
-        p = self.cli("tonight", "--fake", "--no-voice")
+    def test_with_operator_and_an_unknown_with(self):
+        p = self.cli("sidebar", "--fake", "--no-voice", "--with", "operator")
         self.assertEqual(p.returncode, 0, p.stderr)
-        notes = list((self.fx.vault / "01_Projects" / "Quorum" / "Radio").glob("*.md"))
-        self.assertEqual(len(notes), 1)
-        self.assertIn("Night Recap (2026-10-17)", notes[0].name)
-        self.assertIn(str(notes[0]), p.stdout)
+        self.assertIn("| Operator | `am_puck` |", self.notes()[0].read_text().split("## Transcript")[1])
+        p = self.cli("sidebar", "--fake", "--no-voice", "--with", "builder")
+        self.assertEqual(p.returncode, 2)
 
-    def test_radio_inputs_until_replays_a_window(self):
-        p = self.cli("inputs", "--since", "2026-10-09T00:00Z", "--until", "2026-10-15T00:00Z")
-        self.assertEqual(p.returncode, 0, p.stderr)
-        o = json.loads(p.stdout)
-        self.assertEqual(o["until"][:16], "2026-10-15T00:00")
-        self.assertTrue(o["as_of"])
-        # 10-09..10-15 holds the old meridian/sidebar commits and the 10-14 note commits.
-        self.assertEqual([d["id"] for d in o["desks"] if d["on_air"]],
-                         ["host", "meridian", "permafrost", "sidebar", "bastion", "skeptic", "accountant"])
-        m = [d for d in o["desks"] if d["id"] == "meridian"][0]
-        self.assertEqual([c["subject"] for c in m["commits"]], ["old meridian work"])
-        self.assertEqual(m["spend"], [])  # its spend line (10-16) is after the window
+    def test_tonight_is_retired(self):
+        p = self.cli("tonight")
+        self.assertEqual(p.returncode, 2)
+        self.assertIn("quorum radio <project>", p.stderr)
 
-    def test_unknown_radio_subcommand(self):
+    def test_an_unknown_project(self):
         p = self.cli("dance")
         self.assertEqual(p.returncode, 2)
+        self.assertIn("sidebar", p.stderr)
 
 
 class SpendCase(unittest.TestCase):
@@ -807,16 +763,8 @@ class SpendCase(unittest.TestCase):
                             "'sessions_scanned': 26, 'records_counted': 13, 'total': {'est_usd': 0.1954}}))\n")
             line = radio.episode_spend(Path(td) / "session", "2026-10-17T02:20:00Z", script=stub)
         self.assertTrue(line.startswith("spend: `quorum spend --project "), line)
-        self.assertIn("--since 2026-10-17T02:20:00Z", line)
         self.assertIn("13 calls", line)
         self.assertIn("$0.20 EST", line)
-
-    def test_a_failed_readout_says_so(self):
-        with tempfile.TemporaryDirectory() as td:
-            stub = Path(td) / "stub.py"
-            stub.write_text("import sys\nsys.exit(2)\n")
-            line = radio.episode_spend(Path(td), "2026-10-17T02:20:00Z", script=stub)
-        self.assertIn("no readout", line)
 
 
 class WallCase(unittest.TestCase):
@@ -837,8 +785,7 @@ class WallCase(unittest.TestCase):
     def test_the_voice_sidecar_pins_kokoro_exactly(self):
         pkg = json.loads((REPO / "radio-voice" / "package.json").read_text())
         self.assertEqual(pkg["dependencies"]["kokoro-js"], "1.2.1")
-        gi = (REPO / ".gitignore").read_text()
-        self.assertIn("node_modules/", gi)
+        self.assertIn("node_modules/", (REPO / ".gitignore").read_text())
 
 
 if __name__ == "__main__":

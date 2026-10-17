@@ -33,8 +33,8 @@ tooling that spends no model tokens:
       additionalContext (<= 5 hits, ~1k tokens). Never fails a prompt: any error
       exits 0 silently; QUORUM_HOOK=off disables it. Each call appends a line to
       <vault>/.quorum/hook.log (session, term count, hit paths — never the prompt).
-  quorum radio inputs|tonight …
-      The owner's desks on air (scripts/radio.py, run as a subprocess): the one
+  quorum radio <project> | inputs <project> …
+      One project's day on air (scripts/radio.py, run as a subprocess): the one
       verb that calls a model. See scripts/radio.py.
   quorum version
 
@@ -88,13 +88,11 @@ USAGE = """usage: quorum <command> [options]
                   how often the hook injected, how many hits were then Read,
                   how many sessions ran quorum lookups themselves, and per mode
                   (on/off): sessions, prompts, main-session context per turn
-  radio inputs [--since <ISO8601>] [--until <ISO8601>]
-                  per desk, what tonight's episode reads: briefings, commit
-                  subjects, spend lines, Action Queue items (JSON, $0);
-                  --until replays a window as the vault's git held it
-  radio tonight [--fake] [--topic <words>] [--since …] [--until …] [--no-voice]
-                  the one model-calling verb: a host-run round over `claude -p`
-                  among the desks, a vault note + an MP3 in the bound voices
+  radio <project> [--since …] [--until …] [--with operator] [--fake] [--no-voice]
+                  the one model-calling verb: one project's day (default: today,
+                  KST) as a spoken recap — a vault note + an MP3 in bound voices
+  radio inputs <project> [--since …] [--until …]
+                  the day's inputs per specialty slice (JSON, $0)
   version         print the checkout's commit
 
 The vault defaults to ~/nonvis/second-brain (QUORUM_VAULT overrides); its memory

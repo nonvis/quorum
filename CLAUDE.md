@@ -3,7 +3,8 @@
 Deterministic Python tooling: `quorum spend` (token/$ readout from Claude Code
 transcripts), the vault index (`quorum q`, `links`, `mentions`, `repos`, `index`)
 and the per-repo index (`quorum repo q`, `sym`, `repo index`), plus `quorum
-radio` (an owner's project desks on air: a host-run text round, a note, an MP3).
+radio <project>` (one project's day on air: specialties answering one question
+each from their own slice of the inputs, a note, an MP3).
 What each command does is in `README.md`; the source is the truth.
 
 > Project status, roadmap and decisions live in the maintainer's private design
@@ -15,7 +16,7 @@ What each command does is in `README.md`; the source is the truth.
 - **Python standard library only.** No pip dependencies, no build step, no
   compiled code. `sqlite3` with FTS5 is the storage. The one non-Python piece is
   `radio-voice/` (its own Node package; `kokoro-js` pinned exactly).
-- **Zero model calls, except `quorum radio tonight`.** Every other command is
+- **Zero model calls, except `quorum radio <project>`.** Every other command is
   deterministic and costs $0. The core (`quorum_cli.py`, `vault_index.py`,
   `repo_index.py`, `spend_readout.py`, `lint.py`) never imports `radio.py` or
   anything audio: the CLI runs radio as a subprocess. Radio's tests use its fake
@@ -23,11 +24,14 @@ What each command does is in `README.md`; the source is the truth.
 - **Read-only toward what it reads.** `spend` reads transcripts; the indexes read
   markdown and git. The only files written are `<vault>/.quorum/index.db`,
   `<repo>/.quorum/index.db` and, if missing, `<repo>/.quorum/.gitignore` (`*`);
-  `radio tonight` also writes its episode note + MP3 under the vault's
+  `quorum radio <project>` also writes its episode note + MP3 under the vault's
   `01_Projects/Quorum/Radio/` and appends new ids to `radio/voices.lock`.
 - **Radio voices are bound for life.** `radio/cast.json` gives each specialty
   one Kokoro voice and one pan; never reassign a voice (the lock refuses it),
   never reuse a retired specialty's voice, never change the pinned weights.
+  Each specialty reads only its own slice of the inputs (`reads.sources`); keep
+  the slices disjoint. The Verifier's reads are read-only git/note reads run by
+  the program (`run_read`), never a shell.
 - **Walls.** A repo is indexed only if it is on the vault's allowlist or has its
   own `.quorum/`; repo content never leaves its repo.
 - **Self-repairing index.** A query refreshes first (stat + re-parse what changed);

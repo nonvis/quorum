@@ -1,0 +1,84 @@
+{
+  "v": 1,
+  "note": "One project per Radio episode (QR-7/8): its briefing note(s), its vault folder(s) and its repos (read by path under ~/nonvis or ~/projects; this list, not the index allowlist, is what Radio reads). Bastion is vault notes only. `concept` = the project's concept/pitch note(s), the Product specialty's baseline.",
+  "projects": {
+    "meridian": {
+      "name": "Meridian",
+      "notes": [
+        "01_Projects/Meridian/08 - *.md"
+      ],
+      "folders": [
+        "01_Projects/Meridian"
+      ],
+      "repos": [
+        "meridian"
+      ],
+      "concept": [
+        "01_Projects/Meridian/00 - *.md"
+      ]
+    },
+    "permafrost": {
+      "name": "Permafrost",
+      "notes": [
+        "01_Projects/Permafrost/28 - *.md",
+        "01_Projects/Loqua/MVP/00 - *.md"
+      ],
+      "folders": [
+        "01_Projects/Permafrost",
+        "01_Projects/Loqua"
+      ],
+      "repos": [
+        "permafrost",
+        "loqua-passkey"
+      ],
+      "concept": [
+        "01_Projects/Permafrost/00 - *.md"
+      ]
+    },
+    "sidebar": {
+      "name": "Sidebar",
+      "notes": [
+        "01_Projects/Sidebar/13 - *.md"
+      ],
+      "folders": [
+        "01_Projects/Sidebar"
+      ],
+      "repos": [
+        "sidebar",
+        "sidebar-screen"
+      ],
+      "concept": [
+        "01_Projects/Sidebar/00 - *.md"
+      ]
+    },
+    "bastion": {
+      "name": "Bastion",
+      "notes": [
+        "01_Projects/Partners/Samsung/Bastion/21 - *.md",
+        "01_Projects/Partners/Samsung/Linear/00 - *.md"
+      ],
+      "folders": [
+        "01_Projects/Partners/Samsung"
+      ],
+      "repos": [],
+      "concept": [
+        "01_Projects/Partners/Samsung/Bastion/00 - *.md"
+      ]
+    },
+    "quorum": {
+      "name": "Quorum",
+      "notes": [
+        "01_Projects/Quorum/15 - *.md"
+      ],
+      "folders": [
+        "01_Projects/Quorum"
+      ],
+      "repos": [
+        "quorum"
+      ],
+      "concept": [
+        "01_Projects/Quorum/00 - *.md"
+      ]
+    }
+  }
+}

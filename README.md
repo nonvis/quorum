@@ -1,7 +1,7 @@
 # Quorum
 
 Deterministic, local tooling around a Claude Code workspace. Python standard
-library only; no build step. One verb calls a model: `quorum radio tonight`
+library only; no build step. One verb calls a model: `quorum radio <project>`
 (below); everything else is $0.
 
 Quorum began as a C++ daemon that orchestrated Claude Code agents with a web
@@ -25,8 +25,8 @@ quorum lint [--fix-safe] [--json] [--show N]
 quorum hook                      # Claude Code UserPromptSubmit hook (stdin JSON)
 quorum hook on|off|status
 quorum hook --report [--json]
-quorum radio inputs [--since <ISO8601>] [--until <ISO8601>]
-quorum radio tonight [--fake] [--topic <words>] [--since <ISO8601>] [--until <ISO8601>] [--no-voice]
+quorum radio <project> [--since <ISO8601>] [--until <ISO8601>] [--with operator] [--fake] [--no-voice]
+quorum radio inputs <project> [--since <ISO8601>] [--until <ISO8601>]
 quorum version
 ```
 
@@ -99,61 +99,66 @@ quorum version
 
 ## Radio
 
-`quorum radio` puts one owner's *desks* on air: a short spoken episode in which
-specialties — one per project (Meridian, Permafrost, Sidebar, Bastion), plus a
-Skeptic (the verification rules) and an Accountant (spend and what is owed) —
-answer a host. The listener is the owner, so there is no screen or trust gate.
+`quorum radio <project>` is a short spoken recap of **one project's day** for its
+owner, run by hand (some projects get no work on a given day). The listener is
+the owner, so there is no screen or trust gate.
 
-- **`radio/cast.json`** (tracked) is the cast: per specialty `{id, name, voice,
-  pan, reads}`. Each specialty is bound to **one Kokoro voice and one stereo
-  position for its lifetime**, so the owner learns who is talking by ear.
-  `radio/voices.lock` records every voice ever held: the loader refuses a
-  duplicate voice, a voice outside Kokoro's English presets, a changed voice for
-  a locked id, and a retired id's voice for a new one.
-- **`radio inputs`** ($0) prints JSON: per desk, the briefing note(s) it reads
-  (an excerpt of the State / Owed / Next sections, and the vault commits that
-  touched each in the window), the commit subjects in its repos (only those on
-  the vault allowlist; others are listed as skipped), the `spend:` close lines
-  whose window ends inside the window, and the Action Queue items whose title
-  names it. The Skeptic reads the top-severity verification rules from the
-  memory dir; the Accountant reads every briefing's Owed rows (money rows first)
-  and every desk's spend lines. The window defaults to the last 24 h. A desk is
-  on the cast only on **git evidence**: a vault commit touching its notes, or a
-  commit in its repos (a file's mtime or a spend line alone does not count); the
-  Skeptic and the Accountant always sit. `--until` replays an older window: the
-  notes, the Action Queue and the allowlist are read as the vault's git held
-  them at `--until`, so an episode can be re-made with the news it had then.
-- **`radio tonight`** runs the episode, a text round in a fixed running order.
-  Every answer is written by the desk citing one of its own sources by id (a
-  note section, a commit, an Owed row, a spend line, an Action Queue item, a
-  rule, or another desk's line on air); an answer whose source does not
-  resolve is a pass, and an on-air answer is at most 300 characters (cut at a
-  sentence) with its kind said aloud ("I know…", "My guess is…", "The Meridian
-  desk says…").
-  1. The host opens and asks the **project desks** one question.
-  2. **One** host call orders all their answers for air, each with a short
-     bridge that names the desk and a logged one-line reason (an answer left
-     out stays off air), and writes the Skeptic's question.
-  3. The **Skeptic** is asked what it doubts in what is on air; it must cite
-     the line (`L<n>`), which makes that line *contested*.
-  4. One **cross-desk** question: one project desk about another desk's claim
-     on air, by line number.
-  5. The **Accountant**, who must lead with an Owed row when there is one.
-  6. Further questions to one desk only while the opening question drew ≥ 2
-     sourced answers with new material, and only within the 14-call cap; the
-     last call is always the host's sign-off.
+- **`radio/projects.json`** (tracked) maps each project to its briefing note(s),
+  its vault folder(s), its concept note and its repos. Radio reads the repos on
+  this list by path (under `~/nonvis` or `~/projects`), whatever the index
+  allowlist says; a project may list none.
+- **The window** defaults to today in KST (midnight → now); `--since` / `--until`
+  set it, and `--until` replays a window as the vault's git held it then. With no
+  commit in the project's repos and no note changed in its vault folders, it
+  refuses at $0: `nothing on <project> today`.
+- **`radio/cast.json`** (tracked) is the cast: a host and five specialties, the
+  same for every project. Each answers **one question**, from **a slice of the
+  inputs no other specialty reads**, with a **never-says** list:
 
-  A repeat-back is allowed only of a contested or unverified (`my guess`)
-  line; the desk confirms, corrects or withdraws (a withdrawn claim and its
-  bridge leave the audio). The model is `claude -p --model claude-sonnet-5-5`
-  (no tools, safe mode) run from `~/.cache/quorum/radio/session`, so
-  `quorum spend --project ~/.cache/quorum/radio/session` meters it; `--fake`
-  uses a deterministic stand-in. If the first call fails nothing is written.
-- The episode is written as a note `NN - <Topic> (YYYY-MM-DD).md` in the
-  vault's radio folder (`RADIO_DIR` in `scripts/radio.py`), recording the vault
-  rev it read (cast, transcript with speaker / voice / line / source /
-  the host's pick reason, the program log, the call count, the spend line) and
-  voiced to an MP3 beside it (`--no-voice` skips it). Play it with `afplay`.
+  | Specialty | Its question | Its slice |
+  |---|---|---|
+  | Builder | What actually changed today? | the window's commits (+ diffstat) |
+  | Verifier | Is that actually proven? | the evidence: build logs, walks, gates, tests changed today, the verification rules, and what it reads itself |
+  | Architect | What did we decide today, and what did it cost? | design / ruling notes changed today, the briefing's §Rulings when it changed |
+  | Product | Does a user notice any of it? | user-visible files touched (docs, UI, CLI), surface notes, the concept note |
+  | Operator | What's waiting on the owner? | the briefing's Owed + Next rows, Action Queue items naming the project, spend lines |
+
+  Each specialty is bound to **one Kokoro voice and one stereo position for its
+  lifetime**; `radio/voices.lock` records every voice ever held, and the loader
+  refuses a duplicate voice, a voice outside Kokoro's English presets, a changed
+  voice for a locked id, and a retired id's voice for a new one.
+- **The episode.** The host opens with what the day was, then asks each
+  question in this order: what changed → is it real → what was decided → does
+  a user notice → what's waiting on the owner; then signs off. The host asks the
+  question itself, never the role's name; a specialty whose slice is empty is
+  not asked, and any may pass ("No opinion here"). An answer cites one source
+  id from its slice, says its kind aloud ("I know…", "My guess is…") and is at
+  most 300 characters; host questions at most 200; the sign-off is told its
+  limit. 14 calls at most, the last one the sign-off.
+- **The Verifier** reads before it speaks: one call asks for at most 4
+  read-only reads — `git show` / `log` / `grep` in the project's repos, or a
+  note in its vault folders (no shell; revisions and paths validated; output
+  capped) — the program runs them, and a second call gives the verdict on the
+  Builder's line: "Proven: …" or "Not proven yet. The one check that settles it:
+  …". An open doubt never airs. A claim found not proven is put back to its
+  speaker, who confirms, corrects or withdraws; a withdrawal stays on air and the
+  claim is marked withdrawn. The reads it ran are listed in the note.
+- **The Operator** is off by default. `--with operator` invites it, last before
+  the sign-off. It joins uninvited only when something broke in the window,
+  read mechanically from the notes changed today, the briefing's state and the
+  Owed rows new today: a red gate or walk, a service down, a balance under its
+  FAIL floor, a deploy rolled back. Then it says only the break and the one act
+  that fixes it. The signal that fired is logged.
+- The model is `claude -p --model claude-sonnet-5-5` (no tools, safe mode), run
+  from `~/.cache/quorum/radio/session`, so `quorum spend --project
+  ~/.cache/quorum/radio/session` meters it; `--fake` uses a deterministic
+  stand-in. If the first call fails nothing is written.
+- The episode is written as a note `NN - <Project> (YYYY-MM-DD).md` in the
+  vault's radio folder (`RADIO_DIR` in `scripts/radio.py`), recording the window,
+  the vault rev it read, the cast with each specialty's status, the transcript
+  (speaker / voice / line / source), the Verifier's reads, the program log, the
+  call count and the spend line, and voiced to an MP3 beside it (`--no-voice`
+  skips it). Play it with `afplay`.
 - **`radio-voice/`** is the voice sidecar, a separate Node package
   (`kokoro-js` pinned to 1.2.1, `package-lock.json` tracked, `node_modules/`
   not): `node render.mjs --cast radio/cast.json <job.json> <out.mp3>`. It voices
@@ -193,8 +198,9 @@ scripts/spend_readout.py   spend (and its tests)
 scripts/vault_index.py     the vault index (and its tests)
 scripts/repo_index.py      the per-repo index (and its tests)
 scripts/lint.py            quorum lint (and its tests)
-scripts/radio.py           quorum radio: cast, inputs, the round, the note (and its tests)
-radio/cast.json            the cast: bound voice + pan per specialty; radio/voices.lock
+scripts/radio.py           quorum radio: inputs, slices, the round, the Verifier's reads, the note (and its tests)
+radio/cast.json            the cast: question, slice, never-says, bound voice + pan; radio/voices.lock
+radio/projects.json        project -> briefing, folders, concept note, repos
 radio-voice/               the Node voice sidecar (Kokoro + ffmpeg)
 scripts/install.sh, doctor.sh
 templates/skills/          the three linked skills
