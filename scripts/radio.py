@@ -294,7 +294,9 @@ SURFACE_PATH = re.compile(r"(^|/)(docs?|ui|web|app|frontend|components|pages|pub
 BREAKS = (
     ("a red gate or walk", re.compile(r"\b(gate|walk|ctest|suite|CI|e2e|health(?:\s+check)?)\b[^.\n]{0,40}?"
                                       r"\b(went red|is red|turned red|red(?![- ]team)|failed|failing)\b", re.I)),
-    ("a service down", re.compile(r"\b(is|went|was|are|been)\s+down\b(?!\s+to\b)|\boutage\b|\bcrash-?looping\b|\bcrashed\b", re.I)),
+    ("a service down", re.compile(r"\b(is|went|was|are|been)\s+down\b(?!\s+to\b)|\boutage\b|\bcrash-?looping\b|"
+                                  r"\b(box|service|daemon|sidecar|server|node|api|site|worker|container)\b[^.\n]{0,30}?\bcrash(ed|es)\b",
+                                  re.I)),
     ("a deploy rolled back", re.compile(r"\brolled\s+back\b|\brollback\b", re.I)),
 )
 MARKER = re.compile(r"\bBROKEN:")
@@ -310,7 +312,8 @@ def find_breaks(texts):
             hits = []
             if MARKER.search(line):
                 hits.append("marked BROKEN")
-            hits += [signal for signal, rx in BREAKS if rx.search(line)]
+            prose = re.sub(r"`[^`]*`", "", line)  # a word in code formatting is a state name, not prose
+            hits += [signal for signal, rx in BREAKS if rx.search(prose)]
             a, f = AMOUNT.search(line), FLOOR.search(line)
             if a and f and re.search(r"fail", line, re.I) and float(a.group(1)) < float(f.group(1)):
                 hits.append("balance below its FAIL floor")
@@ -467,7 +470,7 @@ def gather_project(pid, projects, vault, memory, since, until, repo_roots, as_of
             # R1: a decision note from another project that names this one counts as its decision.
             lines, _ = added(rel)
             mine = [l for l in lines if name_rx.search(l)]
-            if mine:
+            if mine and len(cross) < 8:
                 cross.append({"path": rel, "title": title, "lines": "\n".join(mine)[:2000]})
     changed.sort(key=lambda n: n["title"], reverse=True)
     changed = changed[:40 if is_range else 16]
@@ -539,7 +542,8 @@ def gather_project(pid, projects, vault, memory, since, until, repo_roots, as_of
                             rules.append(_md_links(part).strip()[:260])
     # Breaks: only lines ADDED in the window, in the briefing and the project's notes.
     texts = [(rel, added(rel, 20000)[1]) for rel in brief_paths if rel in touched]
-    texts += [(n["path"], added(n["path"], 20000)[1]) for n in changed]
+    texts += [(n["path"], added(n["path"], 20000)[1]) for n in changed
+              if not re.search(r"Run Prompt|Run Brief", n["title"], re.I)]  # a plan states intent, not a break
     breaks = find_breaks(texts)
     bits = []
     if commits:

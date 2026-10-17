@@ -455,7 +455,8 @@ class InputsCase(unittest.TestCase):
     def test_r5_breaks_are_case_insensitive_or_marked(self):
         for text, signal in (("the live walk went red at step 4.", "a red gate or walk"),
                              ("the screen sidecar is down since 09:10.", "a service down"),
-                             ("BROKEN: the c1 box rejects every upload", "marked BROKEN")):
+                             ("BROKEN: the c1 box rejects every upload", "marked BROKEN"),
+                             ("the screen daemon crashed twice overnight.", "a service down")):
             self.fx.note("01_Projects/Sidebar/59 - Walk (Build Log, 2026-10-17).md",
                          "---\nsummary: \"x\"\n---\n# W\n\n%s\n" % text, NOW - timedelta(minutes=20))
             self.assertIn(signal, [b["signal"] for b in self.fx.inputs()["breaks"]], text)
@@ -465,6 +466,19 @@ class InputsCase(unittest.TestCase):
         self.assertEqual(sum(t["count"] for t in th), 3)
         self.assertIn("merge", [t["theme"] for t in th] + ["merge"])
         self.assertTrue(all(t["theme"] == t["theme"].lower() for t in th))
+
+    def test_a_state_name_in_code_is_no_break(self):
+        self.fx.note("01_Projects/Sidebar/59 - Walk (Build Log, 2026-10-17).md",
+                     "---\nsummary: \"x\"\n---\n# W\n\n- On restart, a `making` attempt becomes `crashed`; `status: down` is a state.\n"
+                     "- A failed episode or a crashed one may be remade.\n",
+                     NOW - timedelta(minutes=20))
+        self.assertEqual(self.fx.inputs()["breaks"], [])
+
+    def test_a_run_prompt_never_reports_a_break(self):
+        self.fx.note("01_Projects/Sidebar/61 - Run Prompt — Overnight (2026-10-17).md",
+                     "---\nsummary: \"x\"\n---\n# R\n\nNothing here needs a coin: c3 is down and the mac is held.\n",
+                     NOW - timedelta(minutes=10))
+        self.assertEqual(self.fx.inputs()["breaks"], [])
 
     def test_a_routine_red_word_is_no_break(self):
         self.fx.note("01_Projects/Sidebar/59 - Walk (Build Log, 2026-10-17).md",
