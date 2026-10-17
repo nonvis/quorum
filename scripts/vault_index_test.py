@@ -391,6 +391,12 @@ class HookCase(unittest.TestCase):
     def test_a_word_that_only_contains_the_name_is_no_mention(self):
         self.assertEqual(self.context(self.hook("permafrosty mornings")), "")
 
+    def test_a_project_named_past_the_first_ten_words_is_a_passing_mention(self):
+        self.assertEqual(self.context(self.hook(
+            "let's remove the unused volumes, it seems safe, then deploy to the permafrost box")), "")
+        self.assertIn("07 - Litestream Restore.md", self.context(self.hook(
+            "let's remove the unused volumes, it seems safe, then see permafrost/07")))
+
     def test_topic_words_without_a_project_inject_nothing(self):
         self.assertEqual(self.context(self.hook(
             "how does the litestream restore drill handle the WAL segments?")), "")
@@ -513,14 +519,23 @@ class HookReportCase(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def report(self):
+    def report(self, *extra):
         env = dict(os.environ, HOME=str(self.home), QUORUM_VAULT=str(self.vault),
                    QUORUM_MEMORY=str(self.home / "mem"))
         p = subprocess.run([sys.executable, str(HERE / "quorum_cli.py"), "hook", "--report",
-                            "--json"], env=env, capture_output=True, text=True,
+                            "--json"] + list(extra), env=env, capture_output=True, text=True,
                            stdin=subprocess.DEVNULL)
         self.assertEqual(p.returncode, 0, p.stderr)
         return json.loads(p.stdout)
+
+    def test_since_counts_only_the_calls_and_lookups_from_then_on(self):
+        """A readout of a changed hook reads only what came after the change."""
+        r = self.report("--since", "2026-10-17T01:01:00Z")
+        self.assertEqual((r["calls"], r["injected"], r["hits"], r["hits_read"]), (2, 1, 1, 0))
+        self.assertEqual((r["sessions"], r["lookup_calls"]), (2, 2))
+        r = self.report("--since", "2026-10-17T01:30:00Z")
+        self.assertEqual((r["calls"], r["sessions"], r["lookup_calls"], r["since"]),
+                         (1, 1, 0, "2026-10-17T02:00:00Z"))
 
     def test_counts_calls_injections_and_hits_read(self):
         r = self.report()

@@ -50,6 +50,10 @@ PROJECTS = "06_Metadata/quorum-projects.json"
 PASTED = re.compile(r"<pasted_content[^>]*>.*?(?:</pasted_content>|\Z)", re.S)
 # A note named by its folder and number: "Notes/12", "Daily Logs/3", "DL/3" (a
 # folder of several words also answers to its initials).
+# A project named past a prompt's first words is a passing mention ("…then
+# deploy to the loqua box"): in the 10-17 replay, the first 10 words kept 28 of
+# 30 useful injections and cut 13 of the 29 wrong ones.
+PROJECT_WORDS = 10
 NOTE_REF = re.compile(r"(?:([A-Za-z][\w&]*) )?([A-Za-z][\w&]*)/(\d{1,3})\b")
 # Claude Code delivers these as a "prompt"; their ids and paths are not a topic.
 HARNESS_PREFIXES = ("<task-notification", "<system-reminder", "<local-command", "<command-")
@@ -422,18 +426,18 @@ class Index:
 
     def prompt_hits(self, prompt, limit=5, seen=()):
         """The notes the UserPromptSubmit hook injects for a prompt: each note it
-        names as Folder/NN, then, for each active project it names (a whole word:
-        id, name or folder), that project's memory index (MEMORY_<NAME>.md) and its
+        names as Folder/NN, then, for each active project it names in its first
+        PROJECT_WORDS words (a whole word: id, name or folder), that project's memory index (MEMORY_<NAME>.md) and its
         briefing notes. Only the operator's own words count (pasted text and
         harness messages do not); a note in `seen` (injected earlier in the
         session) is not repeated. Topic words alone never inject: in the 10-17
-        replay, 2 % of word-matched hits were then read, 42 % of these.
+        replay, 2 % of word-matched hits were then read, 53 % of these.
         -> (anchors, hits)."""
         import fnmatch
         if prompt.lstrip().startswith(HARNESS_PREFIXES):
             return [], []
         own = PASTED.sub(" ", prompt)
-        low = own.lower()
+        low = " ".join(own.split()[:PROJECT_WORDS]).lower()
         anchors = [m.group(0) for m in NOTE_REF.finditer(own)]
         paths = self._note_refs(own)
         vault_paths = None

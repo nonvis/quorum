@@ -91,7 +91,7 @@ USAGE = """usage: quorum <command> [options]
                   turn the hook on/off for every session in this vault (a flag in
                   .quorum/); off still logs the prompt's session, so --report can
                   compare. QUORUM_HOOK=off does the same for one shell's sessions.
-  hook --report [--json]
+  hook --report [--since <ISO8601>] [--json]
                   how often the hook injected, how many hits were then Read,
                   how many sessions ran quorum lookups themselves, and per mode
                   (on/off): sessions, prompts, main-session context per turn
@@ -444,11 +444,12 @@ HOOK_MAX_CHARS = 3600
 LOOKUP = re.compile(r"\bquorum\s+(?:q|links|mentions|repos|sym|repo\s+q)\b")
 
 
-def hook_report(as_json):
+def hook_report(as_json, since=None):
     """The readout for the hook and the lookup commands, from hook.log and the
     vault's session transcripts (main + subagents): how often the hook fired,
     how many injected notes the session then Read, and how many sessions ran a
-    `quorum` lookup themselves."""
+    `quorum` lookup themselves. `since` (ISO, UTC) drops the log lines and the
+    lookups before it — the readout of a hook changed at that time."""
     import json
     sys.path.insert(0, str(REPO / "scripts"))
     import vault_index
@@ -463,6 +464,8 @@ def hook_report(as_json):
                 pass
     except OSError:
         pass
+    if since:
+        log = [l for l in log if l.get("ts", "") >= since]
     # Claude Code names the dir from the path as the session saw it, which may
     # differ from the resolved one (macOS: /var -> /private/var).
     tdir = None
@@ -498,7 +501,8 @@ def hook_report(as_json):
                     inp = c.get("input") or {}
                     if c.get("name") == "Read" and inp.get("file_path"):
                         rs.append((r.get("timestamp", ""), os.path.realpath(inp["file_path"])))
-                    if c.get("name") == "Bash" and LOOKUP.search(inp.get("command", "")):
+                    if c.get("name") == "Bash" and LOOKUP.search(inp.get("command", "")) \
+                            and r.get("timestamp", "") >= (since or ""):
                         n += 1
         reads[sid], lookups[sid] = rs, n
 
@@ -607,7 +611,8 @@ def cmd_hook(args):
     import json
     import time
     if "--report" in args:
-        return hook_report("--json" in args)
+        opts, _ = _flags(args, {"--since"}, {"--report", "--json"})
+        return hook_report(bool(opts.get("--json")), opts.get("--since"))
     if "--replay" in args:
         return hook_replay_cmd(args)
     sys.path.insert(0, str(REPO / "scripts"))

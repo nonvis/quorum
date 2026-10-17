@@ -26,7 +26,7 @@ quorum repo index [--repo <name> | --all] [--rebuild]
 quorum lint [--fix-safe] [--json] [--show N]
 quorum hook                      # Claude Code UserPromptSubmit hook (stdin JSON)
 quorum hook on|off|status
-quorum hook --report [--json]
+quorum hook --report [--since <ISO8601>] [--json]
 quorum hook --replay [--sessions N] [--show N] [--json]
 quorum radio <project> [today | yesterday | week | YYYY-MM-DD | YYYY-MM-DD..YYYY-MM-DD]
              [--with operator] [--fake] [--no-voice] [--since <ISO8601>] [--until <ISO8601>]
@@ -90,8 +90,9 @@ quorum version
   for what the operator's own words name (pasted text and harness messages do not
   count): a note as `Folder/NN` (`Notes/12`; a folder of several words also
   answers to its initials, `Daily Logs/3` as `DL/3`), and an active project from the
-  vault's `06_Metadata/quorum-projects.json`, named as a whole word by its id,
-  name or a folder's last part (folder `Partners/Acme` answers to `acme`), which brings that
+  vault's `06_Metadata/quorum-projects.json`, named as a whole word in the
+  prompt's first 10 words (later is a passing mention) by its id, name or a
+  folder's last part (folder `Partners/Acme` answers to `acme`), which brings that
   project's memory index (`MEMORY_<NAME>.md`) and its briefing notes. A note
   already injected in the session (per `hook.log`) is not repeated. Topic words
   alone inject nothing: on 530 real prompts, 2 % of word-matched notes were then
@@ -107,6 +108,8 @@ quorum version
   injections, how many injected notes the session then Read, how many sessions
   ran a `quorum` lookup themselves, and per mode (on / off) the sessions, prompts
   and measured main-session context per turn — an A/B of the hook's cost.
+  `--since <ISO8601>` (UTC) drops the log lines and lookups before it: the
+  readout of a hook changed at that time.
 - **`hook --replay`** puts the newest vault sessions' prompts (default 40) through
   today's matcher and scores each hit against the notes that turn (and its
   subagents) then Read; a note first committed after the prompt counts for
