@@ -4,6 +4,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 fail=0
 ok()  { echo "  ok    $*"; }
 bad() { echo "  FAIL  $*"; fail=1; }
+warn() { echo "  warn  $*"; }
 
 v=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null) \
     && ok "python3 $v" || bad "python3 not found"
@@ -19,5 +20,19 @@ done
 for l in "$HOME/.claude/skills/quorum-roles" "$HOME/.claude/agents/supervisor.md"; do
     [ -L "$l" ] && bad "retired link still present: $l (run make install)"
 done
+# Radio: the cast file is checked like code; the voice sidecar is optional (warn only).
+python3 -c "import sys; sys.path.insert(0, '$REPO_ROOT/scripts'); import radio; radio.load_cast()" 2>/dev/null \
+    && ok "radio cast file + voice lock" || bad "radio/cast.json refused (python3 scripts/radio.py inputs says why)"
+command -v claude >/dev/null && ok "claude on PATH (radio tonight)" || warn "claude not on PATH: radio tonight needs --fake"
+command -v node >/dev/null && [ -d "$REPO_ROOT/radio-voice/node_modules/kokoro-js" ] \
+    && ok "radio-voice sidecar installed" || warn "radio-voice not installed (cd radio-voice && npm ci): radio tonight needs --no-voice"
+command -v ffmpeg >/dev/null && ok "ffmpeg" || warn "ffmpeg not found: radio tonight needs --no-voice"
+w="${QUORUM_KOKORO_CACHE:-$HOME/.cache/quorum/kokoro}/onnx-community/Kokoro-82M-v1.0-ONNX/onnx/model_quantized.onnx"
+if [ -f "$w" ]; then
+    [ "$(shasum -a 256 "$w" | cut -d' ' -f1)" = "$(cut -d' ' -f1 "$REPO_ROOT/radio-voice/weights.sha256")" ] \
+        && ok "Kokoro weights match the pin" || warn "Kokoro weights differ from radio-voice/weights.sha256: the sidecar refuses them"
+else
+    warn "Kokoro weights not cached at $w (the first render downloads them)"
+fi
 [ $fail = 0 ] && echo "0 failed" || echo "FAILED"
 exit $fail
