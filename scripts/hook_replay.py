@@ -3,7 +3,8 @@
 
 The answer key is what the sessions did: for each prompt the operator typed in a
 vault session, the vault and memory notes that session (and its subagents) then
-Read before the next prompt. Each prompt goes through Index.prompt_hits on
+Read before the next prompt — first reads only: a note the session had already
+Read (a re-read before an Edit, after a compaction) no injection could save. Each prompt goes through Index.prompt_hits on
 today's index, with the session's earlier hits as `seen` (as the hook reads them
 from hook.log), and a hit counts as right when that turn Read it. A note first
 committed after the prompt can be neither a hit nor an answer (it did not exist
@@ -140,8 +141,9 @@ def replay(idx, tdir, sessions=40):
         for i, (ts, text) in enumerate(prompts):
             end = prompts[i + 1][0] if i + 1 < len(prompts) else "~"
             stamp = ts[:19]
+            had = {p for t, p in reads if t and t < ts}  # untimed copies are no earlier read
             needed = {label(p) for t, p in reads if ts <= t < end and is_note(p)
-                      and not _born(p, top) > stamp}
+                      and p not in had and not _born(p, top) > stamp}
             _, hits = idx.prompt_hits(text, seen=seen)
             shown = [h["path"] for h in hits if not _born(real(h["path"]), top) > stamp]
             seen.update(shown)

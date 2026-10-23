@@ -118,6 +118,34 @@ class ReplayCase(unittest.TestCase):
         t2 = [t for t in self.run_replay()["turns"] if t["session"] == "s2"][0]
         self.assertEqual(t2["right"], ["vault:01_Projects/Permafrost/07 - Litestream Restore.md"])
 
+    def test_a_note_read_earlier_in_the_session_is_not_needed_again(self):
+        # A re-read (before an Edit, after a compaction) is a note the session
+        # already has: no injection could have saved it.
+        brief = self.vault / "01_Projects" / "Permafrost" / "28 - Briefing.md"
+        (self.tdir / "s3.jsonl").write_text("\n".join([
+            prompt("2099-01-02T00:00:00Z", "let's work on permafrost"),
+            read("2099-01-02T00:00:05Z", brief),
+            prompt("2099-01-02T00:01:00Z", "update the briefing"),
+            read("2099-01-02T00:01:05Z", brief),
+            read("2099-01-02T00:01:06Z", self.lit),
+        ]) + "\n")
+        t = [t for t in self.run_replay()["turns"] if t["session"] == "s3"]
+        self.assertEqual(t[0]["needed"], ["vault:01_Projects/Permafrost/28 - Briefing.md"])
+        self.assertEqual(t[1]["needed"], ["vault:01_Projects/Permafrost/07 - Litestream Restore.md"])
+
+    def test_a_read_record_without_a_timestamp_is_no_earlier_read(self):
+        # Transcripts carry untimed copies of tool calls; "" sorts before every prompt.
+        brief = self.vault / "01_Projects" / "Permafrost" / "28 - Briefing.md"
+        untimed = json.loads(read("x", brief))
+        del untimed["timestamp"]
+        (self.tdir / "s4.jsonl").write_text("\n".join([
+            prompt("2099-01-03T00:00:00Z", "let's work on permafrost"),
+            read("2099-01-03T00:00:05Z", brief),
+            json.dumps(untimed),
+        ]) + "\n")
+        t = [t for t in self.run_replay()["turns"] if t["session"] == "s4"][0]
+        self.assertIn("vault:01_Projects/Permafrost/28 - Briefing.md", t["right"])
+
     def test_cli_replay_json(self):
         env = dict(os.environ, HOME=str(self.home), QUORUM_VAULT=str(self.vault),
                    QUORUM_MEMORY=str(self.mem))
