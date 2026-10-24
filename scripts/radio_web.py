@@ -114,11 +114,12 @@ class App:
                  cast_path=radio.CAST_FILE, lock_path=radio.LOCK_FILE, commit_cast=True, roles_dir=None,
                  study_root=None, study_roots=None):
         self.vault = Path(vault)
-        self.store = radio_store.Store(store_root)
+        self.env = dict(os.environ, **(env or {}))
+        # the sweep runs on the same clock the episodes are made with
+        self.store = radio_store.Store(store_root, now=self.env.get("QUORUM_RADIO_NOW"))
         self.roots = roots or radio._roots()
         self.fake = fake
         self.voice = voice_ready() if voice is None else voice
-        self.env = dict(os.environ, **(env or {}))
         self.env.setdefault("QUORUM_RADIO_STORE", str(self.store.root))
         self.env.setdefault("QUORUM_VAULT", str(self.vault))
         self.study = study.Store(study_root)

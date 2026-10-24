@@ -16,7 +16,8 @@ Checks (each a list in the JSON `checks` object):
   memory_unindexed     memory files no MEMORY*.md links to
   memory_index_broken  MEMORY*.md rows linking to a missing file
   docs_vault_refs      repo markdown (any tracked, non-vendored .md) that points
-                       into the vault (the vault links to docs, never back)
+                       into the vault (the vault links to docs, never back); paths
+                       on the vault's 06_Metadata/quorum-lint-frozen.txt are skipped
   docs_dead_refs       repo markdown naming a repo file that is not at HEAD
   frontmatter_unquoted_colon  vault notes whose frontmatter has an unquoted value
                        holding ": " (strict YAML, and Obsidian, reject the whole block)
@@ -83,6 +84,25 @@ def _in_folder(path):
 def norm(name):
     s = name.lower().replace("—", "-").replace("–", "-")
     return re.sub(r"[\s\-]+", " ", s).strip()
+
+
+FROZEN = "06_Metadata/quorum-lint-frozen.txt"
+
+
+def frozen_docs(vault):
+    """{(repo, path)} from the vault's frozen list: one `<repo>/<path>` per line, `#`
+    comments. Records that must not change after they are written (a pre-registration
+    that cited the vault before the docs rule) — listed by exact path, never a folder,
+    so a new record is still caught while it is a draft."""
+    p = Path(vault) / FROZEN
+    if not p.is_file():
+        return set()
+    out = set()
+    for line in p.read_text(errors="replace").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if "/" in line:
+            out.add(tuple(line.split("/", 1)))
+    return out
 
 
 def allowed_repos(idx):
@@ -200,6 +220,7 @@ def run(idx, fix_safe=False):
     checks["memory_index_broken"] = broken
 
     vault_refs, doc_dead = [], []
+    frozen = frozen_docs(idx.vault)
     for name in sorted(repos):
         files_of(name)
         ri = rindex[name][0]
@@ -216,7 +237,8 @@ def run(idx, fix_safe=False):
         for r in ri.db.execute("SELECT path, body FROM docs ORDER BY path"):
             nofence = FENCE.sub("", r["body"])
             prose = WIKI.sub(in_repo, INLINE.sub("", nofence))
-            if VAULT_PROSE.search(prose) or VAULT_CITE.search(nofence):
+            if ((name, r["path"]) not in frozen
+                    and (VAULT_PROSE.search(prose) or VAULT_CITE.search(nofence))):
                 vault_refs.append({"repo": name, "doc": r["path"]})
             files = rindex[name][1]
             tops = {x.split("/", 1)[0] for x in files if "/" in x}

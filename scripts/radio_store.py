@@ -44,8 +44,10 @@ def _alive(pid):
 
 
 class Store:
-    def __init__(self, root=None):
+    def __init__(self, root=None, now=None):
+        """now: a fixed ISO time (QUORUM_RADIO_NOW) the sweep reads instead of the wall clock."""
         self.root = Path(root) if root else default_root()
+        self.now = _parse(now) if now else None
 
     def _dir(self, i):
         if not isinstance(i, str) or not ID_RE.match(i):
@@ -154,7 +156,7 @@ class Store:
     def list(self, now=None, sweep=True):
         """Every episode, newest first, with `expires` and `days_left` (None when kept);
         unkept episodes past their 7 days are deleted first."""
-        now = now or datetime.now(timezone.utc)
+        now = now or self.now or datetime.now(timezone.utc)
         out = []
         if not self.root.is_dir():
             return out

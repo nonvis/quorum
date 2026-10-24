@@ -174,6 +174,21 @@ class LintCase(unittest.TestCase):
         self.assertEqual([(x["repo"], x["doc"]) for x in self.lint()["docs_vault_refs"]],
                          [("alpha", "docs/ARCH.md")])
 
+    def test_a_frozen_record_listed_by_exact_path_is_not_a_vault_ref(self):
+        repo = self.home / "nonvis" / "alpha"
+        for d in ("run-1", "run-2"):
+            write(repo / "measurements" / d / "PRE-REGISTRATION.md", "# P\n\nper Ops/135.\n")
+        git(repo, "add", "measurements")
+        git(repo, "commit", "-q", "-m", "records")
+        write(self.vault / "06_Metadata" / "quorum-lint-frozen.txt",
+              "# frozen records\nalpha/measurements/run-1/PRE-REGISTRATION.md  # run 10-21\n"
+              "alpha/docs/ARCH.md\n")
+        refs = [x["doc"] for x in self.lint()["docs_vault_refs"]]
+        # listed paths are skipped; the folder is not, so a new record is caught
+        self.assertNotIn("measurements/run-1/PRE-REGISTRATION.md", refs)
+        self.assertNotIn("docs/ARCH.md", refs)
+        self.assertIn("measurements/run-2/PRE-REGISTRATION.md", refs)
+
     def test_repo_docs_naming_files_that_are_gone(self):
         self.assertEqual([(x["doc"], x["file"]) for x in self.lint()["docs_dead_refs"]],
                          [("docs/ARCH.md", "src/missing.py")])
