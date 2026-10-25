@@ -120,7 +120,7 @@ def link_refs(body):
     # Obsidian does not link inside code (a shell `[[ -f x ]]` is not a note).
     for m in WIKILINK.finditer(CODE.sub("", body)):
         t = m.group(1)
-        t = re.split(r"\\?\|", t, 1)[0]
+        t = re.split(r"\\?\|", t, maxsplit=1)[0]
         t = t.split("#", 1)[0].strip()
         if not t:
             continue
