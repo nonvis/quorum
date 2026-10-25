@@ -114,6 +114,10 @@ USAGE = """usage: quorum <command> [options]
                   learn one repo a day at a time: one Opus tutor session a day
                   (read-only, no git), End saves the memory the next day loads
                   (per-host store .quorum/study/; Radio Studio's Study tab)
+  curate [--days N] [--show N] [--json]
+                  memory files no session Read or Edited in the last N (30) days,
+                  with the bytes their MEMORY*.md rows cost every session ($0;
+                  untouched is not stale: the owner decides)
   version         print the checkout's commit
 
 The vault defaults to ~/nonvis/second-brain (QUORUM_VAULT overrides); its memory
@@ -689,7 +693,8 @@ def cmd_hook(args):
     return 0
 
 
-LINT_LABELS = [("dangling_links", "dangling links"), ("orphans", "orphans"),
+LINT_LABELS = [("dangling_links", "dangling links"), ("ambiguous_links", "ambiguous links"),
+               ("orphans", "orphans"),
                ("no_summary", "no summary"), ("dead_mentions", "dead mentions"),
                ("memory_unindexed", "memory unindexed"),
                ("memory_index_broken", "memory index rows → missing file"),
@@ -718,6 +723,35 @@ def cmd_lint(args):
         for it in items[:show]:
             print("    " + (it if isinstance(it, str) else
                             " · ".join(str(v) for v in it.values())))
+    return 0
+
+
+def cmd_curate(args):
+    import json
+    opts, _ = _flags(args, {"--days", "--show"}, {"--json"})
+    sys.path.insert(0, str(REPO / "scripts"))
+    import curate
+    import hook_replay
+    import vault_index
+    vault = vault_index.default_vault()
+    memory = vault_index.default_memory(vault)
+    tdir = os.environ.get("QUORUM_TRANSCRIPTS") or hook_replay.transcript_dir(vault)
+    r = curate.curate(memory, [tdir] if tdir else [], now=os.environ.get("QUORUM_NOW"),
+                      days=int(opts.get("--days", 30)))
+    if opts.get("--json"):
+        print(json.dumps(r, ensure_ascii=False, indent=1))
+        return 0
+    w, files = r["window"], r["files"]
+    idle = [f for f in files if not f["reads"] + f["edits"]]
+    print("window %s → %s (%d d, %d sessions; oldest transcript on this host %s)"
+          % (w["from"][:10], w["to"][:10], w["days"], w["sessions"],
+             (w["oldest_transcript"] or "none")[:10]))
+    print("untouched: %d of %d memory files · rows naming only untouched files: "
+          "%d B in MEMORY.md (every session), %d B in MEMORY_<X>.md (when read)"
+          % (len(idle), len(files), r["idle_rows"]["auto"], r["idle_rows"]["second_level"]))
+    for f in idle[:int(opts.get("--show", 25))]:
+        print("  %6d B row  %-58s %s" % (f["row_bytes"], f["file"],
+                                          ", ".join(f["indexes"]) or "(no index row)"))
     return 0
 
 
@@ -770,6 +804,8 @@ def main(argv):
         return cmd_hook(rest)
     if sub == "lint":
         return cmd_lint(rest)
+    if sub == "curate":
+        return cmd_curate(rest)
     if sub == "radio":
         return cmd_radio(rest)
     if sub == "web":

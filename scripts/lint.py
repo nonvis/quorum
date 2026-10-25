@@ -6,6 +6,8 @@ unquoted ': ' breaks.
 
 Checks (each a list in the JSON `checks` object):
   dangling_links       [[target]] matching no note or memory file
+  ambiguous_links      live notes' bare [[name]] shared by notes equally near the
+                       linker (write the folder: [[Folder/name|name]])
   orphans              live vault notes no other note links to (Archive/, Inbox,
                        Action Queue, 06_Metadata, "00 - …" folder roots and upper-case
                        vault-root files like README.md skipped)
@@ -149,12 +151,18 @@ def run(idx, fix_safe=False):
             dangling.append({"note": r["path"], "target": t})
     checks["dangling_links"] = dangling
 
-    linked = {r[0].lower() for r in db.execute(
-        "SELECT DISTINCT l.target FROM links l JOIN docs s ON s.id = l.src"
-        " JOIN docs t ON t.stem = l.target COLLATE NOCASE WHERE t.id != s.id")}
+    # A name several notes share links only the one the link resolves to.
+    linked, ambiguous = set(), set()
+    for src, target, path, amb in idx.resolved_links():
+        if path and path != src:
+            linked.add(path)
+        if (amb and src.startswith("vault:") and not vault_index.is_archived(src)
+                and "06_Metadata/Templates/" not in src):
+            ambiguous.add((src, target))
+    checks["ambiguous_links"] = [{"note": n, "target": t} for n, t in sorted(ambiguous)]
     checks["orphans"] = sorted(
         r["path"] for r in db.execute("SELECT path, stem FROM docs WHERE source='vault'")
-        if r["stem"].lower() not in linked and not r["stem"].startswith("00 - ")
+        if r["path"] not in linked and not r["stem"].startswith("00 - ")
         and not any(x in r["path"] for x in SKIP_ORPHAN) and _in_folder(r["path"]))
     checks["no_summary"] = sorted(
         r["path"] for r in db.execute("SELECT path FROM docs WHERE source='vault' AND summary=''")

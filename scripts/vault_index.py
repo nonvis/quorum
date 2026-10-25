@@ -11,8 +11,9 @@ can't be stale when it is read, and nothing has to be scheduled.
          summary (frontmatter `summary:` or a memory's `description:`), tags,
          type, updated, mtime, size
   fts    title · summary · tags · body, ranked by bm25 (weights 10 · 5 · 3 · 1)
-  links  (src doc, target name) — resolved at read time by file stem, so a new
-         note fills a link that was dangling without re-reading its sources
+  links  (src doc, target name, folder hint) — resolved at read time by file
+         stem (pick_link: a shared name goes to the note nearest the linker), so a
+         new note fills a link that was dangling without re-reading its sources
   mentions (src doc, kind, root, value) — what a note names outside the vault:
          path  ~/nonvis/<repo>/<file> or ~/projects/… (root = ~/<area>/<name>)
          file  a backticked repo-relative file (`scripts/run.py`), repo unknown
@@ -30,7 +31,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = "3"  # 3: no links inside code
+SCHEMA_VERSION = "4"  # 3: no links inside code · 4: a link keeps its folder hint
 ALLOWLIST = "06_Metadata/quorum-repos.txt"
 M_PATH = re.compile(r"(?:~|/Users/[^/\s`]+)/((?:nonvis|projects)/[A-Za-z0-9._-]+)"
                     r"((?:/[A-Za-z0-9._@+-]+)*)")
@@ -112,7 +113,9 @@ def parse(text):
     return fm, body
 
 
-def link_targets(body):
+def link_refs(body):
+    """-> [(hint, name)]: each [[link]]'s note name and the folder path written
+    before it ("" for a bare name), lowercased."""
     out = []
     # Obsidian does not link inside code (a shell `[[ -f x ]]` is not a note).
     for m in WIKILINK.finditer(CODE.sub("", body)):
@@ -121,11 +124,49 @@ def link_targets(body):
         t = t.split("#", 1)[0].strip()
         if not t:
             continue
-        t = t.rstrip("\\").split("/")[-1]
+        hint, _, t = t.rstrip("\\").rpartition("/")
         if t.endswith(".md"):
             t = t[:-3]
-        out.append(t)
+        if t:
+            out.append((hint.strip("/").lower(), t))
     return out
+
+
+def link_targets(body):
+    return [t for _, t in link_refs(body)]
+
+
+def pick_link(src, hint, cands):
+    """The doc a [[hint/name]] in doc `src` means, among `cands` (the doc paths
+    with that file name) -> (path | None, ambiguous). Obsidian's order: a folder
+    path written in the link, the linker's own source (vault | memory), then the
+    note nearest the linker (most leading folders shared, then fewest folders
+    below them: its own folder beats a subfolder); the shortest path
+    breaks a tie, which is flagged ambiguous: no reader can tell which was meant."""
+    if not cands:
+        return None, False
+    if hint:
+        named = [c for c in cands
+                 if ("/" + c.split(":", 1)[1].rpartition("/")[0].lower()).endswith("/" + hint)]
+        cands = named or cands
+    source = src.split(":", 1)[0]
+    cands = [c for c in cands if c.split(":", 1)[0] == source] or cands
+    if len(cands) == 1:
+        return cands[0], False
+    here = src.split(":", 1)[1].split("/")[:-1]
+
+    def shared(c):
+        n = 0
+        for a, b in zip(here, c.split(":", 1)[1].split("/")[:-1]):
+            if a != b:
+                break
+            n += 1
+        return n
+    def near(c):  # folders shared with the linker, then the fewest folders past them
+        return (-shared(c), len(c.split(":", 1)[1].split("/")))
+    best = min(near(c) for c in cands)
+    top = sorted((c for c in cands if near(c) == best), key=lambda c: (len(c), c))
+    return top[0], len(top) > 1
 
 
 def is_archived(path):
@@ -221,7 +262,7 @@ class Index:
             CREATE INDEX IF NOT EXISTS docs_stem ON docs(stem COLLATE NOCASE);
             CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(
                 title, summary, tags, body, tokenize='unicode61 remove_diacritics 2');
-            CREATE TABLE IF NOT EXISTS links(src INTEGER, target TEXT);
+            CREATE TABLE IF NOT EXISTS links(src INTEGER, target TEXT, hint TEXT);
             CREATE INDEX IF NOT EXISTS links_src ON links(src);
             CREATE INDEX IF NOT EXISTS links_target ON links(target COLLATE NOCASE);
             CREATE TABLE IF NOT EXISTS mentions(src INTEGER, kind TEXT, root TEXT, value TEXT);
@@ -302,8 +343,8 @@ class Index:
         doc_id = cur.lastrowid
         self.db.execute("INSERT INTO fts(rowid, title, summary, tags, body) VALUES(?,?,?,?,?)",
                         (doc_id, title + " " + stem, summary, fm.get("tags", ""), body))
-        self.db.executemany("INSERT INTO links(src, target) VALUES(?,?)",
-                            [(doc_id, t) for t in link_targets(body)])
+        self.db.executemany("INSERT INTO links(src, target, hint) VALUES(?,?,?)",
+                            [(doc_id, t, h) for h, t in link_refs(body)])
         self.db.executemany("INSERT INTO mentions(src, kind, root, value) VALUES(?,?,?,?)",
                             [(doc_id,) + m for m in extract_mentions(body)])
 
@@ -472,23 +513,37 @@ class Index:
             "SELECT * FROM docs WHERE stem = ? COLLATE NOCASE"
             " ORDER BY source = 'memory', length(path) LIMIT 1", (stem,)).fetchone()
 
+    def _named(self, name):
+        return [r[0] for r in self.db.execute(
+            "SELECT path FROM docs WHERE stem = ? COLLATE NOCASE", (name,))]
+
     def links(self, name):
         d = self._resolve(name)
         if d is None:
             return None
         out = []
-        for r in self.db.execute("SELECT DISTINCT target FROM links WHERE src=?", (d["id"],)):
-            t = self.db.execute(
-                "SELECT path FROM docs WHERE stem = ? COLLATE NOCASE"
-                " ORDER BY source != ?, length(path) LIMIT 1",
-                (r["target"], d["source"])).fetchone()
-            out.append({"target": r["target"], "path": t["path"] if t else None})
-        back = [dict(r) for r in self.db.execute(
-            "SELECT DISTINCT s.path, s.title FROM links l JOIN docs s ON s.id = l.src"
-            " WHERE l.target = ? COLLATE NOCASE AND s.id != ? ORDER BY s.path",
-            (d["stem"], d["id"]))]
-        return {"path": d["path"], "title": d["title"], "outgoing": out, "backlinks": back}
+        for r in self.db.execute("SELECT DISTINCT target, hint FROM links WHERE src=?",
+                                 (d["id"],)):
+            path, _ = pick_link(d["path"], r["hint"], self._named(r["target"]))
+            out.append({"target": r["target"], "path": path})
+        named, back = self._named(d["stem"]), {}
+        for r in self.db.execute(
+                "SELECT s.path, s.title, l.hint FROM links l JOIN docs s ON s.id = l.src"
+                " WHERE l.target = ? COLLATE NOCASE AND s.id != ?", (d["stem"], d["id"])):
+            if pick_link(r["path"], r["hint"], named)[0] == d["path"]:
+                back[r["path"]] = {"path": r["path"], "title": r["title"]}
+        return {"path": d["path"], "title": d["title"], "outgoing": out,
+                "backlinks": [back[p] for p in sorted(back)]}
 
+    def resolved_links(self):
+        """Every link -> (src path, target, resolved path | None, ambiguous)."""
+        named = {}
+        for r in self.db.execute("SELECT path, stem FROM docs"):
+            named.setdefault(r["stem"].lower(), []).append(r["path"])
+        for r in self.db.execute("SELECT d.path, l.target, l.hint FROM links l"
+                                 " JOIN docs d ON d.id = l.src"):
+            path, amb = pick_link(r["path"], r["hint"], named.get(r["target"].lower(), []))
+            yield r["path"], r["target"], path, amb
 
     # -- step 2: mentions + repos ---------------------------------------------
     def _allowlist(self):

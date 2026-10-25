@@ -153,6 +153,35 @@ class IndexCase(unittest.TestCase):
         self.assertEqual([b["path"] for b in back],
                          ["vault:01_Projects/Quorum/15 - Briefing.md"])
 
+    def test_a_shared_name_resolves_to_the_note_beside_the_linker(self):
+        note(self.vault / "01_Projects" / "Crucible" / "06 - Decision Log.md", "Crucible's log.")
+        self.idx.refresh()
+        out = self.idx.links("vault:01_Projects/Quorum/15 - Briefing.md")["outgoing"]
+        self.assertIn(("06 - Decision Log", "vault:01_Projects/Quorum/06 - Decision Log.md"),
+                      [(o["target"], o["path"]) for o in out])
+        back = self.idx.links("vault:01_Projects/Crucible/06 - Decision Log.md")["backlinks"]
+        self.assertEqual(back, [])
+
+    def test_a_shared_name_prefers_the_nearest_folder_then_a_path_in_the_link(self):
+        note(self.vault / "01_Projects" / "Crucible" / "02 - Decisions.md", "c")
+        note(self.vault / "01_Projects" / "Permafrost" / "02 - Decisions.md", "p")
+        note(self.vault / "01_Projects" / "Permafrost" / "MVP" / "40 - Run.md",
+             "See [[02 - Decisions]] and [[Crucible/02 - Decisions|theirs]].")
+        self.idx.refresh()
+        out = self.idx.links("40 - Run")["outgoing"]
+        self.assertEqual([o["path"] for o in out],
+                         ["vault:01_Projects/Permafrost/02 - Decisions.md",
+                          "vault:01_Projects/Crucible/02 - Decisions.md"])
+
+    def test_a_note_in_the_linkers_folder_beats_one_in_a_subfolder(self):
+        for d in ("Bots", "Bots/MM"):
+            note(self.vault / d / "00 - Overview.md", d)
+        note(self.vault / "Bots" / "02 - Patterns.md", "[[00 - Overview]]")
+        self.idx.refresh()
+        self.assertEqual([o["path"] for o in self.idx.links("02 - Patterns")["outgoing"]],
+                         ["vault:Bots/00 - Overview.md"])
+        self.assertFalse(any(a for _, _, _, a in self.idx.resolved_links()))
+
     def test_memory_links_resolve_to_memory_files(self):
         out = self.idx.links("feedback_close_ritual")["outgoing"]
         self.assertEqual([o["path"] for o in out], ["memory:project_quorum_status.md"])

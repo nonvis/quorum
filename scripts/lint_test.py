@@ -130,6 +130,20 @@ class LintCase(unittest.TestCase):
         self.cli("lint", "--fix-safe")
         self.assertEqual(set(self.lint()["orphans"]), {"vault:Locked.md"})
 
+    def test_a_shared_name_links_the_nearest_note_and_a_tie_is_ambiguous(self):
+        """[[Plan]] from P/x reaches P/Plan, so Q/Plan is an orphan; from the root
+        both are equally near, which no reader can settle."""
+        for d in ("P", "Q"):
+            note(self.vault / d / "Plan.md", "plan", title="Plan", summary='"p"')
+        note(self.vault / "P" / "x.md", "see [[Plan]] [[Note One]]", title="x", summary='"x"')
+        note(self.vault / "Root.md", "see [[Plan]] [[Note One]]", title="R", summary='"r"')
+        note(self.vault / "Root2.md", "see [[Root]] [[x]]", title="R2", summary='"r"')
+        c = self.lint()
+        self.assertIn("vault:Q/Plan.md", c["orphans"])
+        self.assertEqual(c["ambiguous_links"], [{"note": "vault:Root.md", "target": "Plan"}])
+        note(self.vault / "Root2.md", "see [[Root]] [[x]] [[Q/Plan]]", title="R2", summary='"r"')
+        self.assertNotIn("vault:Q/Plan.md", self.lint()["orphans"])
+
     def test_live_notes_without_summary(self):
         self.assertEqual(self.lint()["no_summary"], ["vault:Note One.md"])
 

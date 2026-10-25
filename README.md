@@ -24,6 +24,7 @@ quorum repo q <terms…> [--repo <name> | --all] [--limit N] [--json]
 quorum sym <name> [--repo <name> | --all] [--json]
 quorum repo index [--repo <name> | --all] [--rebuild]
 quorum lint [--fix-safe] [--json] [--show N]
+quorum curate [--days N] [--show N] [--json]
 quorum hook                      # Claude Code UserPromptSubmit hook (stdin JSON)
 quorum hook on|off|status
 quorum hook --report [--since <ISO8601>] [--json]
@@ -49,7 +50,12 @@ quorum version
   many terms a note covers, live notes before archived ones, then bm25 (title ·
   summary · tags · body weighted 10 · 5 · 3 · 1).
 - **`links`** lists a note's outgoing `[[wikilinks]]` (resolved by file name, or
-  dangling), its backlinks, and what it mentions outside the vault.
+  dangling), its backlinks, and what it mentions outside the vault. A name several
+  notes share resolves as Obsidian does: a folder written in the link
+  (`[[Crucible/02 - Decisions]]`), then the linker's own source (vault or memory),
+  then the note nearest the linker — most leading folders shared, then its own
+  folder before a subfolder; a backlink is a link that resolves to this note, not
+  any link spelling its name.
 - **`mentions`** lists the notes that name a repo (by name or `~/` path), a file
   (`scripts/lint.py`, `lint.py`, or a full `~/nonvis/…` path) or a commit (any
   unambiguous prefix; the repo holding it is named). Mentions are `~/nonvis/…` and
@@ -76,7 +82,8 @@ quorum version
   `vendor/`, `node_modules/`, `dist/`, `build/`) are listed, not parsed.
   `.quorum/.gitignore` (`*`) keeps the repo clean.
 - **`lint`** is a hygiene report (see `scripts/lint.py`): dangling wikilinks,
-  orphan notes, live notes without `summary:`, notes naming repo files that are
+  ambiguous ones (a bare name shared by notes equally near the linker — write the
+  folder), orphan notes (no link resolves to them), live notes without `summary:`, notes naming repo files that are
   gone, memory files missing from (or index rows pointing past) the MEMORY
   indexes, repo docs that point into the vault, repo docs naming files that are
   gone, and notes whose `locked_in: <repo>/<path>` doc is missing. `--fix-safe`
@@ -85,6 +92,13 @@ quorum version
   without the vault; the vault links to it (`locked_in:`), never the reverse.
 - **`q`** also searches the allowlisted repos' `docs/` and root guides, listed
   after the vault hits (`--vault-only` skips them).
+- **`curate`** lists the memory files no session (or subagent) Read, Edited or
+  Wrote in the last N days (30), with the bytes of the `MEMORY*.md` rows that name
+  them, and the total of rows naming only untouched files — in `MEMORY.md` (loaded
+  by every session) and in the second-level indexes (loaded when read). Untouched
+  is not stale: a memory can do its job through its one-line row. It moves
+  nothing; the owner decides. The window is bounded by the transcripts on the
+  host (Claude Code keeps about 30 days).
 - **`hook`** is a Claude Code `UserPromptSubmit` hook. It reads the hook JSON on
   stdin and prints up to five note paths + summaries as `additionalContext`, only
   for what the operator's own words name (pasted text and harness messages do not
@@ -328,6 +342,7 @@ scripts/spend_readout.py   spend (and its tests)
 scripts/vault_index.py     the vault index (and its tests)
 scripts/repo_index.py      the per-repo index (and its tests)
 scripts/lint.py            quorum lint (and its tests)
+scripts/curate.py          quorum curate (and its tests)
 scripts/radio.py           quorum radio: inputs, slices, the recap and brainstorm rounds, the Verifier's reads, the script (and its tests)
 scripts/radio_room.py      the brainstorm room + its broadcast (and its tests)
 scripts/radio_store.py     the per-host episode store (and its tests)
