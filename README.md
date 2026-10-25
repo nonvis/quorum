@@ -52,7 +52,7 @@ quorum version
 - **`links`** lists a note's outgoing `[[wikilinks]]` (resolved by file name, or
   dangling), its backlinks, and what it mentions outside the vault. A name several
   notes share resolves as Obsidian does: a folder written in the link
-  (`[[Crucible/02 - Decisions]]`), then the linker's own source (vault or memory),
+  (`[[Folder/02 - Decisions]]`), then the linker's own source (vault or memory),
   then the note nearest the linker — most leading folders shared, then its own
   folder before a subfolder; a backlink is a link that resolves to this note, not
   any link spelling its name.
