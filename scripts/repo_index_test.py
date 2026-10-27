@@ -200,6 +200,153 @@ class OptInCase(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("m.py:1", p.stdout)
 
+    def test_where_from_inside_an_opted_in_repo(self):
+        (self.repo / ".quorum").mkdir()
+        write(self.repo, "m.py", "def hello_world():\n    pass\n\nhello_world()\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-q", "-m", "m")
+        p = self.cli("where", "hello_world")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("m.py:1", p.stdout)
+        self.assertIn("m.py:4", p.stdout)
+        self.assertIn("1 def · 1 ref", p.stdout)
+
+
+class WhereCase(unittest.TestCase):
+    """`where`: every place an identifier occurs in the committed code, by role."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name) / "gamma"
+        self.repo.mkdir()
+        git(self.repo, "init", "-q", "-b", "main")
+        write(self.repo, "src/sweep.rs",
+              "use crate::cfg::Config;\n"
+              "/* sweep_once is the loop body\n   (see sweep_once below) */\n"
+              "pub fn sweep_once<'a>(cfg: &'a Config) -> u64 {\n"
+              "    let label = \"sweep_once\";\n"
+              "    let c: char = 'x';\n"
+              "    label.len() as u64\n}\n")
+        write(self.repo, "src/main.rs",
+              "use crate::sweep::sweep_once;\n"
+              "fn main() {\n"
+              "    // call sweep_once forever\n"
+              "    loop { sweep_once(&cfg); }\n"
+              "    let raw = r#\"sweep_once \"quoted\"\"#;\n"
+              "}\n")
+        write(self.repo, "lib/book.py",
+              "from lib.sweep import sweep_once\n\n"
+              "class Book:\n"
+              "    \"\"\"Book wraps sweep_once.\"\"\"\n"
+              "    def total(self):\n"
+              "        return sweep_once(self)  # sweep_once again\n"
+              "\n"
+              "def Total():\n"
+              "    return 1\n")
+        write(self.repo, "web/app.ts",
+              "import { sweepOnce } from './api';\n"
+              "export const run = () => sweepOnce(`${sweepOnce.name}`);\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-q", "-m", "first")
+        self.idx = ri.RepoIndex(self.repo)
+        self.idx.refresh()
+
+    def tearDown(self):
+        self.idx.close()
+        self.tmp.cleanup()
+
+    def where(self, name):
+        return [(h["role"], "%s:%d" % (h["path"], h["line"])) for h in self.idx.where(name)["hits"]]
+
+    def test_every_occurrence_by_role_definitions_first(self):
+        self.assertEqual(self.where("sweep_once"), [
+            ("def", "src/sweep.rs:4"),
+            ("import", "lib/book.py:1"),
+            ("import", "src/main.rs:1"),
+            ("ref", "lib/book.py:6"),
+            ("ref", "src/main.rs:4"),
+            ("text", "lib/book.py:4"),
+            ("text", "lib/book.py:6"),
+            ("text", "src/main.rs:3"),
+            ("text", "src/main.rs:5"),
+            ("text", "src/sweep.rs:2"),
+            ("text", "src/sweep.rs:3"),
+            ("text", "src/sweep.rs:5"),
+        ])
+
+    def test_a_hit_carries_its_line_text_and_column(self):
+        h = [h for h in self.idx.where("sweep_once")["hits"] if h["role"] == "ref"][1]
+        self.assertEqual((h["text"], h["col"]), ("loop { sweep_once(&cfg); }", 12))
+
+    def test_rust_lifetimes_and_char_literals_do_not_open_a_string(self):
+        self.assertIn(("ref", "src/sweep.rs:4"), self.where("cfg"))
+        self.assertIn(("ref", "src/sweep.rs:4"), self.where("Config"))
+        self.assertIn(("ref", "src/sweep.rs:7"), self.where("label"))
+
+    def test_a_backslash_newline_inside_a_string_does_not_end_it(self):
+        text = 'assert!(ok, "first \\\n   second");\nlet after_it = f("x");\n'
+        self.assertIn(("after_it", 3, 5, "ref"), ri.occurrences_of("t.rs", text, set()))
+
+    def roles(self, path, text, name):
+        return [(ln, role) for n, ln, _, role in ri.occurrences_of(path, text, set()) if n == name]
+
+    def test_nested_templates_and_braces_inside_an_interpolation(self):
+        text = ("const a = `x ${ok ? `y ${inner}` : fn({k: 1})} z`;\n"
+                "const after_it = `w`;\n")
+        self.assertEqual(self.roles("t.ts", text, "inner"), [(1, "ref")])
+        self.assertEqual(self.roles("t.ts", text, "after_it"), [(2, "ref")])
+
+    def test_a_regex_literal_holding_a_quote_does_not_open_a_string(self):
+        text = "const re = /[`'\"]/g;\nconst after_it = re.test(s);\n"
+        self.assertEqual(self.roles("t.ts", text, "after_it"), [(2, "ref")])
+
+    def test_cpp_raw_string_and_rust_raw_string(self):
+        cpp = 'auto q = R"SQL(\n  SELECT "x" FROM t_name;\n)SQL";\nint after_it = 1;\n'
+        self.assertEqual(self.roles("t.cc", cpp, "t_name"), [(2, "text")])
+        self.assertEqual(self.roles("t.cc", cpp, "after_it"), [(4, "ref")])
+        rs = 'let q = r#"say "t_name""#;\nlet after_it = 1;\n'
+        self.assertEqual(self.roles("t.rs", rs, "t_name"), [(1, "text")])
+        self.assertEqual(self.roles("t.rs", rs, "after_it"), [(2, "ref")])
+
+    def test_a_shell_heredoc_is_text(self):
+        sh = "cat <<'EOF' > out_file\nit's run_once here\nEOF\nrun_once \"$after_it\"\n"
+        self.assertEqual(self.roles("t.sh", sh, "run_once"), [(2, "text"), (4, "ref")])
+        self.assertEqual(self.roles("t.sh", sh, "out_file"), [(1, "ref")])
+        self.assertEqual(self.roles("t.sh", sh, "after_it"), [(4, "ref")])
+
+    def test_template_interpolation_is_code(self):
+        self.assertEqual(self.where("sweepOnce"),
+                         [("import", "web/app.ts:1"), ("ref", "web/app.ts:2")])
+
+    def test_exact_case_first_else_case_insensitive(self):
+        r = self.idx.where("total")
+        self.assertEqual((r["exact"], [h["line"] for h in r["hits"]]), (True, [5]))
+        r = self.idx.where("TOTAL")
+        self.assertEqual((r["exact"], sorted(h["line"] for h in r["hits"])), (False, [5, 8]))
+
+    def test_a_qualified_name_looks_up_its_last_part(self):
+        self.assertEqual(self.where("crate::sweep::sweep_once"), self.where("sweep_once"))
+        self.assertEqual(self.where("Book.total"), self.where("total"))
+
+    def test_prose_words_in_comments_and_strings_are_not_stored(self):
+        self.assertEqual((self.where("forever"), self.where("quoted"), self.where("wraps")),
+                         ([], [], []))
+
+    def test_keywords_and_one_letter_names_are_not_stored(self):
+        self.assertEqual((self.where("fn"), self.where("c")), ([], []))
+
+    def test_a_changed_file_is_reindexed(self):
+        write(self.repo, "src/main.rs", "fn main() {}\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-q", "-m", "drop the call")
+        self.idx.refresh()
+        self.assertNotIn("src/main.rs", {p.split(":")[0] for _, p in self.where("sweep_once")})
+
+    def test_an_uncommitted_edit_marks_its_hits_dirty(self):
+        write(self.repo, "src/main.rs", "fn main() {}\n")
+        dirty = {h["path"]: h["dirty"] for h in self.idx.where("sweep_once")["hits"]}
+        self.assertEqual((dirty["src/main.rs"], dirty["src/sweep.rs"]), (True, False))
+
 
 if __name__ == "__main__":
     unittest.main()

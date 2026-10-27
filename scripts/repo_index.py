@@ -10,6 +10,13 @@ It indexes the repo's COMMITTED tree at HEAD (uncommitted edits are not in it):
            guides (README, ARCHITECTURE, OPERATOR, CLAUDE, …) rank first
   symbols  definitions found by per-language patterns (Python, Rust, TS/JS,
            Move, C/C++, Go, shell): name, kind, path, line
+  occ      every identifier occurrence in the code: name, path, line, column and
+           role — def (a symbols row), import (a use/import line), ref (other
+           code) or text (inside a comment or string literal). A small lexer per
+           language tells code from comments and strings; interpolations
+           (`${…}`, f"{…}") are code. Keywords and one-letter names are skipped;
+           in comments/strings only identifier-shaped words (snake_case,
+           camelCase, a digit) are kept — prose is the docs FTS's job.
   commits  every commit on HEAD's history (FTS5: subject · body)
 
 Every read refreshes first: `git ls-tree` against the stored blob shas re-reads
@@ -17,6 +24,7 @@ only the blobs that changed, and `git log <indexed head>..HEAD` adds the new
 commits (a history that no longer contains the indexed head is re-read whole).
 The repo stays clean: `.quorum/.gitignore` holds `*` (written only if missing).
 """
+import bisect
 import os
 import re
 import sqlite3
@@ -25,7 +33,8 @@ from pathlib import Path
 
 from vault_index import fts_query, query_terms
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
+TABLES = ("files", "docs", "symbols", "occ", "commits", "commits_fts")
 MAX_BLOB = 1_000_000
 DOC_EXT = {".md", ".mdx"}
 VENDORED = {"third_party", "vendor", "vendored", "node_modules", "dist", "build", ".venv"}
@@ -101,6 +110,223 @@ def symbols_of(path, text):
     return out
 
 
+# -- occurrences ---------------------------------------------------------------
+KEYWORDS = set("""
+    fn let mut pub use mod impl struct enum trait const static self Self super crate return
+    if else for while loop match break continue in as where type async await move ref dyn
+    unsafe extern true false None True False def class import from pass and or not is lambda
+    with yield try except finally raise global nonlocal del assert elif function var new this
+    export default extends implements interface public private protected void null undefined
+    typeof instanceof package func go defer chan map range select switch case module fun has
+    key store copy drop entry friend acquires namespace template typename virtual override auto
+    include define then fi do done esac local echo
+""".split())
+
+_PY_STR = r"(?:'''[\s\S]*?'''|\"\"\"[\s\S]*?\"\"\"|'(?:\\.|[^'\\\n])*'|\"(?:\\.|[^\"\\\n])*\")"
+_LEXERS = {  # the languages without nesting; re.S: `\⏎` is an escape too
+    "py": re.compile(r"(?P<c>#[^\n]*)|(?P<t>(?<!\w)(?i:[rb]?f|f[rb])%s)"
+                     r"|(?P<s>(?<!\w)(?i:[rbu]|br|rb)?%s)" % (_PY_STR, _PY_STR), re.S),
+    "sh": re.compile(r"(?P<h><<-?[ \t]*(?P<q>['\"]?)(?P<tag>\w+)(?P=q)[^\n]*\n.*?\n[ \t]*(?P=tag)\b)"
+                     r"|(?P<c>(?<![\w$])#[^\n]*)|(?P<s>'[^']*')", re.S),
+}
+_PY_INTERP = re.compile(r"(?<!\{)\{([^{}]*)\}")
+_WORD = {"ts": re.compile(r"\d[\w.]*|([A-Za-z_$][\w$]*)"), "": re.compile(r"\d[\w.]*|([A-Za-z_]\w*)")}
+_C_NEXT = re.compile(r"[/\"'`{}]")
+_C_CHAR = re.compile(r"'(?:\\[^'\n]{1,10}|[^\\'\n])'")
+_CPP_RAW = re.compile(r'R"([^()\\\s]{0,16})\(')
+_REGEX_AFTER = set("(,=:[!&|?{};+-*%<>~^") | {""}
+_SHAPED = re.compile(r"\w_|[a-z0-9][A-Z]|\d")  # prose words in comments/strings are not kept
+_IMPORT = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:use\s|import\b|from\s+\S+\s+import\b"
+                     r"|#\s*include\b|extern\s+crate\s|export\s.*\sfrom\s+['\"])")
+ROLES = ("def", "import", "ref", "text")
+
+
+def import_lines(lines):
+    """1-based numbers of import lines, a bracketed import's later lines included."""
+    out, depth = set(), 0
+    for n, line in enumerate(lines, 1):
+        if depth > 0 or _IMPORT.match(line):
+            out.add(n)
+            depth = max(0, depth + line.count("{") + line.count("(")
+                        - line.count("}") - line.count(")"))
+    return out
+
+
+def _quoted_end(text, i, q, multiline):
+    """Index just past the string opened by text[i] == q; an unescaped newline ends a
+    single-line string (error recovery: one bad quote must not swallow the file)."""
+    n = len(text)
+    j = i + 1
+    while j < n:
+        c = text[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == q:
+            return j + 1
+        if c == "\n" and not multiline:
+            return j
+        j += 1
+    return n
+
+
+def c_family_spans(text, lang):
+    """Comment and string spans [(start, end)] of a C-family file (rs, ts, go, cpp, move).
+    A scanner, not a regex, because a TS template nests: `a ${b ? `c` : f({d})} e` —
+    only the literal parts of a template are spans, its `${…}` is code."""
+    ts, spans, n, i = lang == "ts", [], len(text), 0
+    stack = []  # ts: "T" = inside a template's literal part, an int = brace depth in its ${…}
+    while i < n:
+        if stack and stack[-1] == "T":
+            j = i
+            while j < n and text[j] != "`" and not text.startswith("${", j):
+                j += 2 if text[j] == "\\" else 1
+            spans.append((i, min(j, n)))
+            if j >= n:
+                break
+            if text[j] == "`":
+                stack.pop()
+                i = j + 1
+            else:
+                stack.append(0)
+                i = j + 2
+            continue
+        m = _C_NEXT.search(text, i)
+        if not m:
+            break
+        i, c = m.start(), m.group()
+        if c == "/" and text.startswith("//", i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+        elif c == "/" and text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+        elif c == "/":
+            k = i - 1
+            while k >= 0 and text[k] in " \t":
+                k -= 1
+            prev = text[k] if k >= 0 and text[k] != "\n" else ""
+            j = _regex_end(text, i) if ts and prev in _REGEX_AFTER else None
+            if j is None:
+                i += 1
+                continue
+        elif c == '"':
+            h = 0
+            while i - h - 1 >= 0 and text[i - h - 1] == "#":
+                h += 1
+            raw = _CPP_RAW.match(text, i - 1) if lang == "cpp" and i else None
+            if lang == "rs" and i - h - 1 >= 0 and text[i - h - 1] == "r" \
+                    and not (i - h - 2 >= 0 and (text[i - h - 2].isalnum() and
+                                                 text[i - h - 2] != "b" or text[i - h - 2] == "_")):
+                end = text.find('"' + "#" * h, i + 1)
+                j = n if end < 0 else end + 1 + h
+            elif raw:
+                end = text.find(")" + raw.group(1) + '"', raw.end())
+                j = n if end < 0 else end + len(raw.group(1)) + 2
+            else:
+                j = _quoted_end(text, i, '"', lang in ("rs", "move"))
+        elif c == "'":
+            if ts:
+                j = _quoted_end(text, i, "'", False)
+            else:
+                cm = _C_CHAR.match(text, i) if lang in ("rs", "go", "cpp") else None
+                if not cm:  # a Rust lifetime, a Move address, a C++14 digit separator
+                    i += 1
+                    continue
+                j = cm.end()
+        elif c == "`":
+            if ts:
+                stack.append("T")
+                i += 1
+                continue
+            if lang != "go":
+                i += 1
+                continue
+            j = text.find("`", i + 1)
+            j = n if j < 0 else j + 1
+        else:  # { }
+            if stack:
+                if c == "{":
+                    stack[-1] += 1
+                elif stack[-1] == 0:
+                    stack.pop()
+                else:
+                    stack[-1] -= 1
+            i += 1
+            continue
+        spans.append((i, j))
+        i = j
+    return spans
+
+
+def _regex_end(text, i):
+    """Index past a JS regex literal opened at text[i] == "/", or None (a division)."""
+    j, cls = i + 1, False
+    while j < len(text) and text[j] != "\n":
+        c = text[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "[":
+            cls = True
+        elif c == "]":
+            cls = False
+        elif c == "/" and not cls:
+            return j + 1
+        j += 1
+    return None
+
+
+def _lexer_spans(text, lang):
+    spans = []
+    for m in _LEXERS[lang].finditer(text):
+        if m.lastgroup == "t":  # an f-string: its {…} are code
+            a = m.start()
+            for i in _PY_INTERP.finditer(m.group()):
+                spans.append((a, m.start() + i.start(1)))
+                a = m.start() + i.end(1)
+            spans.append((a, m.end()))
+        elif m.lastgroup == "h":  # a heredoc: its opening line stays code
+            spans.append((m.start() + m.group().index("\n"), m.end()))
+        else:
+            spans.append(m.span())
+    return spans
+
+
+def occurrences_of(path, text, defs):
+    """-> [(name, line, col, role)] for one file; `defs` = {(name, line)} from symbols_of.
+    One row per (name, line, role); col is 1-based."""
+    lang = LANG.get(os.path.splitext(path)[1].lower())
+    if not lang:
+        return []
+    starts = [0] + [m.end() for m in re.finditer("\n", text)]
+    imports = import_lines(text.split("\n"))
+    spans = _lexer_spans(text, lang) if lang in _LEXERS else c_family_spans(text, lang)
+    span_starts = [a for a, _ in spans]
+    seen, out = set(), []
+    for m in _WORD["ts" if lang == "ts" else ""].finditer(text):
+        name, pos = m.group(1), m.start()
+        if not name or len(name) < 2 or name in KEYWORDS:
+            continue
+        k = bisect.bisect_right(span_starts, pos) - 1
+        code = k < 0 or pos >= spans[k][1]
+        if not (code or _SHAPED.search(name)):
+            continue
+        line = bisect.bisect_right(starts, pos)
+        role = ("def" if (name, line) in defs else "import" if line in imports else "ref") \
+            if code else "text"
+        if (name, line, role) not in seen:
+            seen.add((name, line, role))
+            out.append((name, line, pos - starts[line - 1] + 1, role))
+    return out
+
+
+def last_part(name):
+    """`crate::sweep::run`, `Book.total`, `pkg/mod.Fn` → the bare identifier."""
+    parts = [p for p in re.split(r"::|[./#]", name) if p]
+    return parts[-1] if parts else name
+
+
 def git(repo, *args, input=None):
     r = subprocess.run(["git", "-C", str(repo)] + list(args), capture_output=True,
                        input=input)
@@ -132,7 +358,7 @@ class RepoIndex:
         c.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
         row = c.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
         if row is None or row[0] != SCHEMA_VERSION:
-            for t in ("files", "docs", "symbols", "commits", "commits_fts"):
+            for t in TABLES:
                 c.execute("DROP TABLE IF EXISTS %s" % t)
             c.execute("DELETE FROM meta")
         c.executescript("""
@@ -143,6 +369,10 @@ class RepoIndex:
             CREATE TABLE IF NOT EXISTS symbols(file INTEGER, name TEXT, kind TEXT, line INTEGER);
             CREATE INDEX IF NOT EXISTS symbols_name ON symbols(name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS symbols_file ON symbols(file);
+            CREATE TABLE IF NOT EXISTS occ(file INTEGER, name TEXT, line INTEGER, col INTEGER,
+                role TEXT);
+            CREATE INDEX IF NOT EXISTS occ_name ON occ(name COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS occ_file ON occ(file);
             CREATE TABLE IF NOT EXISTS commits(sha TEXT PRIMARY KEY, date TEXT, author TEXT,
                 subject TEXT);
             CREATE VIRTUAL TABLE IF NOT EXISTS commits_fts USING fts5(sha UNINDEXED, subject,
@@ -159,7 +389,7 @@ class RepoIndex:
     def refresh(self, rebuild=False):
         c = self.db
         if rebuild:
-            for t in ("files", "docs", "symbols", "commits", "commits_fts"):
+            for t in TABLES:
                 c.execute("DELETE FROM %s" % t)
             c.execute("DELETE FROM meta WHERE key='head'")
         head = git(self.repo, "rev-parse", "--verify", "-q", "HEAD")
@@ -170,6 +400,8 @@ class RepoIndex:
         ncommits = self._refresh_commits(head) if head else 0
         c.execute("INSERT OR REPLACE INTO meta VALUES('head', ?)", (head,))
         c.commit()
+        if rebuild:
+            c.execute("VACUUM")
         return {"files": nfiles, "commits": ncommits, "head": head}
 
     def _refresh_files(self):
@@ -208,9 +440,14 @@ class RepoIndex:
                 self.db.execute("INSERT INTO docs(rowid, path, title, body) VALUES(?,?,?,?)",
                                 (fid, path, title, text))
             elif kind == "code":
+                syms = symbols_of(path, text)
                 self.db.executemany(
                     "INSERT INTO symbols(file, name, kind, line) VALUES(?,?,?,?)",
-                    [(fid,) + s for s in symbols_of(path, text)])
+                    [(fid,) + s for s in syms])
+                self.db.executemany(
+                    "INSERT INTO occ(file, name, line, col, role) VALUES(?,?,?,?,?)",
+                    [(fid,) + o for o in
+                     occurrences_of(path, text, {(n, ln) for n, _, ln in syms})])
         return len(todo)
 
     def _cat(self, blobs):
@@ -234,6 +471,7 @@ class RepoIndex:
         self.db.execute("DELETE FROM files WHERE id=?", (fid,))
         self.db.execute("DELETE FROM docs WHERE rowid=?", (fid,))
         self.db.execute("DELETE FROM symbols WHERE file=?", (fid,))
+        self.db.execute("DELETE FROM occ WHERE file=?", (fid,))
 
     def _refresh_commits(self, head):
         old = self._meta("head")
@@ -275,6 +513,39 @@ class RepoIndex:
             (name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%",
              name, limit))
         return [dict(r) for r in rows]
+
+    def where(self, name):
+        """Every occurrence of the identifier `name` (a qualified name looks up its last
+        part): {"name", "exact", "hits": [{path, line, col, role, text, dirty}]}, defs
+        first, then imports, refs, text. Exact case wins; with none, case-insensitive
+        (exact False). Lines are HEAD's; `dirty` = the file has uncommitted edits."""
+        bare = last_part(name)
+        rows = [dict(r) for r in self.db.execute(
+            "SELECT o.name, o.line, o.col, o.role, f.path, f.blob FROM occ o"
+            " JOIN files f ON f.id = o.file WHERE o.name = ? COLLATE NOCASE", (bare,))]
+        exact = [r for r in rows if r["name"] == bare]
+        rows = exact or rows
+        texts = self._cat(r["blob"] for r in rows)
+        dirty = self._dirty() if rows else set()
+        for r in rows:
+            lines = texts.get(r.pop("blob"), "").split("\n")
+            r["text"] = lines[r["line"] - 1].strip()[:200] if r["line"] <= len(lines) else ""
+            r["dirty"] = r["path"] in dirty
+        rows.sort(key=lambda r: (ROLES.index(r["role"]), r["path"], r["line"]))
+        return {"name": bare, "exact": bool(exact) or not rows, "hits": rows}
+
+    def _dirty(self):
+        out = git(self.repo, "status", "--porcelain=v1", "-z", "--untracked-files=no") or b""
+        paths, recs = set(), out.decode("utf-8", "replace").split("\0")
+        i = 0
+        while i < len(recs):
+            rec = recs[i]
+            if len(rec) > 3:
+                paths.add(rec[3:])
+                if rec[0] in "RC":
+                    i += 1
+            i += 1
+        return paths
 
     def search(self, text, limit=10):
         terms = query_terms(text)

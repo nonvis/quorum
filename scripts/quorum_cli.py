@@ -24,6 +24,10 @@ tooling that spends no model tokens:
       messages, symbol names. Default: the repo you are in; outside one, --all.
   quorum sym <name> [--repo <name> | --all] [--json]
       Where a symbol is defined (case-insensitive prefix).
+  quorum where <name> [--repo <name> | --all] [--json]
+      Every place an identifier occurs in the committed code: def, import, ref,
+      then mentions in comments/strings. Exact case first; a qualified name
+      (a::b, A.b) looks up its last part.
   quorum repo index [--repo <name> | --all] [--rebuild]
       Build or refresh repo indexes now. A repo is indexed only if it is on the
       vault's allowlist or has opted in by having a .quorum/ dir.
@@ -79,6 +83,8 @@ USAGE = """usage: quorum <command> [options]
                   search one repo's docs, commit messages and symbols
   sym <name> [--repo <name> | --all] [--json]
                   where a symbol is defined
+  where <name> [--repo <name> | --all] [--json]
+                  every place an identifier occurs: def, import, ref, text
   repo index [--repo <name> | --all] [--rebuild]
                   build/refresh repo indexes (allowlisted or opted-in repos only)
   lint [--fix-safe] [--json] [--show N]
@@ -442,10 +448,53 @@ def cmd_sym(args):
     return 0
 
 
+def cmd_where(args):
+    import json
+    opts, rest = _flags(args, {"--repo"}, {"--all", "--json"})
+    if len(rest) != 1:
+        print("usage: quorum where <name> [--repo <name> | --all] [--json]", file=sys.stderr)
+        return 2
+    targets, err = _repo_targets(opts)
+    if err:
+        print("ERROR: " + err, file=sys.stderr)
+        return 1
+    hits, exact = [], True
+    for name, path in targets:
+        ri = _open_repo(path)
+        r = ri.where(rest[0])
+        ri.close()
+        exact = exact and r["exact"]
+        for h in r["hits"]:
+            h["repo"] = name
+            hits.append(h)
+    if opts.get("--json"):
+        print(json.dumps(hits, ensure_ascii=False, indent=1))
+        return 0
+    if not hits:
+        print("(no occurrence of %r)" % rest[0], file=sys.stderr)
+        return 0
+    if not exact:
+        print("(no exact-case match; case-insensitive)", file=sys.stderr)
+    for h in hits:
+        print("%s  %-6s %s:%d%s  %s" % (h["repo"], h["role"], h["path"], h["line"],
+                                       "*" if h["dirty"] else "", h["text"]))
+    counts = [(sum(1 for h in hits if h["role"] == r), r) for r in ("def", "import", "ref")]
+    parts = ["%d %s%s" % (n, r, "" if n == 1 else "s") for n, r in counts if n]
+    text = sum(1 for h in hits if h["role"] == "text")
+    if text:
+        parts.append("%d in comments/strings" % text)
+    files = len({(h["repo"], h["path"]) for h in hits})
+    parts.append("%d file%s" % (files, "" if files == 1 else "s"))
+    print(" · ".join(parts))
+    if any(h["dirty"] for h in hits):
+        print("* the file has uncommitted edits; line numbers are HEAD's")
+    return 0
+
+
 HOOK_MAX_CHARS = 3600
 
 
-LOOKUP = re.compile(r"\bquorum\s+(?:q|links|mentions|repos|sym|repo\s+q)\b")
+LOOKUP = re.compile(r"\bquorum\s+(?:q|links|mentions|repos|sym|where|repo\s+q)\b")
 
 
 def hook_report(as_json, since=None):
@@ -800,6 +849,8 @@ def main(argv):
         return cmd_repo(rest)
     if sub == "sym":
         return cmd_sym(rest)
+    if sub == "where":
+        return cmd_where(rest)
     if sub == "hook":
         return cmd_hook(rest)
     if sub == "lint":

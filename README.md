@@ -22,6 +22,7 @@ quorum repos [--json]
 quorum index [--stats] [--rebuild]
 quorum repo q <terms…> [--repo <name> | --all] [--limit N] [--json]
 quorum sym <name> [--repo <name> | --all] [--json]
+quorum where <name> [--repo <name> | --all] [--json]
 quorum repo index [--repo <name> | --all] [--rebuild]
 quorum lint [--fix-safe] [--json] [--show N]
 quorum curate [--days N] [--show N] [--json]
@@ -71,7 +72,17 @@ quorum version
 - **`repo q`** searches a repo's own index at `<repo>/.quorum/index.db`: its
   markdown, its commit messages (subject and body) and its symbol names. **`sym`**
   says where a symbol is defined (case-insensitive prefix; Python, Rust, TS/JS,
-  Move, C/C++, Go, shell). **`repo index`** builds or refreshes repo indexes.
+  Move, C/C++, Go, shell). **`where`** lists every place an identifier occurs in
+  the code, one `path:line` per hit with the line's text: `def`, `import`, `ref`,
+  then `text` (inside a comment or a string literal). It matches exact case, or
+  case-insensitively when nothing does; a qualified name (`a::b`, `A.b`) looks up
+  its last part. A scanner per language tells code from comments and strings
+  (nested TS templates, regex literals, Rust/C++ raw strings, Rust lifetimes,
+  shell heredocs); template and f-string interpolations are code. Keywords and
+  one-letter names are not stored, and in comments/strings only identifier-shaped
+  words (snake_case, camelCase, with a digit) are — prose is `repo q`'s job. A
+  `*` after `path:line` marks a file with uncommitted edits (lines are HEAD's).
+  **`repo index`** builds or refreshes repo indexes (`--rebuild` also compacts the db).
   The default target is the repo you are in; outside one, every allowlisted repo
   (`--all`); `--repo <name>` picks one. A repo is indexed only if it is on the
   vault's allowlist or has opted in with its own `.quorum/` directory — so inside
