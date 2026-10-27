@@ -28,6 +28,13 @@ tooling that spends no model tokens:
       Every place an identifier occurs in the committed code: def, import, ref,
       then mentions in comments/strings. Exact case first; a qualified name
       (a::b, A.b) looks up its last part.
+  quorum affected [<file>…] [--stdin] [--base <ref>] [--repo <name>] [--quiet | --json]
+      The test files a change reaches through imports (Python, TS/JS, C/C++,
+      shell) and, for Rust and Move, the packages it reaches through path/local
+      deps. Default change set: uncommitted edits + untracked files (+ the
+      branch since its merge-base with --base). Files given are relative to the
+      current dir; --stdin lines are repo-relative (as `git diff --name-only`
+      prints them). --quiet prints test paths only.
   quorum repo index [--repo <name> | --all] [--rebuild]
       Build or refresh repo indexes now. A repo is indexed only if it is on the
       vault's allowlist or has opted in by having a .quorum/ dir.
@@ -85,6 +92,8 @@ USAGE = """usage: quorum <command> [options]
                   where a symbol is defined
   where <name> [--repo <name> | --all] [--json]
                   every place an identifier occurs: def, import, ref, text
+  affected [<file>…] [--stdin] [--base <ref>] [--repo <name>] [--quiet | --json]
+                  the tests a change reaches (default: uncommitted edits)
   repo index [--repo <name> | --all] [--rebuild]
                   build/refresh repo indexes (allowlisted or opted-in repos only)
   lint [--fix-safe] [--json] [--show N]
@@ -491,10 +500,62 @@ def cmd_where(args):
     return 0
 
 
+def cmd_affected(args):
+    import json
+    opts, rest = _flags(args, {"--repo", "--base"}, {"--stdin", "--quiet", "--json", "--all"})
+    if opts.get("--all"):
+        print("usage: quorum affected works on one repo", file=sys.stderr)
+        return 2
+    targets, err = _repo_targets(opts)
+    if err:
+        print("ERROR: " + err, file=sys.stderr)
+        return 1
+    if len(targets) != 1:
+        print("ERROR: run inside a repo or name one with --repo", file=sys.stderr)
+        return 1
+    name, path = targets[0]
+    ri = _open_repo(path)
+    changed = [os.path.abspath(f) for f in rest]
+    if opts.get("--stdin"):
+        changed += [line.strip() for line in sys.stdin if line.strip()]
+    if not rest and not opts.get("--stdin"):
+        changed = ri.changed_files(opts.get("--base"))
+    r = ri.affected(changed)
+    ri.close()
+    if opts.get("--json"):
+        print(json.dumps(r, ensure_ascii=False, indent=1))
+        return 0
+    if opts.get("--quiet"):
+        for t in r["tests"]:
+            print(t["path"])
+        return 0
+    if not changed:
+        print("(no changes)", file=sys.stderr)
+        return 0
+    for p in r["packages"]:
+        print("%s  package %s (%s %s)  ← %s%s" % (
+            name, p["path"] or ".", p["kind"], p["name"], p["origin"],
+            " (%d hop%s)" % (p["hops"], "" if p["hops"] == 1 else "s") if p["hops"] else ""))
+    for t in r["tests"]:
+        print("%s  test    %s  ← %s%s" % (
+            name, t["path"], t["origin"],
+            " (%d hop%s)" % (t["hops"], "" if t["hops"] == 1 else "s") if t["hops"] else ""))
+    n, k = len(r["tests"]), len(r["packages"])
+    parts = ["%d test%s" % (n, "" if n == 1 else "s")]
+    if k:
+        parts.append("%d package%s" % (k, "" if k == 1 else "s"))
+    parts.append("from %d changed" % len(set(changed)))
+    print(" · ".join(parts))
+    if r["unreached"]:
+        print("reach no test: " + ", ".join(r["unreached"][:12])
+              + (" …" if len(r["unreached"]) > 12 else ""))
+    return 0
+
+
 HOOK_MAX_CHARS = 3600
 
 
-LOOKUP = re.compile(r"\bquorum\s+(?:q|links|mentions|repos|sym|where|repo\s+q)\b")
+LOOKUP = re.compile(r"\bquorum\s+(?:q|links|mentions|repos|sym|where|affected|repo\s+q)\b")
 
 
 def hook_report(as_json, since=None):
@@ -851,6 +912,8 @@ def main(argv):
         return cmd_sym(rest)
     if sub == "where":
         return cmd_where(rest)
+    if sub == "affected":
+        return cmd_affected(rest)
     if sub == "hook":
         return cmd_hook(rest)
     if sub == "lint":

@@ -348,5 +348,141 @@ class WhereCase(unittest.TestCase):
         self.assertEqual((dirty["src/main.rs"], dirty["src/sweep.rs"]), (True, False))
 
 
+class AffectedCase(unittest.TestCase):
+    """`affected`: the tests a change reaches through imports (files) or packages."""
+
+    FILES = {
+        # python: absolute from the importer's ancestors, relative, package __init__
+        "lib/__init__.py": "",
+        "lib/core.py": "def base():\n    return 1\n",
+        "lib/util.py": "from lib import core\n\ndef helper():\n    return core.base()\n",
+        "lib/rel.py": "from .core import base\n",
+        "tests/test_util.py": "from lib.util import helper\n",
+        "tests/test_rel.py": "import lib.rel as r\n",
+        "tests/test_other.py": "import json\n",
+        # ts: relative (.js → .ts), workspace package by name + exports subpath
+        "packages/core/package.json": '{"name": "@x/core", "exports": {".": "./src/index.ts",'
+                                      ' "./extra": {"import": "./src/extra.ts"}}}\n',
+        "packages/core/src/index.ts": "export * from './money.js';\n",
+        "packages/core/src/money.ts": "export const money = 1;\n",
+        "packages/core/src/extra.ts": "export const extra = 2;\n",
+        "apps/web/src/view.tsx": "import { money } from '@x/core';\nexport const View = money;\n",
+        "apps/web/src/view.test.tsx": "import { View } from './view';\n",
+        "apps/web/e2e/extra.spec.ts": "const { extra } = require('@x/core/extra');\n",
+        # c++: include by the importer's dir, else by a unique path suffix
+        "src/book.h": "struct Book {};\n",
+        "src/book.cc": '#include "book.h"\n#include <vector>\n',
+        "tests/book_test.cc": '#include "book.h"\n',
+        # shell: source / .
+        "scripts/lib.sh": "say() { echo hi; }\n",
+        "scripts/gate.sh": 'source "$(dirname "$0")/lib.sh"\n',
+        "tests/gate_test.sh": ". ../scripts/gate.sh\n",
+        # rust: crate-level, path deps
+        "crates/a/Cargo.toml": '[package]\nname = "a"\n',
+        "crates/a/src/lib.rs": "mod inner;\n",
+        "crates/a/src/inner.rs": "pub fn f() {}\n",
+        "crates/a/tests/it.rs": "#[test]\nfn t() { a::f(); }\n",
+        "crates/b/Cargo.toml": '[package]\nname = "b"\n[dependencies]\na = { path = "../a" }\n',
+        "crates/b/src/lib.rs": "pub fn g() {}\n",
+        "crates/b/tests/b_it.rs": "#[test]\nfn t() {}\n",
+        # move: package-level, local deps
+        "move/p/Move.toml": '[package]\nname = "p"\n',
+        "move/p/sources/p.move": "module p::p { public fun f() {} }\n",
+        "move/p/tests/p_tests.move": "#[test_only]\nmodule p::p_tests {}\n",
+        "move/q/Move.toml": '[package]\nname = "q"\n[dependencies]\np = { local = "../p" }\n',
+        "move/q/sources/q.move": "module q::q {}\n",
+        "README.md": "# delta\n",
+    }
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name) / "delta"
+        self.repo.mkdir()
+        git(self.repo, "init", "-q", "-b", "main")
+        for rel, text in self.FILES.items():
+            write(self.repo, rel, text)
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-q", "-m", "first")
+        self.idx = ri.RepoIndex(self.repo)
+        self.idx.refresh()
+
+    def tearDown(self):
+        self.idx.close()
+        self.tmp.cleanup()
+
+    def tests(self, *changed):
+        return sorted(t["path"] for t in self.idx.affected(list(changed))["tests"])
+
+    def test_python_through_an_absolute_import_chain(self):
+        self.assertEqual(self.tests("lib/core.py"), ["tests/test_rel.py", "tests/test_util.py"])
+
+    def test_a_hit_names_its_changed_origin_and_hop_count(self):
+        t = {t["path"]: t for t in self.idx.affected(["lib/core.py"])["tests"]}
+        self.assertEqual((t["tests/test_util.py"]["origin"], t["tests/test_util.py"]["hops"]),
+                         ("lib/core.py", 2))
+
+    def test_a_changed_test_is_its_own_hit(self):
+        self.assertEqual(self.tests("tests/test_other.py"), ["tests/test_other.py"])
+
+    def test_ts_through_a_workspace_package_and_its_reexport(self):
+        self.assertEqual(self.tests("packages/core/src/money.ts"), ["apps/web/src/view.test.tsx"])
+
+    def test_a_package_name_two_dirs_share_resolves_to_the_nearer(self):
+        tree = ri.repo_deps.Tree(
+            ["packages/core/src/index.ts", "parked/x/packages/core/src/index.ts"],
+            {"packages/core/package.json": '{"name": "@x/core"}',
+             "parked/x/packages/core/package.json": '{"name": "@x/core"}'})
+        self.assertEqual(ri.repo_deps.resolve(tree, "apps/web/a.ts", "@x/core", "js"),
+                         ["packages/core/src/index.ts"])
+        self.assertEqual(ri.repo_deps.resolve(tree, "parked/x/apps/web/a.ts", "@x/core", "js"),
+                         ["parked/x/packages/core/src/index.ts"])
+
+    def test_ts_through_an_exports_subpath(self):
+        self.assertEqual(self.tests("packages/core/src/extra.ts"), ["apps/web/e2e/extra.spec.ts"])
+
+    def test_cpp_include_and_shell_source(self):
+        self.assertEqual(self.tests("src/book.h"), ["tests/book_test.cc"])
+        self.assertEqual(self.tests("scripts/lib.sh"), ["tests/gate_test.sh"])
+
+    def test_rust_is_by_crate_and_follows_path_dependents(self):
+        r = self.idx.affected(["crates/a/src/inner.rs"])
+        self.assertEqual(sorted(p["path"] for p in r["packages"]), ["crates/a", "crates/b"])
+        self.assertEqual(sorted(t["path"] for t in r["tests"]),
+                         ["crates/a/tests/it.rs", "crates/b/tests/b_it.rs"])
+        r = self.idx.affected(["crates/b/src/lib.rs"])
+        self.assertEqual([p["path"] for p in r["packages"]], ["crates/b"])
+
+    def test_move_is_by_package_and_follows_local_dependents(self):
+        r = self.idx.affected(["move/p/sources/p.move"])
+        self.assertEqual(sorted(p["path"] for p in r["packages"]), ["move/p", "move/q"])
+        self.assertEqual([t["path"] for t in r["tests"]], ["move/p/tests/p_tests.move"])
+
+    def test_a_change_no_test_reaches_is_reported(self):
+        r = self.idx.affected(["README.md", "lib/core.py"])
+        self.assertEqual(r["unreached"], ["README.md"])
+
+    def test_a_changed_file_named_from_a_subdir_or_absolute_path(self):
+        self.assertEqual(self.tests(str(self.repo / "lib" / "core.py")),
+                         ["tests/test_rel.py", "tests/test_util.py"])
+
+    def test_the_default_change_set_is_the_uncommitted_edits(self):
+        write(self.repo, "lib/core.py", "def base():\n    return 2\n")
+        write(self.repo, "lib/new.py", "x = 1\n")
+        self.assertEqual(sorted(self.idx.changed_files()), ["lib/core.py", "lib/new.py"])
+        (self.repo / ".quorum").mkdir(exist_ok=True)
+        p = subprocess.run([sys.executable, str(HERE / "quorum_cli.py"), "affected", "--quiet"],
+                           cwd=str(self.repo), capture_output=True, text=True,
+                           env=dict(ENV, QUORUM_VAULT=str(Path(self.tmp.name) / "no-vault")))
+        self.assertEqual((p.returncode, p.stdout.split()),
+                         (0, ["tests/test_rel.py", "tests/test_util.py"]), p.stderr)
+
+    def test_test_path_conventions(self):
+        for p in ("tests/x.rs", "a/test_x.py", "a/x_test.py", "a/x.test.ts", "a/x.spec.tsx",
+                  "a/x_test.go", "a/__tests__/x.js", "e2e/x.mts", "a/x_unittest.cc"):
+            self.assertTrue(ri.is_test_path(p), p)
+        for p in ("a/latest.py", "a/contest.ts", "src/testing_utils.rs"):
+            self.assertFalse(ri.is_test_path(p), p)
+
+
 if __name__ == "__main__":
     unittest.main()

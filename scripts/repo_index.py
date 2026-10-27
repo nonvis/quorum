@@ -17,6 +17,8 @@ It indexes the repo's COMMITTED tree at HEAD (uncommitted edits are not in it):
            (`${…}`, f"{…}") are code. Keywords and one-letter names are skipped;
            in comments/strings only identifier-shaped words (snake_case,
            camelCase, a digit) are kept — prose is the docs FTS's job.
+  deps     each code file's raw import specifiers (Python, TS/JS, C/C++ includes,
+           shell source); `affected` resolves them at query time — see repo_deps.py
   commits  every commit on HEAD's history (FTS5: subject · body)
 
 Every read refreshes first: `git ls-tree` against the stored blob shas re-reads
@@ -26,15 +28,18 @@ The repo stays clean: `.quorum/.gitignore` holds `*` (written only if missing).
 """
 import bisect
 import os
+import posixpath
 import re
 import sqlite3
 import subprocess
 from pathlib import Path
 
+import repo_deps
+from repo_deps import is_test_path  # noqa: F401  (re-exported)
 from vault_index import fts_query, query_terms
 
-SCHEMA_VERSION = "3"
-TABLES = ("files", "docs", "symbols", "occ", "commits", "commits_fts")
+SCHEMA_VERSION = "4"
+TABLES = ("files", "docs", "symbols", "occ", "deps", "commits", "commits_fts")
 MAX_BLOB = 1_000_000
 DOC_EXT = {".md", ".mdx"}
 VENDORED = {"third_party", "vendor", "vendored", "node_modules", "dist", "build", ".venv"}
@@ -373,6 +378,8 @@ class RepoIndex:
                 role TEXT);
             CREATE INDEX IF NOT EXISTS occ_name ON occ(name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS occ_file ON occ(file);
+            CREATE TABLE IF NOT EXISTS deps(file INTEGER, spec TEXT, kind TEXT);
+            CREATE INDEX IF NOT EXISTS deps_file ON deps(file);
             CREATE TABLE IF NOT EXISTS commits(sha TEXT PRIMARY KEY, date TEXT, author TEXT,
                 subject TEXT);
             CREATE VIRTUAL TABLE IF NOT EXISTS commits_fts USING fts5(sha UNINDEXED, subject,
@@ -448,6 +455,8 @@ class RepoIndex:
                     "INSERT INTO occ(file, name, line, col, role) VALUES(?,?,?,?,?)",
                     [(fid,) + o for o in
                      occurrences_of(path, text, {(n, ln) for n, _, ln in syms})])
+                self.db.executemany("INSERT INTO deps(file, spec, kind) VALUES(?,?,?)",
+                                    [(fid,) + d for d in repo_deps.deps_of(path, text)])
         return len(todo)
 
     def _cat(self, blobs):
@@ -472,6 +481,7 @@ class RepoIndex:
         self.db.execute("DELETE FROM docs WHERE rowid=?", (fid,))
         self.db.execute("DELETE FROM symbols WHERE file=?", (fid,))
         self.db.execute("DELETE FROM occ WHERE file=?", (fid,))
+        self.db.execute("DELETE FROM deps WHERE file=?", (fid,))
 
     def _refresh_commits(self, head):
         old = self._meta("head")
@@ -533,6 +543,40 @@ class RepoIndex:
             r["dirty"] = r["path"] in dirty
         rows.sort(key=lambda r: (ROLES.index(r["role"]), r["path"], r["line"]))
         return {"name": bare, "exact": bool(exact) or not rows, "hits": rows}
+
+    def affected(self, changed):
+        """The tests the changed paths reach (see repo_deps.affected). A path may be
+        repo-relative or absolute."""
+        root = os.path.realpath(self.repo)
+        rel = []
+        for c in changed:
+            if os.path.isabs(c):
+                c = os.path.relpath(os.path.realpath(c), root)
+            c = posixpath.normpath(c.replace(os.sep, "/"))
+            if not c.startswith(".."):
+                rel.append(c)
+        rows = self.db.execute("SELECT id, path, blob, kind FROM files").fetchall()
+        files = {r["path"]: (r["id"], r["blob"]) for r in rows}  # vendored: a target, not parsed
+        mf = {r["path"]: r["blob"] for r in rows if r["kind"] != "vendored" and
+              posixpath.basename(r["path"]) in ("package.json", "Cargo.toml", "Move.toml")}
+        texts = self._cat(mf.values())
+        manifests = {p: texts.get(b, "") for p, b in mf.items()}
+        by_id = {fid: p for p, (fid, _) in files.items()}
+        deps = {}
+        for r in self.db.execute("SELECT file, spec, kind FROM deps"):
+            if r["file"] in by_id:
+                deps.setdefault(by_id[r["file"]], []).append((r["spec"], r["kind"]))
+        tree = repo_deps.Tree(files, manifests)
+        return repo_deps.affected(tree, deps, manifests, list(dict.fromkeys(rel)))
+
+    def changed_files(self, base=None):
+        """Uncommitted edits (staged or not) and untracked files; with `base`, also every
+        file changed on HEAD since its merge-base with `base`."""
+        out = (git(self.repo, "diff", "--name-only", "HEAD") or b"").decode()
+        out += (git(self.repo, "ls-files", "--others", "--exclude-standard") or b"").decode()
+        if base:
+            out += (git(self.repo, "diff", "--name-only", "%s...HEAD" % base) or b"").decode()
+        return list(dict.fromkeys(p for p in out.split("\n") if p))
 
     def _dirty(self):
         out = git(self.repo, "status", "--porcelain=v1", "-z", "--untracked-files=no") or b""

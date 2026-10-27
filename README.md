@@ -23,6 +23,7 @@ quorum index [--stats] [--rebuild]
 quorum repo q <terms…> [--repo <name> | --all] [--limit N] [--json]
 quorum sym <name> [--repo <name> | --all] [--json]
 quorum where <name> [--repo <name> | --all] [--json]
+quorum affected [<file>…] [--stdin] [--base <ref>] [--repo <name>] [--quiet | --json]
 quorum repo index [--repo <name> | --all] [--rebuild]
 quorum lint [--fix-safe] [--json] [--show N]
 quorum curate [--days N] [--show N] [--json]
@@ -82,6 +83,22 @@ quorum version
   one-letter names are not stored, and in comments/strings only identifier-shaped
   words (snake_case, camelCase, with a digit) are — prose is `repo q`'s job. A
   `*` after `path:line` marks a file with uncommitted edits (lines are HEAD's).
+  **`affected`** lists the test files a change reaches: it walks importers back
+  from the changed files (Python `import`/`from`, absolute from the importer's
+  ancestor dirs or relative; TS/JS relative imports with `.js`→`.ts`, and
+  workspace packages by `package.json` name and `exports`, nearest copy first;
+  C/C++ `#include "…"`; shell `source`/`.`) and stops at a test (test_x.py,
+  x_test.go, x.test.ts, x.spec.tsx, anything under tests/, test/, __tests__/,
+  e2e/). Rust and Move go by package: a change inside a Cargo.toml / Move.toml
+  package reaches it and every package depending on it by `path =` / `local =`,
+  and the tests inside them. Each hit names the changed file it comes from and the
+  hops. The default change set is the uncommitted edits plus untracked files;
+  `--base <ref>` adds the branch since its merge-base. Files given as arguments
+  are relative to the current dir; `--stdin` lines are repo-relative, as `git
+  diff --name-only` prints them; `--quiet` prints test paths only (pipe it to the
+  runner). Not seen: a test that runs code as a subprocess or reads a file by a
+  path string, and aliases the resolver does not know (tsconfig `paths`,
+  PYTHONPATH). A changed file no test reaches is listed.
   **`repo index`** builds or refreshes repo indexes (`--rebuild` also compacts the db).
   The default target is the repo you are in; outside one, every allowlisted repo
   (`--all`); `--repo <name>` picks one. A repo is indexed only if it is on the
