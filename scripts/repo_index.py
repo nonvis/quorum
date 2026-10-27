@@ -27,6 +27,7 @@ commits (a history that no longer contains the indexed head is re-read whole).
 The repo stays clean: `.quorum/.gitignore` holds `*` (written only if missing).
 """
 import bisect
+import hashlib
 import os
 import posixpath
 import re
@@ -39,6 +40,13 @@ from repo_deps import is_test_path  # noqa: F401  (re-exported)
 from vault_index import fts_query, query_terms
 
 SCHEMA_VERSION = "4"
+# What the rows contain depends on the extraction code, not only the schema: a lexer or
+# keyword fix changes occ rows for blobs whose sha did not change. The stored key covers
+# both modules' source, so a changed indexer rebuilds every checkout's index on its next
+# read (a comment-only edit costs one rebuild, ~12 s on the largest repo).
+INDEXER_KEY = hashlib.sha256(b"".join(
+    (Path(__file__).resolve().parent / f).read_bytes()
+    for f in ("repo_index.py", "repo_deps.py"))).hexdigest()[:12]
 TABLES = ("files", "docs", "symbols", "occ", "deps", "commits", "commits_fts")
 MAX_BLOB = 1_000_000
 DOC_EXT = {".md", ".mdx"}
@@ -382,7 +390,7 @@ class RepoIndex:
         c = self.db
         c.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
         row = c.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
-        if row is None or row[0] != SCHEMA_VERSION:
+        if row is None or row[0] != "%s:%s" % (SCHEMA_VERSION, INDEXER_KEY):
             for t in TABLES:
                 c.execute("DROP TABLE IF EXISTS %s" % t)
             c.execute("DELETE FROM meta")
@@ -405,7 +413,8 @@ class RepoIndex:
             CREATE VIRTUAL TABLE IF NOT EXISTS commits_fts USING fts5(sha UNINDEXED, subject,
                 body, tokenize='unicode61 remove_diacritics 2');
         """)
-        c.execute("INSERT OR REPLACE INTO meta VALUES('schema', ?)", (SCHEMA_VERSION,))
+        c.execute("INSERT OR REPLACE INTO meta VALUES('schema', ?)",
+                  ("%s:%s" % (SCHEMA_VERSION, INDEXER_KEY),))
         c.commit()
 
     def _meta(self, key):

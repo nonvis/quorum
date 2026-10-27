@@ -118,7 +118,9 @@ quorum version
   blobs `git ls-tree` shows changed and the commits after the indexed head, and
   re-reads the history whole after a rewrite. Vendored dirs (`third_party/`,
   `vendor/`, `node_modules/`, `dist/`, `build/`) are listed, not parsed.
-  `.quorum/.gitignore` (`*`) keeps the repo clean.
+  `.quorum/.gitignore` (`*`) keeps the repo clean. The index is keyed by its schema
+  and a hash of the indexer's own source (`repo_index.py`, `repo_deps.py`), so after
+  an update every checkout rebuilds on its next read — no `--rebuild` by hand.
 - **`lint`** is a hygiene report (see `scripts/lint.py`): dangling wikilinks,
   ambiguous ones (a bare name shared by notes equally near the linker — write the
   folder), orphan notes (no link resolves to them), live notes without `summary:`, notes naming repo files that are

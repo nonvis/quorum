@@ -126,6 +126,18 @@ class RepoIndexCase(unittest.TestCase):
         self.assertIn(("symbol", "web/app.ts:2"), self.kinds("RoomShell"))
 
     # -- freshness ------------------------------------------------------------
+    def test_a_changed_indexer_rebuilds_an_index_it_did_not_build(self):
+        """The key covers the extraction code: new lexer rules must reach an index whose
+        blobs did not change, without anyone running --rebuild."""
+        self.idx.close()
+        old = ri.INDEXER_KEY
+        try:
+            ri.INDEXER_KEY = "something-else"
+            self.idx = ri.RepoIndex(self.repo)
+            self.assertEqual(self.idx.refresh()["files"], 7)
+        finally:
+            ri.INDEXER_KEY = old
+
     def test_an_unchanged_head_reindexes_nothing(self):
         r = self.idx.refresh()
         self.assertEqual((r["files"], r["commits"]), (0, 0))
