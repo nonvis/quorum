@@ -211,6 +211,23 @@ class OptInCase(unittest.TestCase):
         self.assertIn("m.py:4", p.stdout)
         self.assertIn("1 def · 1 ref", p.stdout)
 
+    def test_where_caps_its_output_and_collapses_the_rest_per_file(self):
+        (self.repo / ".quorum").mkdir()
+        write(self.repo, "m.py", "def hello_world():\n    pass\n" + "hello_world()\n" * 5)
+        write(self.repo, "n.py", "hello_world()\n" * 3)
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-q", "-m", "m")
+        p = self.cli("where", "hello_world", "--limit", "2")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        lines = p.stdout.splitlines()
+        self.assertEqual(sum(1 for ln in lines if ln.startswith(("beta  ref", "beta  def"))), 2,
+                         p.stdout)
+        self.assertIn("+ m.py: 4 more", p.stdout)
+        self.assertIn("+ n.py: 3 more", p.stdout)
+        self.assertIn("1 def · 8 refs", p.stdout)
+        full = self.cli("where", "hello_world", "--limit", "0").stdout.splitlines()
+        self.assertEqual(sum(1 for ln in full if ln.startswith(("beta  ref", "beta  def"))), 9)
+
 
 class WhereCase(unittest.TestCase):
     """`where`: every place an identifier occurs in the committed code, by role."""
@@ -313,6 +330,31 @@ class WhereCase(unittest.TestCase):
         self.assertEqual(self.roles("t.sh", sh, "run_once"), [(2, "text"), (4, "ref")])
         self.assertEqual(self.roles("t.sh", sh, "out_file"), [(1, "ref")])
         self.assertEqual(self.roles("t.sh", sh, "after_it"), [(4, "ref")])
+
+    def test_a_keyword_of_one_language_is_an_identifier_in_another(self):
+        ts = "const key = store.get(key) as Map;\nmodule.exports = { key };\n"
+        names = {n for n, _, _, _ in ri.occurrences_of("a.ts", ts, set())}
+        self.assertTrue({"key", "store", "module"} <= names, names)
+        mv = "module p::m {\n    struct S has key, store { id: UID }\n}\n"
+        names = {n for n, _, _, _ in ri.occurrences_of("a.move", mv, set())}
+        self.assertEqual((names & {"key", "store", "module"}, "UID" in names), (set(), True))
+
+    def test_where_says_when_the_name_is_a_skipped_keyword(self):
+        r = self.idx.where("fn")
+        self.assertIn("rs", r["keyword_in"])
+        self.assertEqual(self.idx.where("sweep_once")["keyword_in"], [])
+
+    def test_shell_double_quotes_hide_apostrophes_and_hashes(self):
+        for sh in ('x="a #not_comment" ; run_it\n',
+                   'echo "it\'s here"\nrun_it x\nlater=\'q\'\n',
+                   "best=\\'$B\\'\nrun_it x\n",
+                   'n=${#arr[@]}\nrun_it x\n'):
+            self.assertEqual([r for ln, r in self.roles("t.sh", sh, "run_it")], ["ref"], sh)
+
+    def test_where_text_is_read_only_for_the_hits_shown(self):
+        r = self.idx.where("sweep_once", limit=2)
+        self.assertEqual(len(r["hits"]), 12)
+        self.assertEqual([bool(h["text"]) for h in r["hits"][:3]], [True, True, False])
 
     def test_template_interpolation_is_code(self):
         self.assertEqual(self.where("sweepOnce"),
@@ -436,6 +478,21 @@ class AffectedCase(unittest.TestCase):
                          ["packages/core/src/index.ts"])
         self.assertEqual(ri.repo_deps.resolve(tree, "parked/x/apps/web/a.ts", "@x/core", "js"),
                          ["parked/x/packages/core/src/index.ts"])
+
+    def test_exports_into_an_untracked_dist_fall_back_to_the_source(self):
+        tree = ri.repo_deps.Tree(
+            ["packages/v/src/index.ts", "packages/v/src/chain.ts"],
+            {"packages/v/package.json": '{"name": "v", "main": "./dist/index.js", "exports":'
+                                        ' {".": "./dist/index.js", "./chain": "./dist/chain.js"}}'})
+        self.assertEqual(ri.repo_deps.resolve(tree, "a.ts", "v", "js"), ["packages/v/src/index.ts"])
+        self.assertEqual(ri.repo_deps.resolve(tree, "a.ts", "v/chain", "js"),
+                         ["packages/v/src/chain.ts"])
+
+    def test_two_changed_files_on_one_chain_both_reach_the_test(self):
+        r = self.idx.affected(["lib/core.py", "lib/util.py", "lib/rel.py"])
+        t = {t["path"]: t for t in r["tests"]}
+        self.assertEqual((r["unreached"], t["tests/test_util.py"]["origin"],
+                          t["tests/test_util.py"]["hops"]), ([], "lib/util.py", 1))
 
     def test_ts_through_an_exports_subpath(self):
         self.assertEqual(self.tests("packages/core/src/extra.ts"), ["apps/web/e2e/extra.spec.ts"])

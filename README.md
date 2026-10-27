@@ -22,7 +22,7 @@ quorum repos [--json]
 quorum index [--stats] [--rebuild]
 quorum repo q <terms…> [--repo <name> | --all] [--limit N] [--json]
 quorum sym <name> [--repo <name> | --all] [--json]
-quorum where <name> [--repo <name> | --all] [--json]
+quorum where <name> [--repo <name> | --all] [--limit N] [--json]
 quorum affected [<file>…] [--stdin] [--base <ref>] [--repo <name>] [--quiet | --json]
 quorum repo index [--repo <name> | --all] [--rebuild]
 quorum lint [--fix-safe] [--json] [--show N]
@@ -79,10 +79,16 @@ quorum version
   case-insensitively when nothing does; a qualified name (`a::b`, `A.b`) looks up
   its last part. A scanner per language tells code from comments and strings
   (nested TS templates, regex literals, Rust/C++ raw strings, Rust lifetimes,
-  shell heredocs); template and f-string interpolations are code. Keywords and
-  one-letter names are not stored, and in comments/strings only identifier-shaped
-  words (snake_case, camelCase, with a digit) are — prose is `repo q`'s job. A
+  shell heredocs and double quotes); template and f-string interpolations are
+  code. A language's own reserved words (Move's `key`, Go's `map`, Rust's `type`)
+  and one-letter names are not stored in that language's files, and `where` says
+  so when you ask for one. In comments/strings only identifier-shaped words
+  (snake_case, camelCase, with a digit) are stored — a plain word like `place` in
+  a comment is `repo q`'s job. The first 200 hits print in full and the rest
+  collapse to a count per file (`--limit N`, `0` = all; `--json` is uncapped). A
   `*` after `path:line` marks a file with uncommitted edits (lines are HEAD's).
+  Matching is by name: a method declared inside a TS class or a C++ class body is
+  a `ref`, not a `def`, and two unrelated symbols sharing a name list together.
   **`affected`** lists the test files a change reaches: it walks importers back
   from the changed files (Python `import`/`from`, absolute from the importer's
   ancestor dirs or relative; TS/JS relative imports with `.js`→`.ts`, and
@@ -98,7 +104,11 @@ quorum version
   diff --name-only` prints them; `--quiet` prints test paths only (pipe it to the
   runner). Not seen: a test that runs code as a subprocess or reads a file by a
   path string, and aliases the resolver does not know (tsconfig `paths`,
-  PYTHONPATH). A changed file no test reaches is listed.
+  PYTHONPATH), and an import added in an uncommitted edit (the graph is HEAD's).
+  An `exports` target under an untracked `dist/` falls back to the same path
+  under `src/`. Each changed file is walked on its own, so one that reaches a
+  test only through another changed file still counts; a changed file no test
+  reaches is listed.
   **`repo index`** builds or refreshes repo indexes (`--rebuild` also compacts the db).
   The default target is the repo you are in; outside one, every allowlisted repo
   (`--all`); `--repo <name>` picks one. A repo is indexed only if it is on the

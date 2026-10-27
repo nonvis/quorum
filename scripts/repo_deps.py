@@ -160,7 +160,15 @@ def _resolve_js(tree, src, spec):
             target = _export_target(exports) if not sub else None
         if target:
             p = _norm(root, target)
-            return tree.js_file(p) if p else []
+            hit = tree.js_file(p) if p else []
+            if hit:
+                return hit
+            if p and p.startswith(root + "/dist/" if root else "dist/"):
+                # a build output not in git (dist/x.js): the same path under src/
+                src_p = p.replace("/dist/", "/src/", 1) if root else "src/" + p[5:]
+                hit = tree.js_file(src_p)
+                if hit:
+                    return hit
     if sub:
         return tree.js_file(posixpath.join(root, sub)) or \
             tree.js_file(posixpath.join(root, "src", sub))
@@ -256,17 +264,20 @@ def affected(tree, deps, manifests, changed):
     """-> {"tests": [{path, origin, hops}], "packages": [{path, kind, name, origin, hops}],
     "unreached": [changed paths that reach no test and no package]}."""
     rev = importers(tree, deps)
-    seen = {c: (c, 0) for c in changed}
-    queue = deque(c for c in changed if not is_test_path(c))
-    while queue:
-        cur = queue.popleft()
-        origin, hops = seen[cur]
-        for imp in sorted(rev.get(cur, ())):
-            if imp not in seen:
-                seen[imp] = (origin, hops + 1)
-                if not is_test_path(imp):
+    tests, reached = {}, set()  # a walk per changed file: another changed file on its chain
+    for c in changed:           # must not end it, or the upstream one would "reach no test"
+        seen, queue = {c: 0}, deque([c])
+        while queue:
+            cur = queue.popleft()
+            if is_test_path(cur):
+                reached.add(c)
+                if cur not in tests or seen[cur] < tests[cur][1]:
+                    tests[cur] = (c, seen[cur])
+                continue
+            for imp in sorted(rev.get(cur, ())):
+                if imp not in seen:
+                    seen[imp] = seen[cur] + 1
                     queue.append(imp)
-    tests = {p: v for p, v in seen.items() if is_test_path(p)}
 
     pkgs = packages(tree, manifests)
     rdeps = {}
@@ -292,7 +303,7 @@ def affected(tree, deps, manifests, changed):
             if d in hit and is_test_path(path[len(d):]) and path not in tests:
                 tests[path] = hit[d]
 
-    reached = {o for o, _ in tests.values()} | {o for o, _ in hit.values()}
+    reached |= {c for c in changed if package_of(pkgs, c) is not None}
     return {
         "tests": [{"path": p, "origin": o, "hops": h} for p, (o, h) in sorted(tests.items())],
         "packages": [{"path": d, "kind": pkgs[d]["kind"], "name": pkgs[d]["name"],

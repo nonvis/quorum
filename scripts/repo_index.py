@@ -116,23 +116,41 @@ def symbols_of(path, text):
 
 
 # -- occurrences ---------------------------------------------------------------
-KEYWORDS = set("""
-    fn let mut pub use mod impl struct enum trait const static self Self super crate return
-    if else for while loop match break continue in as where type async await move ref dyn
-    unsafe extern true false None True False def class import from pass and or not is lambda
-    with yield try except finally raise global nonlocal del assert elif function var new this
-    export default extends implements interface public private protected void null undefined
-    typeof instanceof package func go defer chan map range select switch case module fun has
-    key store copy drop entry friend acquires namespace template typename virtual override auto
-    include define then fi do done esac local echo
-""".split())
+KEYWORDS = {lang: set(words.split()) for lang, words in {  # reserved words only, per language:
+    # `key` is Move's, not TS's; `map` is Go's, not Rust's — one shared set hid them everywhere
+    "rs": """as async await break const continue crate dyn else enum extern false fn for if impl
+             in let loop match mod move mut pub ref return self Self static struct super trait
+             true type unsafe use where while""",
+    "ts": """break case catch class const continue debugger default delete do else enum export
+             extends false finally for function if import in instanceof new null return super
+             switch this throw true try typeof var void while with yield let static implements
+             interface private protected public await async undefined""",
+    "py": """False None True and as assert async await break class continue def del elif else
+             except finally for from global if import in is lambda nonlocal not or pass raise
+             return try while with yield self cls""",
+    "go": """break case chan const continue default defer else fallthrough for func go goto if
+             import interface map package range return select struct switch type var true false
+             nil""",
+    "cpp": """auto bool break case catch char class const constexpr continue default delete do
+              double else enum explicit extern false float for friend goto if inline int long
+              namespace new noexcept nullptr operator private protected public return short
+              signed sizeof static struct switch template this throw true try typedef typename
+              union unsigned using virtual void volatile while override final include define
+              ifdef ifndef endif pragma""",
+    "move": """abort acquires as break const continue copy drop else entry enum false friend fun
+               has if key let loop match module move mut native public return store struct true
+               use while""",
+    "sh": "if then else elif fi case esac for while until do done in function select time",
+}.items()}
 
 _PY_STR = r"(?:'''[\s\S]*?'''|\"\"\"[\s\S]*?\"\"\"|'(?:\\.|[^'\\\n])*'|\"(?:\\.|[^\"\\\n])*\")"
 _LEXERS = {  # the languages without nesting; re.S: `\⏎` is an escape too
     "py": re.compile(r"(?P<c>#[^\n]*)|(?P<t>(?<!\w)(?i:[rb]?f|f[rb])%s)"
                      r"|(?P<s>(?<!\w)(?i:[rbu]|br|rb)?%s)" % (_PY_STR, _PY_STR), re.S),
     "sh": re.compile(r"(?P<h><<-?[ \t]*(?P<q>['\"]?)(?P<tag>\w+)(?P=q)[^\n]*\n.*?\n[ \t]*(?P=tag)\b)"
-                     r"|(?P<c>(?<![\w$])#[^\n]*)|(?P<s>'[^']*')", re.S),
+                     # "…" and \x are code, consumed so a ' or # inside them opens nothing
+                     r"|(?P<d>\"(?:\\.|[^\"\\])*\")|(?P<e>\\.)"
+                     r"|(?P<c>(?<![\w${])#[^\n]*)|(?P<s>'[^']*')", re.S),
 }
 _PY_INTERP = re.compile(r"(?<!\{)\{([^{}]*)\}")
 _WORD = {"ts": re.compile(r"\d[\w.]*|([A-Za-z_$][\w$]*)"), "": re.compile(r"\d[\w.]*|([A-Za-z_]\w*)")}
@@ -285,6 +303,8 @@ def _regex_end(text, i):
 def _lexer_spans(text, lang):
     spans = []
     for m in _LEXERS[lang].finditer(text):
+        if m.lastgroup in ("d", "e"):
+            continue
         if m.lastgroup == "t":  # an f-string: its {…} are code
             a = m.start()
             for i in _PY_INTERP.finditer(m.group()):
@@ -308,10 +328,10 @@ def occurrences_of(path, text, defs):
     imports = import_lines(text.split("\n"))
     spans = _lexer_spans(text, lang) if lang in _LEXERS else c_family_spans(text, lang)
     span_starts = [a for a, _ in spans]
-    seen, out = set(), []
+    seen, out, keywords = set(), [], KEYWORDS[lang]
     for m in _WORD["ts" if lang == "ts" else ""].finditer(text):
         name, pos = m.group(1), m.start()
-        if not name or len(name) < 2 or name in KEYWORDS:
+        if not name or len(name) < 2 or name in keywords:
             continue
         k = bisect.bisect_right(span_starts, pos) - 1
         code = k < 0 or pos >= spans[k][1]
@@ -524,25 +544,31 @@ class RepoIndex:
              name, limit))
         return [dict(r) for r in rows]
 
-    def where(self, name):
+    def where(self, name, limit=None):
         """Every occurrence of the identifier `name` (a qualified name looks up its last
-        part): {"name", "exact", "hits": [{path, line, col, role, text, dirty}]}, defs
-        first, then imports, refs, text. Exact case wins; with none, case-insensitive
-        (exact False). Lines are HEAD's; `dirty` = the file has uncommitted edits."""
+        part): {"name", "exact", "keyword_in", "hits": [{path, line, col, role, text,
+        dirty}]}, defs first, then imports, refs, text. Exact case wins; with none,
+        case-insensitive (exact False). `keyword_in`: the languages where the name is a
+        reserved word, whose files store no occurrence of it. Line text is read for the
+        first `limit` hits only (None = all). Lines are HEAD's; `dirty` = the file has
+        uncommitted edits."""
         bare = last_part(name)
         rows = [dict(r) for r in self.db.execute(
             "SELECT o.name, o.line, o.col, o.role, f.path, f.blob FROM occ o"
             " JOIN files f ON f.id = o.file WHERE o.name = ? COLLATE NOCASE", (bare,))]
         exact = [r for r in rows if r["name"] == bare]
         rows = exact or rows
-        texts = self._cat(r["blob"] for r in rows)
+        rows.sort(key=lambda r: (ROLES.index(r["role"]), r["path"], r["line"]))
+        shown = rows if limit is None else rows[:limit]
+        texts, keep = self._cat(r["blob"] for r in shown), {id(r) for r in shown}
         dirty = self._dirty() if rows else set()
         for r in rows:
-            lines = texts.get(r.pop("blob"), "").split("\n")
+            blob = r.pop("blob")
+            lines = texts.get(blob, "").split("\n") if id(r) in keep else []
             r["text"] = lines[r["line"] - 1].strip()[:200] if r["line"] <= len(lines) else ""
             r["dirty"] = r["path"] in dirty
-        rows.sort(key=lambda r: (ROLES.index(r["role"]), r["path"], r["line"]))
-        return {"name": bare, "exact": bool(exact) or not rows, "hits": rows}
+        return {"name": bare, "exact": bool(exact) or not rows, "hits": rows,
+                "keyword_in": sorted(k for k, words in KEYWORDS.items() if bare in words)}
 
     def affected(self, changed):
         """The tests the changed paths reach (see repo_deps.affected). A path may be

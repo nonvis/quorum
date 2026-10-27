@@ -24,7 +24,7 @@ tooling that spends no model tokens:
       messages, symbol names. Default: the repo you are in; outside one, --all.
   quorum sym <name> [--repo <name> | --all] [--json]
       Where a symbol is defined (case-insensitive prefix).
-  quorum where <name> [--repo <name> | --all] [--json]
+  quorum where <name> [--repo <name> | --all] [--limit N] [--json]
       Every place an identifier occurs in the committed code: def, import, ref,
       then mentions in comments/strings. Exact case first; a qualified name
       (a::b, A.b) looks up its last part.
@@ -90,7 +90,7 @@ USAGE = """usage: quorum <command> [options]
                   search one repo's docs, commit messages and symbols
   sym <name> [--repo <name> | --all] [--json]
                   where a symbol is defined
-  where <name> [--repo <name> | --all] [--json]
+  where <name> [--repo <name> | --all] [--limit N] [--json]
                   every place an identifier occurs: def, import, ref, text
   affected [<file>…] [--stdin] [--base <ref>] [--repo <name>] [--quiet | --json]
                   the tests a change reaches (default: uncommitted edits)
@@ -457,36 +457,58 @@ def cmd_sym(args):
     return 0
 
 
+WHERE_LIMIT = 200  # hits printed in full; the rest collapse to a count per file
+
+
 def cmd_where(args):
     import json
-    opts, rest = _flags(args, {"--repo"}, {"--all", "--json"})
+    opts, rest = _flags(args, {"--repo", "--limit"}, {"--all", "--json"})
     if len(rest) != 1:
-        print("usage: quorum where <name> [--repo <name> | --all] [--json]", file=sys.stderr)
+        print("usage: quorum where <name> [--repo <name> | --all] [--limit N] [--json]",
+              file=sys.stderr)
         return 2
     targets, err = _repo_targets(opts)
     if err:
         print("ERROR: " + err, file=sys.stderr)
         return 1
-    hits, exact = [], True
+    limit = int(opts.get("--limit", WHERE_LIMIT)) or None  # 0 = every hit
+    if opts.get("--json"):
+        limit = None
+    hits, exact, keyword_in = [], True, []
     for name, path in targets:
         ri = _open_repo(path)
-        r = ri.where(rest[0])
+        r = ri.where(rest[0], limit=limit)
         ri.close()
-        exact = exact and r["exact"]
+        exact, keyword_in = exact and r["exact"], r["keyword_in"]
         for h in r["hits"]:
             h["repo"] = name
             hits.append(h)
+    roles = ("def", "import", "ref", "text")
+    hits.sort(key=lambda h: (roles.index(h["role"]), h["repo"], h["path"], h["line"]))
     if opts.get("--json"):
         print(json.dumps(hits, ensure_ascii=False, indent=1))
         return 0
+    if keyword_in:
+        print("(%s is a keyword in %s: those files store no occurrence of it)"
+              % (rest[0], ", ".join(keyword_in)))
     if not hits:
         print("(no occurrence of %r)" % rest[0], file=sys.stderr)
         return 0
     if not exact:
         print("(no exact-case match; case-insensitive)", file=sys.stderr)
-    for h in hits:
+    for h in hits[:limit]:
         print("%s  %-6s %s:%d%s  %s" % (h["repo"], h["role"], h["path"], h["line"],
                                        "*" if h["dirty"] else "", h["text"]))
+    rest_hits = hits[limit:] if limit else []
+    if rest_hits:
+        per_file = {}
+        for h in rest_hits:
+            per_file[(h["repo"], h["path"])] = per_file.get((h["repo"], h["path"]), 0) + 1
+        for (repo, path), n in sorted(per_file.items(), key=lambda kv: -kv[1])[:30]:
+            print("%s  + %s: %d more" % (repo, path, n))
+        if len(per_file) > 30:
+            print("  … and %d more files" % (len(per_file) - 30))
+        print("(%d hits not shown: --limit 0 for all, --json for every field)" % len(rest_hits))
     counts = [(sum(1 for h in hits if h["role"] == r), r) for r in ("def", "import", "ref")]
     parts = ["%d %s%s" % (n, r, "" if n == 1 else "s") for n, r in counts if n]
     text = sum(1 for h in hits if h["role"] == "text")
