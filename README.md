@@ -395,6 +395,13 @@ day spent on it (`scripts/overnight.py`; `quorum overnight <project>`).
 - **Nothing schedules it.** No timer, login item or idle trigger; a mention of the
   note, an injected copy or a briefing row naming it is never a start — the note's
   own first line says so.
+- **A second host** needs only `git pull` here (the verb; `make doctor` says
+  "claude on PATH (radio, study, overnight)") and a pull of the vault (the note,
+  the projects file's `overnight` key, the allow rules). The record
+  `.quorum/overnight/` is per host, so `quorum overnight list` shows that host's
+  nights only; run a project's night on one host per evening. Claude Code's
+  memory directory is per host too — the owner's memory rows about the overnight
+  live outside this repo and are copied by hand.
 
 ## Setup
 
