@@ -22,17 +22,25 @@ What each command does is in `README.md`; the source is the truth.
   `radio-voice/` (its own Node package; `kokoro-js` pinned exactly) and
   `radio-web/` (Radio Studio's React app; every dependency pinned exactly, built
   by `quorum web start`, served by the stdlib `scripts/radio_web.py`).
-- **Zero model calls, except `quorum radio` and `quorum study`.** Every other
+- **Zero model calls, except `quorum radio`, `quorum study` and `quorum overnight`.** Every other
   command is deterministic and costs $0. The core (`quorum_cli.py`, `vault_index.py`,
   `repo_index.py`, `spend_readout.py`, `lint.py`) never imports `radio.py` or
-  anything audio: the CLI runs radio and study as subprocesses. Radio's tests use its fake
-  model and fake TTS — never a real model call in a test.
+  anything audio: the CLI runs radio, study and overnight as subprocesses. Radio's tests use its fake
+  model and fake TTS, overnight's its fake runner — never a real model call in a test.
+- **Overnight is started by the owner, never scheduled.** `quorum overnight <project>` starts ONE
+  `claude -p` session from the vault's cwd that runs the vault's overnight run prompt note (named
+  by `06_Metadata/quorum-projects.json` → `overnight.run_prompt`, one `## Project: <id>` appendix
+  per project); the note is the spec, the verb only starts it. One night per project per KST day;
+  hosts, deployments and repo working trees are denied at the tool level (`DENIED`) as well as by
+  the note's walls. Never add a timer, a login item or a "run when idle" to it.
 - **Read-only toward what it reads.** `spend` reads transcripts; the indexes read
   markdown and git. The only files written are `<vault>/.quorum/index.db`,
   `<repo>/.quorum/index.db` and, if missing, `<repo>/.quorum/.gitignore` (`*`);
   `quorum radio` also writes episodes to the per-host store `.quorum/radio/`
   and appends new ids to `radio/voices.lock`; `quorum study` writes only its
-  per-host store `.quorum/study/`; Radio Studio writes the vault's
+  per-host store `.quorum/study/`; `quorum overnight` writes only its per-host
+  record `.quorum/overnight/` (the vault session it starts writes `00_Inbox/` and
+  one `Action Queue/` note in the vault and commits exactly those); Radio Studio writes the vault's
   `06_Metadata/quorum-projects.json` (+ the allowlist) and commits exactly those
   files, and adds brainstorm specialties to `radio/cast.json`.
 - **Radio Studio binds 127.0.0.1 only** and refuses a foreign Host or Origin;

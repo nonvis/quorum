@@ -54,6 +54,10 @@ tooling that spends no model tokens:
   quorum study new|list|show|start|say|end|finish|delete …
       Learn one repo ~30 min a day: one tutor session a day, its close the memory the
       next day starts from (scripts/study.py, run as a subprocess; calls a model).
+  quorum overnight <project> | list | score [project]
+      One owner-started night of vault work for one project: a headless session runs
+      the vault's overnight run prompt (drafts → 00_Inbox, one morning report → the
+      Action Queue); `score` reads the vault's ledger (scripts/overnight.py; calls a model).
   quorum version
 
 `~/.local/bin/quorum` is a symlink to this file (scripts/install.sh).
@@ -129,6 +133,12 @@ USAGE = """usage: quorum <command> [options]
                   learn one repo a day at a time: one Opus tutor session a day
                   (read-only, no git), End saves the memory the next day loads
                   (per-host store .quorum/study/; Radio Studio's Study tab)
+  overnight <project> [--dry-run] [--events] | overnight list | overnight score [project]
+                  tonight's night of vault work for one project, started by you on
+                  the evening of a day spent on it: one Opus session from the vault
+                  runs the overnight run prompt's `## Project: <id>` appendix, writes
+                  drafts to 00_Inbox and one morning report to the Action Queue
+                  (per-host record .quorum/overnight/; score = the vault ledger, $0)
   curate [--days N] [--show N] [--json]
                   memory files no session Read or Edited in the last N (30) days,
                   with the bytes their MEMORY*.md rows cost every session ($0;
@@ -902,6 +912,11 @@ def cmd_study(args):
     return subprocess.call([sys.executable, str(REPO / "scripts" / "study.py")] + list(args))
 
 
+def cmd_overnight(args):
+    """Overnight (Decision #128) in its own process, like study: the core never imports it."""
+    return subprocess.call([sys.executable, str(REPO / "scripts" / "overnight.py")] + list(args))
+
+
 def cmd_version(_args):
     sha = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
                          capture_output=True, text=True).stdout.strip() or "unknown"
@@ -948,6 +963,8 @@ def main(argv):
         return cmd_web(rest)
     if sub == "study":
         return cmd_study(rest)
+    if sub == "overnight":
+        return cmd_overnight(rest)
     if sub in RETIRED:
         print("ERROR: `quorum %s` was retired with the C++ daemon on 2026-10-16 "
               "(vault Quorum Decision Log #98)." % sub, file=sys.stderr)

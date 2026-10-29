@@ -23,7 +23,7 @@ done
 # Radio: the cast file is checked like code; the voice sidecar is optional (warn only).
 python3 -c "import sys; sys.path.insert(0, '$REPO_ROOT/scripts'); import radio; radio.load_cast()" 2>/dev/null \
     && ok "radio cast file + voice lock" || bad "radio/cast.json refused (python3 scripts/radio.py inputs says why)"
-command -v claude >/dev/null && ok "claude on PATH (radio)" || warn "claude not on PATH: radio needs --fake"
+command -v claude >/dev/null && ok "claude on PATH (radio, study, overnight)" || warn "claude not on PATH: radio and overnight need --fake, study QUORUM_STUDY_FAKE=1"
 command -v node >/dev/null && [ -d "$REPO_ROOT/radio-voice/node_modules/kokoro-js" ] \
     && ok "radio-voice sidecar installed" || warn "radio-voice not installed (cd radio-voice && npm ci): radio needs --no-voice"
 command -v ffmpeg >/dev/null && ok "ffmpeg" || warn "ffmpeg not found: radio needs --no-voice"

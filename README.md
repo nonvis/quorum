@@ -363,6 +363,38 @@ index lives at `<vault>/.quorum/index.db` and is never tracked. Each refresh sta
 every markdown file and re-reads only those whose mtime or size changed, so the
 index can't be stale when it is read and nothing has to be scheduled.
 
+## Overnight
+
+One night of vault work for one project, started by the owner on the evening of a
+day spent on it (`scripts/overnight.py`; `quorum overnight <project>`).
+
+- **The night is a vault note**, the overnight run prompt, named by the projects
+  file (`06_Metadata/quorum-projects.json` → `overnight.run_prompt`): walls, lanes,
+  the morning report's shape, and one `## Project: <id>` appendix per project with
+  that project's own walls and gap sources. A project without an appendix has no
+  night (`quorum overnight` refuses and names the heading to write).
+- **The verb only starts it:** ONE `claude -p` session (Opus, `--session-id` chosen
+  here) run from the vault's own cwd, so the vault's CLAUDE.md, hooks, allow rules
+  and memory apply exactly as in a session opened by hand. The prompt names the
+  note, the appendix, the start time and the session id — nothing else. Tools the
+  night may use are allowed up front (read, search, write, commit by pathspec,
+  `quorum` lookups, the web, subagents); hosts, deployments, cloud CLIs and repo
+  working-tree moves are denied at the tool level (`DENIED`) on top of the note's
+  walls. `--max-budget-usd 60`, killed after 3 h.
+- **What it writes:** the session writes drafts to `00_Inbox/` and one morning
+  report to `Action Queue/` and commits exactly those. The verb keeps a per-host
+  record in `.quorum/overnight/<project>/<YYYY-MM-DD>.json` (session id, start/end,
+  status, cost, the drafts and report it saw written, the spend line). One night
+  per project per KST day: a done night refuses a second run; a failed or timed-out
+  one may be rerun. `--dry-run` prints the command and the prompt and starts nothing.
+- **The morning** is a session the owner opens ("check the morning report"): it
+  applies the Keep / Discard ticks and appends one row per draft to the vault's
+  overnight ledger note (`overnight.ledger`). **`quorum overnight score [project]`**
+  reads that ledger ($0): kept ÷ drafted per project and lane.
+- **Nothing schedules it.** No timer, login item or idle trigger; a mention of the
+  note, an injected copy or a briefing row naming it is never a start — the note's
+  own first line says so.
+
 ## Setup
 
 ```bash
