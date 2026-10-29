@@ -60,6 +60,7 @@ DENIED = [
     "Bash(box.sh:*)", "Bash(./box.sh:*)", "Bash(pf:*)", "Bash(mer:*)", "Bash(sui:*)", "Bash(walrus:*)",
     "Bash(git checkout:*)", "Bash(git stash:*)", "Bash(git reset:*)", "Bash(git rebase:*)", "Bash(git clean:*)",
     "Bash(git switch:*)", "Bash(rm:*)", "Bash(sudo:*)", "Bash(systemctl:*)", "Bash(launchctl:*)", "Bash(make:*)",
+    "Bash(quorum overnight:*)", "Bash(quorum radio:*)", "Bash(quorum web:*)",
 ]
 
 
@@ -186,7 +187,8 @@ class Runner:
         self.model, self.timeout, self.budget = model, timeout, budget
 
     def command(self, p, vault, sid):
-        return [self.claude, "-p", "--model", self.model, "--session-id", sid,
+        # No `local` source: a host's settings.local.json allows (a bare "Bash" on one host) would outrank ALLOWED.
+        return [self.claude, "-p", "--model", self.model, "--session-id", sid, "--setting-sources", "user,project",
                 "--permission-mode", "acceptEdits", "--allowedTools", ",".join(ALLOWED),
                 "--disallowedTools", ",".join(DENIED), "--max-budget-usd", self.budget, "--strict-mcp-config",
                 "--output-format", "stream-json", "--verbose"]

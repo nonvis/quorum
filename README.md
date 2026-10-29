@@ -358,7 +358,9 @@ day spent on it (`scripts/overnight.py`; `quorum overnight <project>`).
   night may use are allowed up front (read, search, write, commit by pathspec,
   `quorum` lookups, the web, subagents); hosts, deployments, cloud CLIs and repo
   working-tree moves are denied at the tool level (`DENIED`) on top of the note's
-  walls. `--max-budget-usd 60`, killed after 3 h.
+  walls. Settings load from `user,project` only: a host's `.claude/settings.local.json`
+  allows never reach the night, so `ALLOWED` is the whole list. `--max-budget-usd 60`,
+  killed after 3 h.
 - **What it writes:** the session writes drafts to `00_Inbox/` and one morning
   report to `Action Queue/` and commits exactly those. The verb keeps a per-host
   record in `.quorum/overnight/<project>/<YYYY-MM-DD>.json` (session id, start/end,

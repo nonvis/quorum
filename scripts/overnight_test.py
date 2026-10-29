@@ -121,6 +121,21 @@ class CommandTest(Case):
             self.assertIn(t, denied)
         self.assertNotIn("--add-dir", cmd)                      # the vault is the cwd; repos stay read-only
 
+    def test_the_hosts_local_settings_never_reach_the_night(self):
+        # A host's `.claude/settings.local.json` collects allow rules from hand sessions (a bare "Bash" on the MSI,
+        # `scripts/pf up *`); loaded into the night, they outrank the walls ALLOWED was written to be.
+        cmd = overnight.Runner().command(overnight.plan(self.vault, "permafrost"), self.vault, "0123abcd-0000-4000-8000-000000000000")
+        self.assertIn("--setting-sources", cmd)
+        sources = cmd[cmd.index("--setting-sources") + 1].split(",")
+        self.assertEqual(sorted(sources), ["project", "user"])  # the vault's hooks + the user's model settings stay
+
+    def test_a_night_never_starts_a_night_or_a_model_verb(self):
+        # Bash(quorum:*) is for lookups, lint and curate; the run prompt quotes `quorum overnight <project>` itself.
+        cmd = overnight.Runner().command(overnight.plan(self.vault, "permafrost"), self.vault, "0123abcd-0000-4000-8000-000000000000")
+        denied = cmd[cmd.index("--disallowedTools") + 1].split(",")
+        for t in ("Bash(quorum overnight:*)", "Bash(quorum radio:*)", "Bash(quorum web:*)"):
+            self.assertIn(t, denied)
+
     def test_the_prompt_names_the_note_the_appendix_and_the_session(self):
         p = overnight.plan(self.vault, "permafrost")
         text = overnight.user_prompt(p, "0123abcd-0000-4000-8000-000000000000", NOW)

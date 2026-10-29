@@ -32,7 +32,8 @@ What each command does is in `README.md`; the source is the truth.
   by `06_Metadata/quorum-projects.json` → `overnight.run_prompt`, one `## Project: <id>` appendix
   per project); the note is the spec, the verb only starts it. One night per project per KST day;
   hosts, deployments and repo working trees are denied at the tool level (`DENIED`) as well as by
-  the note's walls. Never add a timer, a login item or a "run when idle" to it.
+  the note's walls, and the session never loads the host's `local` settings (their allows would
+  outrank `ALLOWED`). Never add a timer, a login item or a "run when idle" to it.
 - **Read-only toward what it reads.** `spend` reads transcripts; the indexes read
   markdown and git. The only files written are `<vault>/.quorum/index.db`,
   `<repo>/.quorum/index.db` and, if missing, `<repo>/.quorum/.gitignore` (`*`);
