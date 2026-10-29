@@ -275,7 +275,24 @@ def _rel(vault, target):
         return None
 
 
-def _written(vault, tools):
+def _tagged_drafts(vault, pid, date):
+    """Inbox notes whose frontmatter marks them as this project's overnight draft for `date` — catches drafts
+    a subagent wrote in scratch and the night copied in by Bash, which no Write/Edit target shows."""
+    found = []
+    for f in sorted((Path(vault) / "00_Inbox").glob("*.md")):
+        try:
+            head = f.read_text(encoding="utf-8", errors="replace").split("\n---", 1)[0]
+        except OSError:
+            continue
+        tags = re.search(r"^tags:\s*\[([^\]]*)\]", head, re.M)
+        status = re.search(r"^status:.*$", head, re.M)
+        names = {t.strip().strip("'\"").lower() for t in tags.group(1).split(",")} if tags else set()
+        if {"overnight-draft", pid} <= names and status and ("overnight " + date) in status.group(0):
+            found.append("00_Inbox/" + f.name)
+    return found
+
+
+def _written(vault, tools, pid=None, date=None):
     drafts, report = [], ""
     for t in tools:
         if t.get("name") not in ("Write", "Edit"):
@@ -287,6 +304,8 @@ def _written(vault, tools):
             drafts.append(rel)
         elif rel.startswith("Action Queue/") and rel.endswith(".md"):
             report = rel
+    if pid and date:
+        drafts += [d for d in _tagged_drafts(vault, pid, date) if d not in drafts]
     return drafts, report
 
 
@@ -317,7 +336,7 @@ def run(vault, pid, runner, store, now, on_event=None, dry_run=False):
     store.save(row)
     r = runner(p, vault, sid, prompt, on_event=on_event)
     ended = datetime.now(timezone.utc).replace(microsecond=0) if os.environ.get("QUORUM_OVERNIGHT_NOW") is None else now
-    drafts, report = _written(vault, r.get("tools") or [])
+    drafts, report = _written(vault, r.get("tools") or [], pid, date)
     row.update(ended=ended.isoformat(), status=r["status"], cost=float(r.get("cost") or 0), tools=len(r.get("tools") or []),
                drafts=drafts, report=report, error=r.get("error") or "", result=r.get("result") or "")
     if r["status"] == "done" and hasattr(runner, "spend"):

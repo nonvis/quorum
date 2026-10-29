@@ -172,6 +172,19 @@ class NightTest(Case):
         self.assertEqual([e["event"] for e in events][:2], ["started", "tool"])
         self.assertEqual(events[-1]["event"], "done")
 
+    def test_a_draft_copied_in_by_bash_counts_another_projects_does_not(self):
+        def draft(name, project, date):
+            (self.vault / "00_Inbox" / name).write_text(
+                '---\ntitle: "x"\ntags: [%s, research, overnight-draft]\nstatus: "DRAFT — overnight %s (Quorum/30)"\n---\n# x\n'
+                % (project, date), encoding="utf-8")
+        draft("10 - Research draft — copied (2026-10-29).md", "permafrost", "2026-10-29")
+        draft("11 - Research draft — other project (2026-10-29).md", "meridian", "2026-10-29")
+        draft("12 - Research draft — last night (2026-10-28).md", "permafrost", "2026-10-28")
+        row = overnight.run(self.vault, "permafrost", self.runner, self.store, NOW)
+        self.assertEqual(row["drafts"], ["00_Inbox/00 - Research draft — A (2026-10-29).md",
+                                         "00_Inbox/01 - Depth draft — B (2026-10-29).md",
+                                         "00_Inbox/10 - Research draft — copied (2026-10-29).md"])
+
     def test_a_done_night_refuses_a_second_run_the_same_day(self):
         overnight.run(self.vault, "permafrost", self.runner, self.store, NOW)
         with self.assertRaises(overnight.OvernightError) as cm:
