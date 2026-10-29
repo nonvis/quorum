@@ -39,7 +39,8 @@ import radio_projects  # noqa: E402
 
 REPO = HERE.parent
 MODEL = os.environ.get("QUORUM_OVERNIGHT_MODEL", "claude-opus-5-5")
-BUDGET_USD = "60"                 # the model stops itself here; a night has cost $10–30 list
+EFFORT = "xhigh"                  # was read from the user's settings, which no longer load
+BUDGET_USD = "60"               # the model stops itself here; a night has cost $10–30 list
 TIMEOUT_S = 3 * 3600              # the run prompt's own STOP is earlier; this is the kill
 KST = timezone(timedelta(hours=9))
 
@@ -187,8 +188,10 @@ class Runner:
         self.model, self.timeout, self.budget = model, timeout, budget
 
     def command(self, p, vault, sid):
-        # No `local` source: a host's settings.local.json allows (a bare "Bash" on one host) would outrank ALLOWED.
-        return [self.claude, "-p", "--model", self.model, "--session-id", sid, "--setting-sources", "user,project",
+        # Project source only: a host's settings.local.json (bare "Bash" on the MSI) and the user's settings.json
+        # (bare "Bash", "Write", "Edit" on the Mac) would outrank ALLOWED.
+        return [self.claude, "-p", "--model", self.model, "--effort", EFFORT, "--session-id", sid,
+                "--setting-sources", "project",
                 "--permission-mode", "acceptEdits", "--allowedTools", ",".join(ALLOWED),
                 "--disallowedTools", ",".join(DENIED), "--max-budget-usd", self.budget, "--strict-mcp-config",
                 "--output-format", "stream-json", "--verbose"]

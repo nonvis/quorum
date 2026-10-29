@@ -121,13 +121,18 @@ class CommandTest(Case):
             self.assertIn(t, denied)
         self.assertNotIn("--add-dir", cmd)                      # the vault is the cwd; repos stay read-only
 
-    def test_the_hosts_local_settings_never_reach_the_night(self):
-        # A host's `.claude/settings.local.json` collects allow rules from hand sessions (a bare "Bash" on the MSI,
-        # `scripts/pf up *`); loaded into the night, they outrank the walls ALLOWED was written to be.
+    def test_only_the_vaults_project_settings_reach_the_night(self):
+        # A host's `.claude/settings.local.json` (a bare "Bash" on the MSI, `scripts/pf up *`) and the user's
+        # `~/.claude/settings.json` (a bare "Bash", "Write", "Edit" on the Mac) collect allows from hand sessions;
+        # loaded into the night, they outrank the walls ALLOWED was written to be.
         cmd = overnight.Runner().command(overnight.plan(self.vault, "permafrost"), self.vault, "0123abcd-0000-4000-8000-000000000000")
         self.assertIn("--setting-sources", cmd)
-        sources = cmd[cmd.index("--setting-sources") + 1].split(",")
-        self.assertEqual(sorted(sources), ["project", "user"])  # the vault's hooks + the user's model settings stay
+        self.assertEqual(cmd[cmd.index("--setting-sources") + 1], "project")  # the vault's hooks + tracked allows
+
+    def test_the_effort_is_set_by_the_verb_not_the_users_settings(self):
+        cmd = overnight.Runner().command(overnight.plan(self.vault, "permafrost"), self.vault, "0123abcd-0000-4000-8000-000000000000")
+        self.assertIn("--effort", cmd)
+        self.assertEqual(cmd[cmd.index("--effort") + 1], overnight.EFFORT)
 
     def test_a_night_never_starts_a_night_or_a_model_verb(self):
         # Bash(quorum:*) is for lookups, lint and curate; the run prompt quotes `quorum overnight <project>` itself.
