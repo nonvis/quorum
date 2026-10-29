@@ -64,6 +64,21 @@ DENIED = [
     "Bash(quorum overnight:*)", "Bash(quorum radio:*)", "Bash(quorum web:*)",
 ]
 
+REPO_ROOTS = ("~/nonvis", "~/projects")
+
+
+def repo_allows(p, roots=REPO_ROOTS):
+    """Read-only history in the project's own repos, by exact path: `git -C <repo> log|show`. Never a bare
+    `git -C:*`, which would let `git -C <repo> checkout` past DENIED."""
+    out = []
+    for repo in p.get("repos") or []:
+        for root in roots:
+            d = Path(os.path.expanduser(root)) / repo
+            if (d / ".git").exists():
+                out += ["Bash(git -C %s log:*)" % d, "Bash(git -C %s show:*)" % d]
+                break
+    return out
+
 
 class OvernightError(Exception):
     pass
@@ -192,7 +207,7 @@ class Runner:
         # (bare "Bash", "Write", "Edit" on the Mac) would outrank ALLOWED.
         return [self.claude, "-p", "--model", self.model, "--effort", EFFORT, "--session-id", sid,
                 "--setting-sources", "project",
-                "--permission-mode", "acceptEdits", "--allowedTools", ",".join(ALLOWED),
+                "--permission-mode", "acceptEdits", "--allowedTools", ",".join(ALLOWED + repo_allows(p)),
                 "--disallowedTools", ",".join(DENIED), "--max-budget-usd", self.budget, "--strict-mcp-config",
                 "--output-format", "stream-json", "--verbose"]
 

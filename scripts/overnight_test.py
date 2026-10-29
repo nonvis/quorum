@@ -141,6 +141,18 @@ class CommandTest(Case):
         for t in ("Bash(quorum overnight:*)", "Bash(quorum radio:*)", "Bash(quorum web:*)"):
             self.assertIn(t, denied)
 
+    def test_repo_history_is_allowed_by_exact_path_never_a_bare_git_c(self):
+        roots = Path(self.tmp.name) / "roots"
+        (roots / "a" / "permafrost" / ".git").mkdir(parents=True)
+        (roots / "b" / "notarepo").mkdir(parents=True)
+        p = {"repos": ["permafrost", "notarepo", "missing"]}
+        got = overnight.repo_allows(p, roots=(str(roots / "a"), str(roots / "b")))
+        repo = roots / "a" / "permafrost"
+        self.assertEqual(got, ["Bash(git -C %s log:*)" % repo, "Bash(git -C %s show:*)" % repo])
+        allowed = overnight.Runner().command(overnight.plan(self.vault, "permafrost"), self.vault,
+                                             "0123abcd-0000-4000-8000-000000000000")
+        self.assertNotIn("Bash(git -C:*)", allowed[allowed.index("--allowedTools") + 1].split(","))
+
     def test_the_prompt_names_the_note_the_appendix_and_the_session(self):
         p = overnight.plan(self.vault, "permafrost")
         text = overnight.user_prompt(p, "0123abcd-0000-4000-8000-000000000000", NOW)
