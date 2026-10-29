@@ -10,7 +10,6 @@ import { GenerateView } from '@/views/GenerateView';
 import { ListenView } from '@/views/ListenView';
 import { ProjectsView } from '@/views/ProjectsView';
 import { RolesView } from '@/views/RolesView';
-import { StudyView } from '@/views/StudyView';
 
 export function App() {
   const route = useRoute();
@@ -25,7 +24,6 @@ export function App() {
       {route.view === 'generate' && <GenerateView />}
       {route.view === 'projects' && <ProjectsView />}
       {route.view === 'roles' && <RolesView id={route.id} />}
-      {route.view === 'study' && <StudyView id={route.id} />}
       <PlayerBar />
       <Toaster theme={theme} position="top-right" richColors closeButton />
     </div>

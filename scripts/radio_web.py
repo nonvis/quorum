@@ -33,7 +33,6 @@ import radio  # noqa: E402
 import radio_projects  # noqa: E402
 import radio_room  # noqa: E402
 import radio_store  # noqa: E402
-import study  # noqa: E402
 
 DIST = REPO / "radio-web" / "dist"
 DEFAULT_PORT = 4747
@@ -111,8 +110,7 @@ class Job:
 
 class App:
     def __init__(self, vault, store_root=None, roots=None, fake=False, voice=None, env=None, dist=DIST,
-                 cast_path=radio.CAST_FILE, lock_path=radio.LOCK_FILE, commit_cast=True, roles_dir=None,
-                 study_root=None, study_roots=None):
+                 cast_path=radio.CAST_FILE, lock_path=radio.LOCK_FILE, commit_cast=True, roles_dir=None):
         self.vault = Path(vault)
         self.env = dict(os.environ, **(env or {}))
         # the sweep runs on the same clock the episodes are made with
@@ -122,9 +120,6 @@ class App:
         self.voice = voice_ready() if voice is None else voice
         self.env.setdefault("QUORUM_RADIO_STORE", str(self.store.root))
         self.env.setdefault("QUORUM_VAULT", str(self.vault))
-        self.study = study.Store(study_root)
-        self.study_roots = study_roots or study.default_roots()
-        self.env.setdefault("QUORUM_STUDY_STORE", str(self.study.root))
         self.dist = Path(dist)
         self.cast_path, self.lock_path, self.commit_cast = Path(cast_path), Path(lock_path), commit_cast
         self.roles_dir = Path(roles_dir or radio.ROLES_DIR)
@@ -297,80 +292,13 @@ class App:
                 argv += ["--context", ",".join(str(x) for x in body["context"])]
         argv += ["--events"] + (["--fake"] if self.fake else []) + ([] if self.voice else ["--no-voice"])
         with self.lock:
-            if any(not j.done and j.kind != "study" for j in self.jobs.values()):
+            if any(not j.done for j in self.jobs.values()):
                 raise HttpError(409, "a generation is already running; wait for it or cancel it")
             job = Job(kind, pid, argv, self.env)
             self.jobs[job.id] = job
             for old in sorted(self.jobs.values(), key=lambda j: j.started)[:-JOB_KEEP]:
                 self.jobs.pop(old.id, None)
         return job
-
-    # ── study (QR-41…47) ────────────────────────────────────────────────────
-    def study_candidates(self):
-        return study.candidates(self.study_roots)
-
-    def study_create(self, b):
-        """One pick (repo + optional folder) is enough: the id, the project and the goal default (study.derive)."""
-        projects = {pid: cfg.get("repos", []) for pid, cfg in radio_projects.load(self.vault).items()}
-        d = study.derive(self.study, str(b.get("repo") or ""), b.get("subtree") or None, projects, self.study_roots)
-        return self.study.create(str(b.get("id") or d["id"]), str(b.get("project") or d["project"]), d["repo"],
-                                 " ".join(str(b.get("goal") or "").split()) or d["goal"], subtree=d["subtree"],
-                                 now=datetime.now(timezone.utc), roots=self.study_roots)
-
-    def study_running(self, tid=None):
-        return [j for j in self.jobs.values() if j.kind == "study" and not j.done and (tid is None or j.project == tid)]
-
-    def study_job(self, tid, action, body):
-        try:
-            t = self.study.track(tid)
-        except KeyError:
-            raise HttpError(404, "no track %s" % tid)
-        if t["status"] != "active":
-            raise HttpError(400, "track %s is finished" % tid)
-        days = self.study.days(tid)
-        argv = [sys.executable, str(HERE / "study.py"), action, tid]
-        if action in ("say", "start"):
-            msg = str(body.get("message") or "").strip()
-            if action == "say" and not msg:
-                raise HttpError(400, "say what?")
-            today = study.kst_date(datetime.now(timezone.utc))
-            open_ = [d["date"] for d in days if d["status"] == "open" and d["date"] != today]
-            if open_:
-                raise HttpError(409, "the session of %s was never ended: end it first" % open_[0], open_day=open_[0])
-            argv += [msg] if msg else []
-        elif not any(d["status"] == "open" and d.get("started") for d in days):
-            raise HttpError(400, "no open session on %s" % tid)
-        argv += ["--events"] + (["--fake"] if self.fake else [])
-        with self.lock:
-            if self.study_running(tid):
-                raise HttpError(409, "the tutor is still answering")
-            job = Job("study", tid, argv, self.env)
-            self.jobs[job.id] = job
-        return job
-
-    def study_track(self, tid):
-        t = self.study.track(tid)
-        days = [{k: d.get(k) for k in ("date", "status", "cost", "close", "opened", "ended", "day_n")}
-                | {"turns": len(d.get("turns") or [])} for d in self.study.days(tid)]
-        run = self.study_running(tid)
-        return {"track": t, "days": days, "changed": study.changed_files(t), "head": study.read_head(t["repo"]),
-                "open_day": next((d["date"] for d in days if d["status"] == "open"), None),
-                "running": run[0].view() if run else None}
-
-    def study_day(self, tid, date):
-        t, d = self.study.track(tid), self.study.day(tid, date)
-        for turn in d["turns"]:
-            if turn["who"] == "tutor":
-                turn["citations"] = study.resolve_citations(t, turn["text"])
-        return d
-
-    def study_finish(self, tid):
-        if any(d["status"] == "open" and d.get("started") for d in self.study.days(tid)):
-            raise HttpError(409, "end today's session first: its close is the memory")
-
-        def no_model(*_a, **_k):
-            raise study.StudyError("no model call on finish")
-        return study.finish(self.study, tid, no_model, datetime.now(timezone.utc))
 
     def job(self, jid):
         j = self.jobs.get(jid)
@@ -484,8 +412,7 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["health"] and m == "GET":
             return self._send(200, {"ok": True, "fake": a.fake, "voice": a.voice, "claude": bool(shutil.which("claude")),
                                     "vault": str(a.vault), "store": str(a.store.root),
-                                    "running": [j.view() for j in a.jobs.values() if not j.done and j.kind != "study"],
-                                    "study": [j.view() for j in a.study_running()]})
+                                    "running": [j.view() for j in a.jobs.values() if not j.done]})
         if parts[:1] == ["projects"]:
             return self._projects(parts[1:], m)
         if parts == ["cast"]:
@@ -512,8 +439,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"deleted": parts[3]})
         if parts[:1] == ["episodes"]:
             return self._episodes(parts[1:], m, q)
-        if parts[:1] == ["study"]:
-            return self._study(parts[1:], m, q)
         if parts == ["roles"] and m == "GET":
             return self._send(200, {"roles": a.roles()})
         if len(parts) == 2 and parts[0] == "roles":
@@ -616,40 +541,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._audio(st, rest[0])
         except KeyError:
             raise HttpError(404, "no episode %s" % rest[0])
-        raise HttpError(404, "no such API")
-
-    def _study(self, rest, m, q):
-        a = self.app
-        try:
-            if not rest and m == "GET":
-                return self._send(200, {"tracks": a.study.tracks()})
-            if not rest and m == "POST":
-                return self._send(200, a.study_create(self._json_body()))
-            if rest == ["candidates"] and m == "GET":
-                return self._send(200, {"repos": a.study_candidates()})
-            tid = rest[0]
-            if len(rest) == 1 and m == "GET":
-                return self._send(200, a.study_track(tid))
-            if len(rest) == 1 and m == "DELETE":
-                if a.study_running(tid):
-                    raise HttpError(409, "the tutor is still answering; delete after it finishes")
-                a.study.delete(tid, active_ok=True)
-                return self._send(200, {"deleted": tid})
-            if len(rest) == 3 and rest[1] == "days" and m == "GET":
-                return self._send(200, a.study_day(tid, rest[2]))
-            if rest[1:] in (["say"], ["start"], ["end"]) and m == "POST":
-                job = a.study_job(tid, rest[1], self._json_body())
-                return self._send(202, {"job": job.id})
-            if rest[1:] == ["finish"] and m == "POST":
-                return self._send(200, a.study_finish(tid))
-            if rest[1:] == ["file"] and m == "GET":
-                t = a.study.track(tid)
-                return self._send(200, study.excerpt(t, (q.get("path") or [""])[0], (q.get("line") or ["1"])[0],
-                                                     (q.get("end") or [None])[0]))
-        except KeyError as e:
-            raise HttpError(404, "no such track or day: %s" % e)
-        except (study.StudyError, ValueError) as e:
-            raise HttpError(400, str(e))
         raise HttpError(404, "no such API")
 
     def _audio(self, st, eid):

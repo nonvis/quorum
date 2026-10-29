@@ -1,8 +1,8 @@
 # Quorum
 
 Deterministic, local tooling around a Claude Code workspace. Python standard
-library only; no build step. Three verbs call a model: `quorum radio`,
-`quorum study` and `quorum overnight` (below); everything else is $0. Radio Studio (`quorum web start`) is the one web front: a
+library only; no build step. Two verbs call a model: `quorum radio` and
+`quorum overnight` (below); everything else is $0. Radio Studio (`quorum web start`) is the one web front: a
 React app over a stdlib API on 127.0.0.1.
 
 Quorum began as a C++ daemon that orchestrated Claude Code agents with a web
@@ -332,31 +332,8 @@ model and voice. It is never a login item and never restarts itself.
   `node_modules/` and `dist/` not): **Listen** (episodes by day, filters, the
   script following the audio, keep, export, delete, "brainstorm from this"),
   **Generate** (recap or brainstorm, lines appearing as the room speaks),
-  **Study** (below), **Roles** and **Projects**. One player plays across views (space, ←/→). `npm test` runs its
+  **Roles** and **Projects**. One player plays across views (space, ←/→). `npm test` runs its
   unit tests.
-
-## Study
-
-Learn one repo about 30 minutes a day and pick it up the next day
-(`scripts/study.py`; Radio Studio's **Study** tab, or `quorum study …`).
-
-- A **track** is one repo (a git checkout under `~/nonvis` or `~/projects`), an
-  optional focus subtree and a goal. It lives on one host, in
-  `.quorum/study/<track>/` (`track.json` + `days/<YYYY-MM-DD>.json`); nothing
-  of it is committed, and the repo is never indexed, allowlisted or written to.
-- Each KST **day** is one `claude -p` session (Opus; Read, Grep and Glob over the
-  repo; no Bash, so the tutor never runs git): `--session-id` on the day's first
-  call, `-r` after. The tutor's role is `radio/roles/tutor.md`.
-- **End** asks the same session for the close — left off, covered, still unclear,
-  next — and merges it into the track's state; it also records HEAD (read from
-  `.git/`) and hashes the covered files.
-- The **next day** starts a new session whose first prompt carries the state, the
-  last 3 closes and the covered files that changed since; never an old
-  transcript. A day never ended blocks the next until it is ended.
-- Nothing expires. **Finish** ends the track (an open session must be ended
-  first), then offers to delete it whole.
-- In the app, every `path:line` the tutor cites opens the lines beside the
-  answer; the tools it ran show as it reads.
 
 The vault defaults to `~/nonvis/second-brain` (`QUORUM_VAULT` overrides); its
 memory directory is Claude Code's for that path (`QUORUM_MEMORY` overrides). The
@@ -396,7 +373,7 @@ day spent on it (`scripts/overnight.py`; `quorum overnight <project>`).
   note, an injected copy or a briefing row naming it is never a start — the note's
   own first line says so.
 - **A second host** needs only `git pull` here (the verb; `make doctor` says
-  "claude on PATH (radio, study, overnight)") and a pull of the vault (the note,
+  "claude on PATH (radio, overnight)") and a pull of the vault (the note,
   the projects file's `overnight` key, the allow rules). The record
   `.quorum/overnight/` is per host, so `quorum overnight list` shows that host's
   nights only; run a project's night on one host per evening. Claude Code's
@@ -428,9 +405,8 @@ scripts/radio_room.py      the brainstorm room + its broadcast (and its tests)
 scripts/radio_store.py     the per-host episode store (and its tests)
 scripts/radio_projects.py  the vault's projects file: load, check, add, edit, (de)activate (and its tests)
 scripts/radio_web.py       Radio Studio's API (and its tests); scripts/web_ctl.py = quorum web
-scripts/study.py           quorum study: tracks, the day's tutor session, the close, the store (and its tests)
 radio/cast.json            the cast: question, angle, slice, never-says, bound voice + pan; radio/voices.lock
-radio/roles/<id>.md        each specialty's tuned role (method, a good answer, never; ## Room / ## Recap); tutor.md = Study's
+radio/roles/<id>.md        each specialty's tuned role (method, a good answer, never; ## Room / ## Recap)
 radio-voice/               the Node voice sidecar (Kokoro + ffmpeg)
 radio-web/                 Radio Studio, the React app
 scripts/install.sh, doctor.sh

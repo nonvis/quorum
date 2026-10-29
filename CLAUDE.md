@@ -22,10 +22,10 @@ What each command does is in `README.md`; the source is the truth.
   `radio-voice/` (its own Node package; `kokoro-js` pinned exactly) and
   `radio-web/` (Radio Studio's React app; every dependency pinned exactly, built
   by `quorum web start`, served by the stdlib `scripts/radio_web.py`).
-- **Zero model calls, except `quorum radio`, `quorum study` and `quorum overnight`.** Every other
+- **Zero model calls, except `quorum radio` and `quorum overnight`.** Every other
   command is deterministic and costs $0. The core (`quorum_cli.py`, `vault_index.py`,
   `repo_index.py`, `spend_readout.py`, `lint.py`) never imports `radio.py` or
-  anything audio: the CLI runs radio, study and overnight as subprocesses. Radio's tests use its fake
+  anything audio: the CLI runs radio and overnight as subprocesses. Radio's tests use its fake
   model and fake TTS, overnight's its fake runner — never a real model call in a test.
 - **Overnight is started by the owner, never scheduled.** `quorum overnight <project>` starts ONE
   `claude -p` session from the vault's cwd that runs the vault's overnight run prompt note (named
@@ -37,8 +37,7 @@ What each command does is in `README.md`; the source is the truth.
   markdown and git. The only files written are `<vault>/.quorum/index.db`,
   `<repo>/.quorum/index.db` and, if missing, `<repo>/.quorum/.gitignore` (`*`);
   `quorum radio` also writes episodes to the per-host store `.quorum/radio/`
-  and appends new ids to `radio/voices.lock`; `quorum study` writes only its
-  per-host store `.quorum/study/`; `quorum overnight` writes only its per-host
+  and appends new ids to `radio/voices.lock`; `quorum overnight` writes only its per-host
   record `.quorum/overnight/` (the vault session it starts writes `00_Inbox/` and
   one `Action Queue/` note in the vault and commits exactly those); Radio Studio writes the vault's
   `06_Metadata/quorum-projects.json` (+ the allowlist) and commits exactly those
@@ -56,10 +55,7 @@ What each command does is in `README.md`; the source is the truth.
   the slices disjoint. The Verifier's reads are read-only git/note reads run by
   the program (`run_read`), never a shell.
 - **Walls.** A repo is indexed only if it is on the vault's allowlist or has its
-  own `.quorum/`; repo content never leaves its repo. A study track may READ any
-  checkout under the roots (work repos included): never indexed, allowlisted,
-  recapped or written to, no git command (HEAD is read from `.git/`), and the
-  tutor has Read/Grep/Glob only.
+  own `.quorum/`; repo content never leaves its repo.
 - **Self-repairing index.** A query refreshes first (stat + re-parse what changed);
   never add a scheduler, daemon or watcher.
 - **Tests first.** Each change gets a test that fails on the old code, then the

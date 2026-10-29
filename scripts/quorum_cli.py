@@ -51,9 +51,6 @@ tooling that spends no model tokens:
       run as a subprocess): the one verb that calls a model. See scripts/radio.py.
   quorum web start|stop|status|logs|dev
       Radio Studio, the React front over a 127.0.0.1 API (scripts/web_ctl.py).
-  quorum study new|list|show|start|say|end|finish|delete …
-      Learn one repo ~30 min a day: one tutor session a day, its close the memory the
-      next day starts from (scripts/study.py, run as a subprocess; calls a model).
   quorum overnight <project> | list | score [project]
       One owner-started night of vault work for one project: a headless session runs
       the vault's overnight run prompt (drafts → 00_Inbox, one morning report → the
@@ -128,11 +125,6 @@ USAGE = """usage: quorum <command> [options]
                   delete, export; manage projects and specialties
   radio inputs <project> [range] [--since …] [--until …]
                   the day's inputs per specialty slice (JSON, $0)
-  study new <track> --project <p> --repo <path> [--subtree <dir>] --goal "…"
-  study start|say|end|show|finish|delete <track> … | study list
-                  learn one repo a day at a time: one Opus tutor session a day
-                  (read-only, no git), End saves the memory the next day loads
-                  (per-host store .quorum/study/; Radio Studio's Study tab)
   overnight <project> [--dry-run] [--events] | overnight list | overnight score [project]
                   tonight's night of vault work for one project, started by you on
                   the evening of a day spent on it: one Opus session from the vault
@@ -907,13 +899,8 @@ def cmd_web(args):
     return subprocess.call([sys.executable, str(REPO / "scripts" / "web_ctl.py")] + list(args))
 
 
-def cmd_study(args):
-    """Study (QR-41…47) in its own process, like radio: the core never imports it."""
-    return subprocess.call([sys.executable, str(REPO / "scripts" / "study.py")] + list(args))
-
-
 def cmd_overnight(args):
-    """Overnight (Decision #128) in its own process, like study: the core never imports it."""
+    """Overnight (Decision #128) in its own process, like radio: the core never imports it."""
     return subprocess.call([sys.executable, str(REPO / "scripts" / "overnight.py")] + list(args))
 
 
@@ -962,7 +949,9 @@ def main(argv):
     if sub == "web":
         return cmd_web(rest)
     if sub == "study":
-        return cmd_study(rest)
+        print("ERROR: `quorum study` was removed on 2026-10-29 (vault Quorum Decision Log #129): "
+              "a plain Claude session with the repo added does the same.", file=sys.stderr)
+        return 2
     if sub == "overnight":
         return cmd_overnight(rest)
     if sub in RETIRED:

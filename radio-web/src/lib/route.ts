@@ -4,22 +4,19 @@ export type Route =
   | { view: 'listen'; id?: string }
   | { view: 'generate' }
   | { view: 'projects' }
-  | { view: 'roles'; id?: string }
-  | { view: 'study'; id?: string };
+  | { view: 'roles'; id?: string };
 
 export function parse(hash: string): Route {
   const [view, id] = hash.replace(/^#\/?/, '').split('/');
   if (view === 'generate') return { view: 'generate' };
   if (view === 'projects') return { view: 'projects' };
   if (view === 'roles') return { view: 'roles', id: id ? decodeURIComponent(id) : undefined };
-  if (view === 'study') return { view: 'study', id: id ? decodeURIComponent(id) : undefined };
   return { view: 'listen', id: view === 'listen' && id ? decodeURIComponent(id) : undefined };
 }
 
 export function href(r: Route): string {
   if (r.view === 'listen') return r.id ? `#/listen/${encodeURIComponent(r.id)}` : '#/listen';
   if (r.view === 'roles') return r.id ? `#/roles/${encodeURIComponent(r.id)}` : '#/roles';
-  if (r.view === 'study') return r.id ? `#/study/${encodeURIComponent(r.id)}` : '#/study';
   return `#/${r.view}`;
 }
 
