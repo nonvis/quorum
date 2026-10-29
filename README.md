@@ -1,8 +1,8 @@
 # Quorum
 
 Deterministic, local tooling around a Claude Code workspace. Python standard
-library only; no build step. Two verbs call a model: `quorum radio` and
-`quorum study` (below); everything else is $0. Radio Studio (`quorum web start`) is the one web front: a
+library only; no build step. Three verbs call a model: `quorum radio`,
+`quorum study` and `quorum overnight` (below); everything else is $0. Radio Studio (`quorum web start`) is the one web front: a
 React app over a stdlib API on 127.0.0.1.
 
 Quorum began as a C++ daemon that orchestrated Claude Code agents with a web
@@ -37,6 +37,7 @@ quorum radio brainstorm <project> "<one question>" [--with <id>,…] [--context 
              [--fake] [--no-voice] [--events]
 quorum radio inputs <project> [range] [--since <ISO8601>] [--until <ISO8601>]
 quorum web start [--fake] [--port N] [--no-open] | stop | status | logs [-f] | dev [--fake] | build
+quorum overnight <project> [--dry-run] [--events] | overnight list | overnight score [project]
 quorum version
 ```
 
@@ -368,7 +369,7 @@ index can't be stale when it is read and nothing has to be scheduled.
 One night of vault work for one project, started by the owner on the evening of a
 day spent on it (`scripts/overnight.py`; `quorum overnight <project>`).
 
-- **The night is a vault note**, the overnight run prompt, named by the projects
+- **The night is a note in the vault**, the overnight run prompt, named by the projects
   file (`06_Metadata/quorum-projects.json` → `overnight.run_prompt`): walls, lanes,
   the morning report's shape, and one `## Project: <id>` appendix per project with
   that project's own walls and gap sources. A project without an appendix has no
