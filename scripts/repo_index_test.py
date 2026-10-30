@@ -553,5 +553,66 @@ class AffectedCase(unittest.TestCase):
             self.assertFalse(ri.is_test_path(p), p)
 
 
+class FromTheVaultCase(unittest.TestCase):
+    """Repo verbs run from the vault's cwd (the overnight's): the vault is a git repo whose
+    .quorum/ holds the vault index, not a repo opt-in."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name)
+        self.repo = self.home / "nonvis" / "alpha"
+        self.vault = self.home / "vault"
+        for rel, text in {"lib/__init__.py": "", "lib/core.py": "def core_fn():\n    return 1\n",
+                          "tests/test_core.py": "from lib.core import core_fn\n"}.items():
+            write(self.repo, rel, text)
+        git(self.repo, "init", "-q", "-b", "main")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-q", "-m", "c")
+        write(self.vault, "06_Metadata/quorum-repos.txt", "alpha\n")
+        write(self.vault, "Note.md", "Runs `~/nonvis/alpha/lib/core.py`; core_fn lives there.\n")
+        git(self.vault, "init", "-q", "-b", "main")
+        git(self.vault, "add", ".")
+        git(self.vault, "commit", "-q", "-m", "v")
+        (self.vault / ".quorum").mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def cli(self, *args):
+        env = dict(ENV, HOME=str(self.home), QUORUM_VAULT=str(self.vault),
+                   QUORUM_MEMORY=str(self.home / "mem"))
+        return subprocess.run([sys.executable, str(HERE / "quorum_cli.py")] + list(args),
+                              cwd=str(self.vault), env=env, capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL)
+
+    def test_where_from_the_vault_searches_the_allowlisted_repos(self):
+        p = self.cli("where", "core_fn")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("alpha  def    lib/core.py:1", p.stdout)
+        self.assertNotIn("Note.md", p.stdout)
+
+    def test_a_repo_verb_from_the_vault_leaves_the_vault_index_alone(self):
+        self.assertEqual(self.cli("q", "core_fn").returncode, 0)
+        self.cli("where", "core_fn")
+        import sqlite3
+        db = sqlite3.connect(str(self.vault / ".quorum" / "index.db"))
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        db.close()
+        self.assertNotIn("symbols", tables)
+
+    def test_affected_reads_a_repo_relative_path_against_the_named_repo(self):
+        p = self.cli("affected", "--repo", "alpha", "lib/core.py")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("tests/test_core.py", p.stdout)
+
+    def test_affected_refuses_a_path_outside_its_repo(self):
+        p = self.cli("affected", "--repo", "alpha", str(self.vault / "Note.md"))
+        self.assertEqual((p.returncode, "not in alpha" in p.stderr), (1, True), p.stderr)
+
+    def test_affected_from_the_vault_asks_for_a_repo(self):
+        p = self.cli("affected", "lib/core.py")
+        self.assertEqual((p.returncode, "--repo" in p.stderr), (1, True), p.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

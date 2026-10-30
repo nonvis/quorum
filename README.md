@@ -101,7 +101,9 @@ quorum version
   and the tests inside them. Each hit names the changed file it comes from and the
   hops. The default change set is the uncommitted edits plus untracked files;
   `--base <ref>` adds the branch since its merge-base. Files given as arguments
-  are relative to the current dir; `--stdin` lines are repo-relative, as `git
+  are relative to the current dir inside the repo and to the repo root from outside
+  it (`--repo <name>` is then required); a path outside the repo is refused, never
+  counted as reaching no test; `--stdin` lines are repo-relative, as `git
   diff --name-only` prints them; `--quiet` prints test paths only (pipe it to the
   runner). Not seen: a test that runs code as a subprocess or reads a file by a
   path string, and aliases the resolver does not know (tsconfig `paths`,
@@ -112,7 +114,8 @@ quorum version
   reaches is listed.
   **`repo index`** builds or refreshes repo indexes (`--rebuild` also compacts the db).
   The default target is the repo you are in; outside one, every allowlisted repo
-  (`--all`); `--repo <name>` picks one. A repo is indexed only if it is on the
+  (`--all`); `--repo <name>` picks one. The vault counts as outside: its `.quorum/`
+  holds the vault index, not an opt-in. A repo is indexed only if it is on the
   vault's allowlist or has opted in with its own `.quorum/` directory — so inside
   an opted-in repo these work with no vault at all. The index covers the
   committed tree at HEAD (not uncommitted edits); a refresh re-reads only the

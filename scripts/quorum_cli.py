@@ -365,6 +365,8 @@ def _repo_targets(opts):
             return [(name, allowed[name])], None
         return None, "repo %r is not on the vault's allowlist (06_Metadata/quorum-repos.txt)" % name
     top = repo_index.toplevel(os.getcwd())
+    if top is not None and vault_ok and top.resolve() == vault_index.default_vault().resolve():
+        top = None  # the vault's .quorum/ holds the vault index, not a repo opt-in
     if top is None:
         if not vault_ok:
             return None, "not inside a git repo, and no vault for --all"
@@ -538,10 +540,22 @@ def cmd_affected(args):
         print("ERROR: run inside a repo or name one with --repo", file=sys.stderr)
         return 1
     name, path = targets[0]
-    ri = _open_repo(path)
-    changed = [os.path.abspath(f) for f in rest]
+    root = os.path.realpath(str(path))
+    here = os.path.realpath(os.getcwd())
+    inside = here == root or here.startswith(root + os.sep)
+    if not inside and not opts.get("--repo"):
+        print("ERROR: run inside a repo or name one with --repo", file=sys.stderr)
+        return 1
+    # A relative path is the cwd's inside the repo, the repo root's from outside it.
+    changed = [os.path.join(here if inside else root, f) for f in rest]
     if opts.get("--stdin"):
-        changed += [line.strip() for line in sys.stdin if line.strip()]
+        changed += [os.path.join(root, line.strip()) for line in sys.stdin if line.strip()]
+    outside = [c for c in changed
+               if os.path.relpath(os.path.realpath(c), root).split(os.sep)[0] == ".."]
+    if outside:
+        print("ERROR: not in %s (%s): %s" % (name, root, ", ".join(outside)), file=sys.stderr)
+        return 1
+    ri = _open_repo(path)
     if not rest and not opts.get("--stdin"):
         changed = ri.changed_files(opts.get("--base"))
     r = ri.affected(changed)
