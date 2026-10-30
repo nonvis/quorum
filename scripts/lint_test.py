@@ -160,9 +160,11 @@ class LintCase(unittest.TestCase):
     def test_templates_and_vault_root_files_are_not_notes_to_lint(self):
         note(self.vault / "06_Metadata" / "Templates" / "T.md", "[[related note]]", title="T")
         write(self.vault / "README.md", "# Vault\n")
+        write(self.vault / "01_Projects" / "README.md", "# Projects\n")
         c = self.lint()
         self.assertNotIn("vault:06_Metadata/Templates/T.md", [x["note"] for x in c["dangling_links"]])
         self.assertNotIn("vault:README.md", c["orphans"] + c["no_summary"])
+        self.assertNotIn("vault:01_Projects/README.md", c["orphans"] + c["no_summary"])
 
     def test_an_unquoted_colon_in_a_frontmatter_value_breaks_yaml(self):
         write(self.vault / "Bad.md", "---\ntitle: Bad\nsummary: the rule: one writer\n---\nx\n")

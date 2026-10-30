@@ -9,8 +9,8 @@ Checks (each a list in the JSON `checks` object):
   ambiguous_links      live notes' bare [[name]] shared by notes equally near the
                        linker (write the folder: [[Folder/name|name]])
   orphans              live vault notes no other note links to (Archive/, Inbox,
-                       Action Queue, 06_Metadata, "00 - …" folder roots and upper-case
-                       vault-root files like README.md skipped)
+                       Action Queue, 06_Metadata, "00 - …" folder roots, upper-case
+                       vault-root files like CLAUDE.md and any folder's README.md skipped)
   no_summary           live vault notes without a `summary:` (the Note Map is
                        generated from it)
   dead_mentions        ~/… paths in live notes naming a file that is not at HEAD of
@@ -78,10 +78,12 @@ def _present(files, root, f):
                                     stem + ".example" + ext))
 
 
-def _in_folder(path):
+def _is_note(path):
     """Upper-case files at the vault root (README, CLAUDE.md, CHANGELOG) are the vault
-    repo's own files, not notes."""
+    repo's own files, and a folder's README.md is its guide: neither is a note."""
     rel = path.split(":", 1)[1]
+    if rel.rsplit("/", 1)[-1] == "README.md":
+        return False
     return "/" in rel or not re.fullmatch(r"[A-Z][A-Z0-9_-]*\.md", rel)
 
 
@@ -165,11 +167,11 @@ def run(idx, fix_safe=False):
     checks["orphans"] = sorted(
         r["path"] for r in db.execute("SELECT path, stem FROM docs WHERE source='vault'")
         if r["path"] not in linked and not r["stem"].startswith("00 - ")
-        and not any(x in r["path"] for x in SKIP_ORPHAN) and _in_folder(r["path"]))
+        and not any(x in r["path"] for x in SKIP_ORPHAN) and _is_note(r["path"]))
     checks["no_summary"] = sorted(
         r["path"] for r in db.execute("SELECT path FROM docs WHERE source='vault' AND summary=''")
         if not any(x in r["path"] for x in SKIP_ORPHAN) and not vault_index.is_archived(r["path"])
-        and _in_folder(r["path"]))
+        and _is_note(r["path"]))
 
     repos = allowed_repos(idx)
     rindex = {}
