@@ -153,6 +153,24 @@ class CommandTest(Case):
                                              "0123abcd-0000-4000-8000-000000000000")
         self.assertNotIn("Bash(git -C:*)", allowed[allowed.index("--allowedTools") + 1].split(","))
 
+    def test_the_vaults_own_status_and_history_are_allowed_by_exact_path(self):
+        # Night 2 (Meridian, 10-30) was refused `git -C <vault> status -sb` four times: only a bare `git status` was on
+        # the list. The vault's read verbs by its exact path; a bare `git -C` would let a repo's checkout past DENIED.
+        allowed = overnight.Runner().command(overnight.plan(self.vault, "permafrost"), self.vault,
+                                             "0123abcd-0000-4000-8000-000000000000")
+        allowed = allowed[allowed.index("--allowedTools") + 1].split(",")
+        for verb in ("status", "log", "show", "diff"):
+            self.assertIn("Bash(git -C %s %s:*)" % (self.vault, verb), allowed)
+        self.assertNotIn("Bash(git -C:*)", allowed)
+        self.assertFalse([a for a in allowed if a.startswith("Bash(git -C %s checkout" % self.vault)])
+
+    def test_the_scratch_dir_is_the_one_added_dir_never_a_repo(self):
+        scratch = Path(self.tmp.name) / "store" / "permafrost" / "2026-10-29-scratch"
+        cmd = overnight.Runner().command(overnight.plan(self.vault, "permafrost"), self.vault,
+                                         "0123abcd-0000-4000-8000-000000000000", scratch=scratch)
+        self.assertEqual(cmd.count("--add-dir"), 1)
+        self.assertEqual(cmd[cmd.index("--add-dir") + 1], str(scratch))
+
     def test_the_prompt_names_the_note_the_appendix_and_the_session(self):
         p = overnight.plan(self.vault, "permafrost")
         text = overnight.user_prompt(p, "0123abcd-0000-4000-8000-000000000000", NOW)
@@ -183,6 +201,24 @@ class NightTest(Case):
         self.assertEqual(saved["session"], row["session"])
         self.assertEqual([e["event"] for e in events][:2], ["started", "tool"])
         self.assertEqual(events[-1]["event"], "done")
+
+    def test_a_night_gets_its_own_scratch_named_in_the_prompt_and_removed_when_done(self):
+        # Night 2 put its scratch under ~/.claude/projects/<session>/ (refused: a sensitive path), then /tmp by hand.
+        row = overnight.run(self.vault, "permafrost", self.runner, self.store, NOW)
+        call = self.runner.calls[0]
+        scratch = self.store.scratch("permafrost", "2026-10-29")
+        self.assertEqual(call["scratch"], str(scratch))
+        self.assertTrue(call["scratch_existed"])
+        self.assertIn(str(scratch), call["prompt"])
+        self.assertEqual(row["scratch"], str(scratch))
+        self.assertFalse(scratch.exists())                      # a done night leaves no scratch behind
+        self.assertEqual(self.store.nights()[0]["session"], row["session"])
+
+    def test_a_failed_night_keeps_its_scratch_for_the_rerun(self):
+        self.runner.fail = "claude -p exit 1: boom"
+        with self.assertRaises(overnight.OvernightError):
+            overnight.run(self.vault, "permafrost", self.runner, self.store, NOW)
+        self.assertTrue(self.store.scratch("permafrost", "2026-10-29").is_dir())
 
     def test_a_draft_copied_in_by_bash_counts_another_projects_does_not(self):
         def draft(name, project, date):
@@ -220,6 +256,8 @@ class NightTest(Case):
         self.assertEqual(row["status"], "dry-run")
         self.assertEqual(self.runner.calls, [])
         self.assertEqual(self.store.nights(), [])
+        self.assertFalse(self.store.scratch("permafrost", "2026-10-29").exists())
+        self.assertIn("--add-dir", row["command"])
 
     def test_list_is_newest_first_across_projects(self):
         overnight.run(self.vault, "permafrost", self.runner, self.store, NOW)

@@ -26,6 +26,7 @@ Exit: 0 ok · 1 refused or failed (the reason on stderr) · 2 usage
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -80,6 +81,12 @@ def repo_allows(p, roots=REPO_ROOTS):
     return out
 
 
+def vault_allows(vault):
+    """The vault's own read verbs by its exact path, `git -C <vault> status|log|show|diff`: night 2 was refused
+    `git -C <vault> status` four times. Never a bare `git -C:*` (see repo_allows)."""
+    return ["Bash(git -C %s %s:*)" % (os.path.abspath(vault), v) for v in ("status", "log", "show", "diff")]
+
+
 class OvernightError(Exception):
     pass
 
@@ -129,14 +136,14 @@ def plan(vault, pid):
             "ledger": ov.get("ledger") or "", "appendix": heading}
 
 
-def user_prompt(p, sid, now):
+def user_prompt(p, sid, now, scratch=None):
     return ("Run the overnight for project `%s` (%s).\n"
             "Read first and follow exactly: `%s`. Its section `%s` is tonight's walls and gap sources; "
             "no other project's section applies tonight.\n"
-            "Start: %s KST. Session id: %s. Host: %s.\n"
+            "Start: %s KST. Session id: %s. Host: %s.%s\n"
             "Stop when the morning report is committed and pushed, or at the note's STOP time, whichever is first."
             % (p["id"], p["name"], p["run_prompt"], p["appendix"], now.astimezone(KST).strftime("%Y-%m-%d %H:%M"),
-               sid, socket.gethostname()))
+               sid, socket.gethostname(), (" Scratch: %s" % scratch) if scratch else ""))
 
 
 def commits_since(vault, folders, since_iso):
@@ -158,6 +165,11 @@ class Store:
 
     def path(self, pid, date):
         return self.root / pid / ("%s.json" % date)
+
+    def scratch(self, pid, date):
+        """The night's own scratch (walls.md, one subdir per lane): made before the session, removed after a done
+        night, kept after a failed one for the rerun."""
+        return self.root / pid / ("%s-scratch" % date)
 
     def save(self, row):
         p = self.path(row["project"], row["date"])
@@ -202,18 +214,20 @@ class Runner:
         self.claude = os.environ.get("QUORUM_CLAUDE", "claude")
         self.model, self.timeout, self.budget = model, timeout, budget
 
-    def command(self, p, vault, sid):
+    def command(self, p, vault, sid, scratch=None):
         # Project source only: a host's settings.local.json (bare "Bash" on the MSI) and the user's settings.json
-        # (bare "Bash", "Write", "Edit" on the Mac) would outrank ALLOWED.
+        # (bare "Bash", "Write", "Edit" on the Mac) would outrank ALLOWED. The scratch is the one added dir: never a
+        # repo, whose edits acceptEdits would then accept.
         return [self.claude, "-p", "--model", self.model, "--effort", EFFORT, "--session-id", sid,
                 "--setting-sources", "project",
-                "--permission-mode", "acceptEdits", "--allowedTools", ",".join(ALLOWED + repo_allows(p)),
-                "--disallowedTools", ",".join(DENIED), "--max-budget-usd", self.budget, "--strict-mcp-config",
-                "--output-format", "stream-json", "--verbose"]
+                "--permission-mode", "acceptEdits",
+                "--allowedTools", ",".join(ALLOWED + vault_allows(vault) + repo_allows(p)),
+                "--disallowedTools", ",".join(DENIED)] + (["--add-dir", str(scratch)] if scratch else []) + [
+                "--max-budget-usd", self.budget, "--strict-mcp-config", "--output-format", "stream-json", "--verbose"]
 
-    def __call__(self, p, vault, sid, prompt, on_event=None):
+    def __call__(self, p, vault, sid, prompt, on_event=None, scratch=None):
         try:
-            proc = subprocess.Popen(self.command(p, vault, sid), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            proc = subprocess.Popen(self.command(p, vault, sid, scratch), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, text=True, cwd=str(vault))
         except OSError as e:
             return {"status": "error", "error": "claude -p could not start: %s" % e, "cost": 0.0, "tools": [], "result": ""}
@@ -264,8 +278,10 @@ class FakeRunner:
         self.calls = []
         self.fail = None
 
-    def __call__(self, p, vault, sid, prompt, on_event=None):
-        self.calls.append({"project": p["id"], "cwd": str(vault), "session": sid, "prompt": prompt})
+    def __call__(self, p, vault, sid, prompt, on_event=None, scratch=None):
+        self.calls.append({"project": p["id"], "cwd": str(vault), "session": sid, "prompt": prompt,
+                           "scratch": str(scratch) if scratch else None,
+                           "scratch_existed": bool(scratch) and Path(scratch).is_dir()})
         if self.fail:
             return {"status": "error", "error": self.fail, "cost": 0.0, "tools": [], "result": ""}
         v = Path(vault)
@@ -333,14 +349,15 @@ def run(vault, pid, runner, store, now, on_event=None, dry_run=False):
         raise OvernightError("tonight's %s night (%s) is done: %s — one night per project per day"
                              % (pid, date, prior.get("report") or "no report recorded"))
     sid = str(uuid.uuid4())
-    prompt = user_prompt(p, sid, now)
+    scratch = store.scratch(pid, date)
+    prompt = user_prompt(p, sid, now, scratch)
     commits = commits_since(vault, p["folders"], kst_midnight(now).isoformat())
     row = {"v": 1, "project": pid, "date": date, "session": sid, "host": socket.gethostname(), "model": MODEL,
            "run_prompt": p["run_prompt"], "started": now.isoformat(), "ended": None, "status": "running",
            "commits_today": commits, "cost": 0.0, "tools": 0, "drafts": [], "report": "", "error": "",
-           "spend_line": "", "result": ""}
+           "spend_line": "", "result": "", "scratch": str(scratch)}
     if dry_run:
-        row.update(status="dry-run", command=Runner().command(p, vault, sid), prompt=prompt)
+        row.update(status="dry-run", command=Runner().command(p, vault, sid, scratch), prompt=prompt)
         if on_event:
             on_event({"event": "dry-run", "project": pid, "date": date, "session": sid, "commits_today": commits,
                       "command": row["command"], "prompt": prompt})
@@ -349,13 +366,16 @@ def run(vault, pid, runner, store, now, on_event=None, dry_run=False):
         on_event({"event": "started", "project": pid, "date": date, "session": sid, "commits_today": commits,
                   "run_prompt": p["run_prompt"]})
     store.save(row)
-    r = runner(p, vault, sid, prompt, on_event=on_event)
+    scratch.mkdir(parents=True, exist_ok=True)
+    r = runner(p, vault, sid, prompt, on_event=on_event, scratch=scratch)
     ended = datetime.now(timezone.utc).replace(microsecond=0) if os.environ.get("QUORUM_OVERNIGHT_NOW") is None else now
     drafts, report = _written(vault, r.get("tools") or [], pid, date)
     row.update(ended=ended.isoformat(), status=r["status"], cost=float(r.get("cost") or 0), tools=len(r.get("tools") or []),
                drafts=drafts, report=report, error=r.get("error") or "", result=r.get("result") or "")
     if r["status"] == "done" and hasattr(runner, "spend"):
         row["spend_line"] = runner.spend(vault, sid)
+    if r["status"] == "done":
+        shutil.rmtree(scratch, ignore_errors=True)
     store.save(row)
     if r["status"] != "done":
         if on_event:

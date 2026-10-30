@@ -359,9 +359,10 @@ day spent on it (`scripts/overnight.py`; `quorum overnight <project>`).
 - **The verb only starts it:** ONE `claude -p` session (Opus, `--session-id` chosen
   here) run from the vault's own cwd, so the vault's CLAUDE.md, hooks, allow rules
   and memory apply exactly as in a session opened by hand. The prompt names the
-  note, the appendix, the start time and the session id — nothing else. Tools the
-  night may use are allowed up front (read, search, write, commit by pathspec,
-  `quorum` lookups, the web, subagents); hosts, deployments, cloud CLIs and repo
+  note, the appendix, the start time, the session id and the night's scratch — nothing
+  else. Tools the night may use are allowed up front (read, search, write, commit by
+  pathspec, `quorum` lookups, the web, subagents, `git -C <path> …` read verbs by the
+  exact path of the vault and the project's repos); hosts, deployments, cloud CLIs and repo
   working-tree moves are denied at the tool level (`DENIED`) on top of the note's
   walls. Settings load from `project` only: neither a host's `.claude/settings.local.json`
   nor the user's `~/.claude/settings.json` allows reach the night, so `ALLOWED` is the
@@ -370,7 +371,10 @@ day spent on it (`scripts/overnight.py`; `quorum overnight <project>`).
 - **What it writes:** the session writes drafts to `00_Inbox/` and one morning
   report to `Action Queue/` and commits exactly those. The verb keeps a per-host
   record in `.quorum/overnight/<project>/<YYYY-MM-DD>.json` (session id, start/end,
-  status, cost, the drafts and report it saw written, the spend line). One night
+  status, cost, the drafts and report it saw written, the spend line), and makes the
+  night's scratch beside it (`<YYYY-MM-DD>-scratch/`, the session's one `--add-dir`:
+  walls.md and a subdir per lane), removed after a done night and kept after a failed
+  one for the rerun. One night
   per project per KST day: a done night refuses a second run; a failed or timed-out
   one may be rerun. `--dry-run` prints the command and the prompt and starts nothing.
 - **The morning** is a session the owner opens ("check the morning report"): it

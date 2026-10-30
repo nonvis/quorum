@@ -39,7 +39,8 @@ What each command does is in `README.md`; the source is the truth.
   `<repo>/.quorum/index.db` and, if missing, `<repo>/.quorum/.gitignore` (`*`);
   `quorum radio` also writes episodes to the per-host store `.quorum/radio/`
   and appends new ids to `radio/voices.lock`; `quorum overnight` writes only its per-host
-  record `.quorum/overnight/` (the vault session it starts writes `00_Inbox/` and
+  record `.quorum/overnight/` and the night's scratch inside it, removed after a done night
+  (the vault session it starts writes `00_Inbox/` and
   one `Action Queue/` note in the vault and commits exactly those); Radio Studio writes the vault's
   `06_Metadata/quorum-projects.json` (+ the allowlist) and commits exactly those
   files, and adds brainstorm specialties to `radio/cast.json`.
