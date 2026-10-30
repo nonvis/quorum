@@ -130,9 +130,11 @@ quorum version
   folder), orphan notes (no link resolves to them), live notes without `summary:`, notes naming repo files that are
   gone, memory files missing from (or index rows pointing past) the MEMORY
   indexes, repo docs that point into the vault, repo docs naming files that are
-  gone, and notes whose `locked_in: <repo>/<path>` doc is missing. `--fix-safe`
-  rewrites only links whose target matches exactly one note after normalising
-  case, dashes and spaces. A repo's `docs/` holds what is locked and must read
+  gone, notes whose `locked_in: <repo>/<path>` doc is missing, and frontmatter
+  strict YAML rejects (a plain value holding `: `; a quoted value with text after
+  its closing quote, or none). `--fix-safe` rewrites only links whose target
+  matches exactly one note after normalising case, dashes and spaces, and quotes
+  values an unquoted `: ` breaks. A repo's `docs/` holds what is locked and must read
   without the vault; the vault links to it (`locked_in:`), never the reverse.
 - **`q`** also searches the allowlisted repos' `docs/` and root guides, listed
   after the vault hits (`--vault-only` skips them).

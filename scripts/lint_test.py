@@ -175,6 +175,19 @@ class LintCase(unittest.TestCase):
         self.assertIn("vault:Bad2.md", [x["note"] for x in self.lint()["frontmatter_unquoted_colon"]])
         self.assertNotIn("vault:Ok.md", [x["note"] for x in c])
 
+    def test_a_quoted_frontmatter_value_must_end_at_its_closing_quote(self):
+        write(self.vault / "Q.md", '---\ntitle: Q\nsummary: "MSI zero, tree clean.""\n'
+              'status: "open" since 10-30\ndesc: \'it\'s\'\nnote: "never closed\n---\nx\n')
+        write(self.vault / "QOk.md", '---\ntitle: QOk\nsummary: "a \\"quoted\\" word: x"\n'
+              'desc: \'it\'\'s\'\nupdated: "2026-10-30"  # a comment\nstatus: plain "quote" inside\n'
+              '---\nx\n')
+        c = self.lint()["frontmatter_bad_quote"]
+        self.assertEqual(sorted(x["key"] for x in c if x["note"] == "vault:Q.md"),
+                         ["desc", "note", "status", "summary"])
+        self.assertNotIn("vault:QOk.md", [x["note"] for x in c])
+        write(self.vault / "QLong.md", '---\ntitle: L\nsummary: "%s"\n---\nx\n' % ("word " * 2000))
+        self.assertNotIn("vault:QLong.md", [x["note"] for x in self.lint()["frontmatter_bad_quote"]])
+
     def test_memory_unindexed_and_broken_index_rows(self):
         c = self.lint()
         self.assertEqual((c["memory_unindexed"], c["memory_index_broken"]),

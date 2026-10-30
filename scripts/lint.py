@@ -23,6 +23,8 @@ Checks (each a list in the JSON `checks` object):
   docs_dead_refs       repo markdown naming a repo file that is not at HEAD
   frontmatter_unquoted_colon  vault notes whose frontmatter has an unquoted value
                        holding ": " (strict YAML, and Obsidian, reject the whole block)
+  frontmatter_bad_quote  vault notes whose frontmatter has a quoted value with text
+                       after its closing quote, or no closing quote on its line
   locked_docs_missing  notes whose `locked_in: <repo>/<path>` frontmatter names a
                        doc that is not at HEAD
 
@@ -279,12 +281,12 @@ def run(idx, fix_safe=False):
     checks["docs_vault_refs"] = vault_refs
     checks["docs_dead_refs"] = doc_dead
 
-    colon = []
+    colon, quote = [], []
     for r in db.execute("SELECT path FROM docs WHERE source='vault' ORDER BY path"):
         if vault_index.is_archived(r["path"]):
             continue
         try:
-            head = (idx.vault / r["path"].split(":", 1)[1]).read_text(errors="replace")[:6000]
+            head = (idx.vault / r["path"].split(":", 1)[1]).read_text(errors="replace")
         except OSError:
             continue
         if not head.startswith("---\n"):
@@ -294,7 +296,10 @@ def run(idx, fix_safe=False):
                 break
             if _unquoted_colon(line):
                 colon.append({"note": r["path"], "key": FM_LINE.match(line).group(1)})
+            if _bad_quote(line):
+                quote.append({"note": r["path"], "key": FM_LINE.match(line).group(1)})
     checks["frontmatter_unquoted_colon"] = colon
+    checks["frontmatter_bad_quote"] = quote
 
     locked = []
     for r in db.execute("SELECT path FROM docs WHERE source='vault'"):
@@ -324,6 +329,25 @@ def _unquoted_colon(line):
         return False
     value = re.split(r"(?<=\s)#", m.group(2), maxsplit=1)[0]  # " #" starts a YAML comment
     return ": " in value
+
+
+def _bad_quote(line):
+    """A quoted value with text after its closing quote (`"a.""`, `"a" b`) or none on its line."""
+    m = FM_LINE.match(line)
+    if not m or m.group(2)[0] not in "\"'":
+        return False
+    v, q = m.group(2), m.group(2)[0]
+    i = 1
+    while i < len(v):
+        if q == '"' and v[i] == "\\":
+            i += 2
+        elif v[i] == q and q == "'" and v[i + 1:i + 2] == "'":  # '' is a quote inside '…'
+            i += 2
+        elif v[i] == q:
+            return not re.match(r"\s*(\s#.*)?$", v[i + 1:])
+        else:
+            i += 1
+    return True
 
 
 def _quote_frontmatter(text):
