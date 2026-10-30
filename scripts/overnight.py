@@ -69,14 +69,14 @@ REPO_ROOTS = ("~/nonvis", "~/projects")
 
 
 def repo_allows(p, roots=REPO_ROOTS):
-    """Read-only history in the project's own repos, by exact path: `git -C <repo> log|show`. Never a bare
-    `git -C:*`, which would let `git -C <repo> checkout` past DENIED."""
+    """Read-only verbs in the project's own repos, by exact path: `git -C <repo> log|show|status|grep`. Never a
+    bare `git -C:*`, which would let `git -C <repo> checkout` past DENIED."""
     out = []
     for repo in p.get("repos") or []:
         for root in roots:
             d = Path(os.path.expanduser(root)) / repo
             if (d / ".git").exists():
-                out += ["Bash(git -C %s log:*)" % d, "Bash(git -C %s show:*)" % d]
+                out += ["Bash(git -C %s %s:*)" % (d, v) for v in ("log", "show", "status", "grep")]
                 break
     return out
 

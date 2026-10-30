@@ -148,7 +148,9 @@ class CommandTest(Case):
         p = {"repos": ["permafrost", "notarepo", "missing"]}
         got = overnight.repo_allows(p, roots=(str(roots / "a"), str(roots / "b")))
         repo = roots / "a" / "permafrost"
-        self.assertEqual(got, ["Bash(git -C %s log:*)" % repo, "Bash(git -C %s show:*)" % repo])
+        # Sidebar's 10-31 night: a subagent was refused `git -C <repo> status` and `git -C <repo> grep`, read the
+        # refusals as "Bash denied" and skipped `quorum where` — status and grep join log and show.
+        self.assertEqual(got, ["Bash(git -C %s %s:*)" % (repo, v) for v in ("log", "show", "status", "grep")])
         allowed = overnight.Runner().command(overnight.plan(self.vault, "permafrost"), self.vault,
                                              "0123abcd-0000-4000-8000-000000000000")
         self.assertNotIn("Bash(git -C:*)", allowed[allowed.index("--allowedTools") + 1].split(","))
