@@ -141,6 +141,13 @@ class CommandTest(Case):
         for t in ("Bash(quorum overnight:*)", "Bash(quorum radio:*)", "Bash(quorum web:*)"):
             self.assertIn(t, denied)
 
+    def test_textutil_is_allowed_to_read_a_docx_or_saved_html_into_scratch(self):
+        # Permafrost n6 (11-01) and Sidebar n3 (11-03) on the Mac: subagents asked for `textutil -convert txt`
+        # ten times to read a .docx or a saved HTML page and were refused each time; a converter writing into
+        # scratch is curl -o's shape, and the walls on where a night writes are prose either way.
+        cmd = overnight.Runner().command(overnight.plan(self.vault, "permafrost"), self.vault, "0123abcd-0000-4000-8000-000000000000")
+        self.assertIn("Bash(textutil:*)", cmd[cmd.index("--allowedTools") + 1].split(","))
+
     def test_repo_history_is_allowed_by_exact_path_never_a_bare_git_c(self):
         roots = Path(self.tmp.name) / "roots"
         (roots / "a" / "permafrost" / ".git").mkdir(parents=True)
