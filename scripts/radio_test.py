@@ -1337,7 +1337,8 @@ class BrainstormCase(unittest.TestCase):
         inp = radio.gather_brainstorm("sidebar", radio.load_projects(self.fx.vault), self.fx.vault, self.fx.memory,
                                       QUESTION, [self.fx.home / "nonvis"],
                                       search=lambda q: fake_search(q) + [{"path": "vault:01_Projects/Sidebar/Archive/02 - Radio (Design).md",
-                                                                          "title": "Radio (Design)", "summary": "retired", "snippet": ""}])
+                                                                          "title": "Radio (Design)", "summary": "retired", "snippet": ""}],
+                                      now=NOW)   # the timeline's 14-day window counts from here, not the wall clock
         src = radio.brainstorm_sources(inp)
         by = {}
         for s in src:

@@ -1520,7 +1520,7 @@ def index_search(question, vault, repos):
     return hits
 
 
-def gather_brainstorm(pid, projects, vault, memory, question, repo_roots, search=None, context=None):
+def gather_brainstorm(pid, projects, vault, memory, question, repo_roots, search=None, context=None, now=None):
     """One brainstorm's inputs ($0): the question; the project's briefing (state,
     rulings, owed rows), its concept note, recent commits in its repos, and the
     question's hits through the indexes; earlier scripts attached as context."""
@@ -1575,8 +1575,11 @@ def gather_brainstorm(pid, projects, vault, memory, question, repo_roots, search
             n = len([x for x in d.rglob("*.md")])
             layout.append({"ref": f + "/", "text": "vault folder %s: %d notes; subfolders: %s" % (f, n, ", ".join(subs) or "none")})
     timeline, history = [], []
+    # The window hangs off the caller's clock, not git's "14.days" (the suite's fixture is dated 2026-10-17 and went
+    # red on the wall clock from 10-31).
+    since = ((now or datetime.now(timezone.utc)) - timedelta(days=14)).isoformat()
     for r in repos:
-        out = subprocess.run(["git", "-C", r["path"], "log", "--branches", "--since=14.days", "-n", "30", "--format=%cs %h %s"],
+        out = subprocess.run(["git", "-C", r["path"], "log", "--branches", "--since=" + since, "-n", "30", "--format=%cs %h %s"],
                              capture_output=True, text=True).stdout.strip()
         timeline.append({"ref": "%s@recent" % r["name"], "text": "%s, the last 14 days:\n%s\nstate: %s" % (
             r["name"], out or "(no commits)", repo_state(r["path"]))})
