@@ -56,7 +56,7 @@ ALLOWED = [
     "Bash(quorum:*)", "Bash(curl:*)", "Bash(python3:*)", "Bash(pdftotext:*)", "Bash(date:*)", "Bash(ls:*)",
     "Bash(wc:*)", "Bash(grep:*)", "Bash(find:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(cat:*)", "Bash(mkdir:*)",
     "Bash(awk:*)", "Bash(sed:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(cut:*)", "Bash(echo:*)", "Bash(cd:*)",
-    "Bash(hostname:*)", "Bash(file:*)", "Bash(unzip:*)", "Bash(textutil:*)",
+    "Bash(hostname:*)", "Bash(file:*)", "Bash(unzip:*)", "Bash(textutil:*)", "Bash(openssl x509:*)",
 ]
 DENIED = [
     "Bash(gcloud:*)", "Bash(aws:*)", "Bash(docker:*)", "Bash(ssh:*)", "Bash(scp:*)", "Bash(rsync:*)",

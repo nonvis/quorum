@@ -148,6 +148,15 @@ class CommandTest(Case):
         cmd = overnight.Runner().command(overnight.plan(self.vault, "permafrost"), self.vault, "0123abcd-0000-4000-8000-000000000000")
         self.assertIn("Bash(textutil:*)", cmd[cmd.index("--allowedTools") + 1].split(","))
 
+    def test_openssl_x509_is_allowed_to_read_a_cert_but_no_other_openssl_verb(self):
+        # Permafrost n7 (11-07, the MSI): a subagent asked for `openssl x509 -noout -subject -issuer -dates` on two
+        # downloaded attestation certs four times and was refused each time, then parsed the PEMs in Python. x509
+        # reads a cert; a bare openssl:* would add s_client, enc and req.
+        cmd = overnight.Runner().command(overnight.plan(self.vault, "permafrost"), self.vault, "0123abcd-0000-4000-8000-000000000000")
+        allowed = cmd[cmd.index("--allowedTools") + 1].split(",")
+        self.assertIn("Bash(openssl x509:*)", allowed)
+        self.assertEqual([t for t in allowed if t.startswith("Bash(openssl")], ["Bash(openssl x509:*)"])
+
     def test_repo_history_is_allowed_by_exact_path_never_a_bare_git_c(self):
         roots = Path(self.tmp.name) / "roots"
         (roots / "a" / "permafrost" / ".git").mkdir(parents=True)
