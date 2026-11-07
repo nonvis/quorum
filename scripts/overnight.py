@@ -47,9 +47,10 @@ KST = timezone(timedelta(hours=9))
 
 # What a night may do: read, search, write drafts and the report, commit by pathspec, look things up, read the web,
 # run lanes as subagents. What it may never do, whatever the prompt says: touch a host, a deployment, a profile,
-# a container, a cloud CLI, or move a repo's working tree.
+# a container, a cloud CLI, or move a repo's working tree. Write / Edit are added per night by path (edit_allows);
+# the sandbox (sandbox_settings) holds every Bash command, a python3 one included, to the same walls.
 ALLOWED = [
-    "Read", "Grep", "Glob", "Write", "Edit", "Agent", "WebFetch", "WebSearch",
+    "Read", "Grep", "Glob", "Agent", "WebFetch", "WebSearch",
     "Bash(git add:*)", "Bash(git commit:*)", "Bash(git push:*)", "Bash(git pull:*)", "Bash(git log:*)",
     "Bash(git show:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git rev-parse:*)",
     "Bash(quorum:*)", "Bash(curl:*)", "Bash(python3:*)", "Bash(pdftotext:*)", "Bash(date:*)", "Bash(ls:*)",
@@ -85,6 +86,39 @@ def vault_allows(vault):
     """The vault's own read verbs by its exact path, `git -C <vault> status|log|show|diff`: night 2 was refused
     `git -C <vault> status` four times. Never a bare `git -C:*` (see repo_allows)."""
     return ["Bash(git -C %s %s:*)" % (os.path.abspath(vault), v) for v in ("status", "log", "show", "diff")]
+
+
+def edit_allows(vault, scratch=None):
+    """Write / Edit by path, the vault and the night's scratch only (`//` = an absolute path): a bare "Write"
+    reached any file on the host."""
+    dirs = [vault] + ([scratch] if scratch else [])
+    return ["%s(/%s/**)" % (t, os.path.abspath(d)) for d in dirs for t in ("Write", "Edit")]
+
+
+def _allowlist(vault):
+    p = Path(vault) / radio_projects.ALLOWLIST
+    if not p.is_file():
+        return []
+    names = [l.split("#", 1)[0].strip() for l in p.read_text(encoding="utf-8").splitlines()]
+    return [n for n in names if n]
+
+
+def sandbox_settings(vault, scratch=None, roots=REPO_ROOTS):
+    """The `--settings` block that sandboxes every Bash command of the night (bubblewrap on Linux, Seatbelt on
+    macOS). Writes: the vault (the cwd, by default), the night's scratch, and each allowlisted repo's `.quorum/`
+    (a `where` / `affected` from the vault refreshes them all) — never a working tree. No raw socket, so no ssh:
+    HTTP(S) goes through the sandbox's proxy, any domain (curl is the gap lanes' fetcher). `git push` / `git pull`
+    run outside it, being SSH to GitHub and already allowed by prefix. No bubblewrap = the night fails to start."""
+    write = [str(scratch)] if scratch else []
+    for name in _allowlist(vault):
+        for root in roots:
+            d = Path(os.path.expanduser(root)) / name
+            if (d / ".git").exists():
+                write.append(str(d / ".quorum"))
+                break
+    return {"sandbox": {"enabled": True, "failIfUnavailable": True, "autoAllowBashIfSandboxed": False,
+                        "allowUnsandboxedCommands": False, "excludedCommands": ["git push", "git pull"],
+                        "filesystem": {"allowWrite": write}, "network": {"allowedDomains": ["*"]}}}
 
 
 class OvernightError(Exception):
@@ -220,8 +254,9 @@ class Runner:
         # repo, whose edits acceptEdits would then accept.
         return [self.claude, "-p", "--model", self.model, "--effort", EFFORT, "--session-id", sid,
                 "--setting-sources", "project",
+                "--settings", json.dumps(sandbox_settings(vault, scratch)),
                 "--permission-mode", "acceptEdits",
-                "--allowedTools", ",".join(ALLOWED + vault_allows(vault) + repo_allows(p)),
+                "--allowedTools", ",".join(ALLOWED + edit_allows(vault, scratch) + vault_allows(vault) + repo_allows(p)),
                 "--disallowedTools", ",".join(DENIED)] + (["--add-dir", str(scratch)] if scratch else []) + [
                 "--max-budget-usd", self.budget, "--strict-mcp-config", "--output-format", "stream-json", "--verbose"]
 

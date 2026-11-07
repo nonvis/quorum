@@ -364,7 +364,13 @@ day spent on it (`scripts/overnight.py`; `quorum overnight <project>`).
   pathspec, `quorum` lookups, the web, subagents, `git -C <path> …` read verbs by the
   exact path of the vault and the project's repos); hosts, deployments, cloud CLIs and repo
   working-tree moves are denied at the tool level (`DENIED`) on top of the note's
-  walls. Settings load from `project` only: neither a host's `.claude/settings.local.json`
+  walls. `Write` / `Edit` reach the vault and the night's scratch only, by path.
+  Every Bash command runs in Claude Code's sandbox (`--settings`, `sandbox_settings`:
+  bubblewrap + socat on Linux, Seatbelt on macOS): it writes only to the vault, the
+  scratch and each allowlisted repo's `.quorum/`, `/tmp` is read-only (`$TMPDIR` works),
+  HTTP(S) goes out through the sandbox's proxy to any domain, and no other socket
+  opens, so a `python3` script cannot `ssh`. `git push` / `git pull` run outside it.
+  Without the sandbox the night does not start (`make doctor` checks it). Settings load from `project` only: neither a host's `.claude/settings.local.json`
   nor the user's `~/.claude/settings.json` allows reach the night, so `ALLOWED` is the
   whole list; the effort is passed as `--effort xhigh`. `--max-budget-usd 60`,
   killed after 3 h.

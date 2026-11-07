@@ -24,6 +24,13 @@ done
 python3 -c "import sys; sys.path.insert(0, '$REPO_ROOT/scripts'); import radio; radio.load_cast()" 2>/dev/null \
     && ok "radio cast file + voice lock" || bad "radio/cast.json refused (python3 scripts/radio.py inputs says why)"
 command -v claude >/dev/null && ok "claude on PATH (radio, overnight)" || warn "claude not on PATH: radio and overnight need --fake"
+# Overnight: every Bash command of the night runs sandboxed, and the night will not start without it.
+if [ "$(uname -s)" = Linux ]; then
+    command -v bwrap >/dev/null && command -v socat >/dev/null && ok "overnight sandbox (bubblewrap + socat)" \
+        || warn "bubblewrap or socat missing: overnight will not start (sudo apt install bubblewrap socat)"
+else
+    command -v sandbox-exec >/dev/null && ok "overnight sandbox (sandbox-exec)" || warn "sandbox-exec missing: overnight will not start"
+fi
 command -v node >/dev/null && [ -d "$REPO_ROOT/radio-voice/node_modules/kokoro-js" ] \
     && ok "radio-voice sidecar installed" || warn "radio-voice not installed (cd radio-voice && npm ci): radio needs --no-voice"
 command -v ffmpeg >/dev/null && ok "ffmpeg" || warn "ffmpeg not found: radio needs --no-voice"

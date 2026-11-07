@@ -180,6 +180,47 @@ class CommandTest(Case):
         self.assertEqual(cmd.count("--add-dir"), 1)
         self.assertEqual(cmd[cmd.index("--add-dir") + 1], str(scratch))
 
+    def test_the_night_runs_sandboxed_writing_only_its_scratch_and_the_repo_indexes(self):
+        # The prefix rules leak by their semantics: `Bash(python3:*)` runs anything, `ssh` included, past DENIED.
+        # Probed headless 11-07 on 2.1.319 (MSI, bubblewrap): under this block a python3 write into a repo is
+        # "Read-only file system", github.com:22 has no DNS, scratch and the vault (cwd) take writes, `quorum where`
+        # refreshes a repo index, curl gets its 200, `git push --dry-run` reaches GitHub, and a commit in cwd lands.
+        roots = Path(self.tmp.name) / "roots"
+        for name in ("permafrost", "sidebar"):
+            (roots / "a" / name / ".git").mkdir(parents=True)
+        (self.vault / "06_Metadata" / "quorum-repos.txt").write_text("# repos\npermafrost\nsidebar  # ui\nmissing\n")
+        scratch = Path(self.tmp.name) / "store" / "permafrost" / "2026-10-29-scratch"
+        s = overnight.sandbox_settings(self.vault, scratch, roots=(str(roots / "a"),))["sandbox"]
+        self.assertIs(s["enabled"], True)
+        self.assertIs(s["failIfUnavailable"], True)          # no bubblewrap = no night, never an unwalled one
+        self.assertIs(s["allowUnsandboxedCommands"], False)  # the model cannot ask its way out
+        self.assertIs(s["autoAllowBashIfSandboxed"], False)  # ALLOWED stays the gate; the sandbox is a second wall
+        # Every allowlisted repo's index (a lookup from the vault refreshes them all), never a working tree.
+        self.assertEqual(s["filesystem"]["allowWrite"],
+                         [str(scratch), str(roots / "a" / "permafrost" / ".quorum"), str(roots / "a" / "sidebar" / ".quorum")])
+        self.assertEqual(s["excludedCommands"], ["git push", "git pull"])  # SSH to GitHub needs a direct socket
+        self.assertEqual(s["network"]["allowedDomains"], ["*"])  # curl is the gap lanes' fetcher (174 in one night)
+        cmd = overnight.Runner().command(overnight.plan(self.vault, "permafrost"), self.vault,
+                                         "0123abcd-0000-4000-8000-000000000000", scratch=scratch)
+        self.assertEqual(json.loads(cmd[cmd.index("--settings") + 1]), overnight.sandbox_settings(self.vault, scratch))
+
+    def test_write_and_edit_reach_only_the_vault_and_the_scratch(self):
+        # A bare "Write" / "Edit" reached any path; the probe's Write into a repo was refused once scoped.
+        scratch = Path(self.tmp.name) / "store" / "permafrost" / "2026-10-29-scratch"
+        cmd = overnight.Runner().command(overnight.plan(self.vault, "permafrost"), self.vault,
+                                         "0123abcd-0000-4000-8000-000000000000", scratch=scratch)
+        allowed = cmd[cmd.index("--allowedTools") + 1].split(",")
+        self.assertNotIn("Write", allowed)
+        self.assertNotIn("Edit", allowed)
+        for tool in ("Write", "Edit"):
+            self.assertIn("%s(/%s/**)" % (tool, os.path.abspath(self.vault)), allowed)
+            self.assertIn("%s(/%s/**)" % (tool, os.path.abspath(scratch)), allowed)
+        bare = overnight.Runner().command(overnight.plan(self.vault, "permafrost"), self.vault,
+                                          "0123abcd-0000-4000-8000-000000000000")
+        bare = bare[bare.index("--allowedTools") + 1].split(",")
+        self.assertEqual([a for a in bare if a.startswith(("Write", "Edit"))],
+                         ["Write(/%s/**)" % os.path.abspath(self.vault), "Edit(/%s/**)" % os.path.abspath(self.vault)])
+
     def test_the_prompt_names_the_note_the_appendix_and_the_session(self):
         p = overnight.plan(self.vault, "permafrost")
         text = overnight.user_prompt(p, "0123abcd-0000-4000-8000-000000000000", NOW)
